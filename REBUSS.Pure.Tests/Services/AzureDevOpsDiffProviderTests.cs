@@ -56,7 +56,7 @@ public class AzureDevOpsDiffProviderTests
             new PullRequestMetadataParser(NullLogger<PullRequestMetadataParser>.Instance),
             new IterationInfoParser(NullLogger<IterationInfoParser>.Instance),
             new FileChangesParser(NullLogger<FileChangesParser>.Instance),
-            new UnifiedDiffBuilder(new LcsDiffAlgorithm(), NullLogger<UnifiedDiffBuilder>.Instance),
+            new StructuredDiffBuilder(new LcsDiffAlgorithm(), NullLogger<StructuredDiffBuilder>.Instance),
             new FileClassifier(),
             NullLogger<AzureDevOpsDiffProvider>.Instance);
     }
@@ -80,7 +80,7 @@ public class AzureDevOpsDiffProviderTests
     }
 
     [Fact]
-    public async Task GetDiffAsync_GeneratesUnifiedDiff_ForModifiedFile()
+    public async Task GetDiffAsync_GeneratesStructuredDiff_ForModifiedFile()
     {
         SetupStandardMocks();
         _apiClient.GetFileContentAtCommitAsync("bbb222", "/src/File.cs").Returns("old line");
@@ -88,8 +88,23 @@ public class AzureDevOpsDiffProviderTests
 
         var result = await _provider.GetDiffAsync(42);
 
-        Assert.Contains("-old line", result.DiffContent);
-        Assert.Contains("+new line", result.DiffContent);
+        Assert.NotEmpty(result.Files[0].Hunks);
+        var allLines = result.Files[0].Hunks.SelectMany(h => h.Lines).ToList();
+        Assert.Contains(allLines, l => l.Op == '-' && l.Text == "old line");
+        Assert.Contains(allLines, l => l.Op == '+' && l.Text == "new line");
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_SetsAdditionsAndDeletions()
+    {
+        SetupStandardMocks();
+        _apiClient.GetFileContentAtCommitAsync("bbb222", "/src/File.cs").Returns("old line");
+        _apiClient.GetFileContentAtCommitAsync("aaa111", "/src/File.cs").Returns("new line");
+
+        var result = await _provider.GetDiffAsync(42);
+
+        Assert.Equal(1, result.Files[0].Additions);
+        Assert.Equal(1, result.Files[0].Deletions);
     }
 
     [Fact]
@@ -111,7 +126,6 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Empty(result.Files);
-        Assert.Empty(result.DiffContent);
     }
 
     [Fact]
@@ -144,7 +158,7 @@ public class AzureDevOpsDiffProviderTests
     }
 
     [Fact]
-    public async Task GetDiffAsync_UsesFallback_WhenNoCommitSHAs()
+    public async Task GetDiffAsync_LeavesEmptyHunks_WhenNoCommitSHAs()
     {
         _apiClient.GetPullRequestDetailsAsync(42).Returns(PrDetailsJson);
         // Iterations with no commit SHAs
@@ -153,9 +167,9 @@ public class AzureDevOpsDiffProviderTests
 
         var result = await _provider.GetDiffAsync(42);
 
-        // Files should be listed but have no per-file diff
+        // Files should be listed but have no hunks
         Assert.Single(result.Files);
-        Assert.Contains("commit SHAs not resolved", result.DiffContent);
+        Assert.Empty(result.Files[0].Hunks);
     }
 
     [Fact]
@@ -185,8 +199,9 @@ public class AzureDevOpsDiffProviderTests
         Assert.Equal("Fix bug #42", result.Title);
         Assert.Single(result.Files);
         Assert.Equal("/src/File.cs", result.Files[0].Path);
-        Assert.Contains("-old line", result.DiffContent);
-        Assert.Contains("+new line", result.DiffContent);
+        var allLines = result.Files[0].Hunks.SelectMany(h => h.Lines).ToList();
+        Assert.Contains(allLines, l => l.Op == '-' && l.Text == "old line");
+        Assert.Contains(allLines, l => l.Op == '+' && l.Text == "new line");
     }
 
     [Fact]
@@ -289,7 +304,7 @@ public class AzureDevOpsDiffProviderTests
 
         Assert.Single(result.Files);
         Assert.Equal("file deleted", result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.DiffContent);
+        Assert.Empty(result.Files[0].Hunks);
         await _apiClient.DidNotReceive().GetFileContentAtCommitAsync(Arg.Any<string>(), "/src/Removed.cs");
     }
 
@@ -309,8 +324,7 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Equal("file deleted", result.Files[0].SkipReason);
-        Assert.Contains("delete", result.Files[0].Diff);
-        Assert.Contains("file deleted", result.Files[0].Diff);
+        Assert.Empty(result.Files[0].Hunks);
     }
 
     // --- Diff skip: Renames ---
@@ -332,7 +346,7 @@ public class AzureDevOpsDiffProviderTests
 
         Assert.Single(result.Files);
         Assert.Equal("file renamed", result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.DiffContent);
+        Assert.Empty(result.Files[0].Hunks);
         await _apiClient.DidNotReceive().GetFileContentAtCommitAsync(Arg.Any<string>(), "/src/NewName.cs");
     }
 
@@ -352,8 +366,7 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Equal("file renamed", result.Files[0].SkipReason);
-        Assert.Contains("rename", result.Files[0].Diff);
-        Assert.Contains("file renamed", result.Files[0].Diff);
+        Assert.Empty(result.Files[0].Hunks);
     }
 
     // --- Diff skip: Binary files ---
@@ -375,7 +388,7 @@ public class AzureDevOpsDiffProviderTests
 
         Assert.Single(result.Files);
         Assert.Equal("binary file", result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.DiffContent);
+        Assert.Empty(result.Files[0].Hunks);
         await _apiClient.DidNotReceive().GetFileContentAtCommitAsync(Arg.Any<string>(), "/assets/logo.png");
     }
 
@@ -421,7 +434,7 @@ public class AzureDevOpsDiffProviderTests
 
         Assert.Single(result.Files);
         Assert.Equal("generated file", result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.DiffContent);
+        Assert.Empty(result.Files[0].Hunks);
         await _apiClient.DidNotReceive().GetFileContentAtCommitAsync(Arg.Any<string>(), "/obj/Debug/net8.0/AssemblyInfo.cs");
     }
 
@@ -445,7 +458,7 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.NotNull(result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.Files[0].Diff);
+        Assert.Empty(result.Files[0].Hunks);
     }
 
     // --- Diff skip: Full-file rewrite ---
@@ -466,7 +479,7 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Equal("full file rewrite", result.Files[0].SkipReason);
-        Assert.Contains("diff skipped", result.Files[0].Diff);
+        Assert.Empty(result.Files[0].Hunks);
     }
 
     [Fact]
@@ -483,8 +496,9 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Null(result.Files[0].SkipReason);
-        Assert.Contains("-line3", result.DiffContent);
-        Assert.Contains("+CHANGED", result.DiffContent);
+        var allLines = result.Files[0].Hunks.SelectMany(h => h.Lines).ToList();
+        Assert.Contains(allLines, l => l.Op == '-' && l.Text == "line3");
+        Assert.Contains(allLines, l => l.Op == '+' && l.Text == "CHANGED");
     }
 
     [Fact]
@@ -499,8 +513,9 @@ public class AzureDevOpsDiffProviderTests
         var result = await _provider.GetDiffAsync(42);
 
         Assert.Null(result.Files[0].SkipReason);
-        Assert.Contains("-old1", result.DiffContent);
-        Assert.Contains("+new1", result.DiffContent);
+        var allLines = result.Files[0].Hunks.SelectMany(h => h.Lines).ToList();
+        Assert.Contains(allLines, l => l.Op == '-' && l.Text == "old1");
+        Assert.Contains(allLines, l => l.Op == '+' && l.Text == "new1");
     }
 
     // --- Mixed scenarios ---
@@ -547,26 +562,41 @@ public class AzureDevOpsDiffProviderTests
     [Fact]
     public void IsFullFileRewrite_ReturnsFalse_WhenBaseContentIsNull()
     {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(null, "content", "diff"));
+        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(null, "content", new List<DiffHunk>()));
     }
 
     [Fact]
     public void IsFullFileRewrite_ReturnsFalse_WhenTargetContentIsNull()
     {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("content", null, "diff"));
+        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("content", null, new List<DiffHunk>()));
     }
 
     [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenDiffIsEmpty()
+    public void IsFullFileRewrite_ReturnsFalse_WhenHunksAreEmpty()
     {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("old", "new", string.Empty));
+        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("old", "new", new List<DiffHunk>()));
     }
 
     [Fact]
     public void IsFullFileRewrite_ReturnsFalse_WhenFilesAreTooSmall()
     {
-        var diff = "@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+x\n+y\n+z";
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("a\nb\nc", "x\ny\nz", diff));
+        var hunks = new List<DiffHunk>
+        {
+            new()
+            {
+                OldStart = 1, OldCount = 3, NewStart = 1, NewCount = 3,
+                Lines = new List<DiffLine>
+                {
+                    new() { Op = '-', Text = "a" },
+                    new() { Op = '-', Text = "b" },
+                    new() { Op = '-', Text = "c" },
+                    new() { Op = '+', Text = "x" },
+                    new() { Op = '+', Text = "y" },
+                    new() { Op = '+', Text = "z" }
+                }
+            }
+        };
+        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("a\nb\nc", "x\ny\nz", hunks));
     }
 
     [Fact]
@@ -574,12 +604,18 @@ public class AzureDevOpsDiffProviderTests
     {
         var oldLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"old{i}"));
         var newLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"new{i}"));
-        // A diff with no context lines (all - and + prefixed)
-        var diff = "@@ -1,12 +1,12 @@\n" +
-                   string.Join("\n", Enumerable.Range(1, 12).Select(i => $"-old{i}")) + "\n" +
-                   string.Join("\n", Enumerable.Range(1, 12).Select(i => $"+new{i}"));
+        var hunks = new List<DiffHunk>
+        {
+            new()
+            {
+                OldStart = 1, OldCount = 12, NewStart = 1, NewCount = 12,
+                Lines = Enumerable.Range(1, 12).Select(i => new DiffLine { Op = '-', Text = $"old{i}" })
+                    .Concat(Enumerable.Range(1, 12).Select(i => new DiffLine { Op = '+', Text = $"new{i}" }))
+                    .ToList()
+            }
+        };
 
-        Assert.True(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, diff));
+        Assert.True(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, hunks));
     }
 
     [Fact]
@@ -588,10 +624,23 @@ public class AzureDevOpsDiffProviderTests
         var oldLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"line{i}"));
         var newLines = "line1\nline2\nCHANGED\n" +
                        string.Join("\n", Enumerable.Range(4, 9).Select(i => $"line{i}"));
-        // Diff has context lines (space-prefixed)
-        var diff = "@@ -1,12 +1,12 @@\n line1\n line2\n-line3\n+CHANGED\n line4";
+        var hunks = new List<DiffHunk>
+        {
+            new()
+            {
+                OldStart = 1, OldCount = 4, NewStart = 1, NewCount = 4,
+                Lines = new List<DiffLine>
+                {
+                    new() { Op = ' ', Text = "line1" },
+                    new() { Op = ' ', Text = "line2" },
+                    new() { Op = '-', Text = "line3" },
+                    new() { Op = '+', Text = "CHANGED" },
+                    new() { Op = ' ', Text = "line4" }
+                }
+            }
+        };
 
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, diff));
+        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, hunks));
     }
 
     // --- GetSkipReason unit tests ---

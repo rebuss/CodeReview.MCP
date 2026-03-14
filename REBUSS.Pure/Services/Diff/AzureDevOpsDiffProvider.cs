@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOpsIntegration.Services;
 using REBUSS.Pure.Services.Common;
@@ -10,12 +9,12 @@ using REBUSS.Pure.Services.FileList.Classification;
 namespace REBUSS.Pure.Services.Diff
 {
     /// <summary>
-    /// Fetches real unified-diff content from Azure DevOps by:
+    /// Fetches structured diff content from Azure DevOps by:
     /// 1. Reading PR details (title, status, refs).
     /// 2. Reading the last iteration to get the base and target commit SHAs.
     /// 3. Enumerating changed files from the iteration changes endpoint.
     /// 4. For each file, fetching raw content at both commits.
-    /// 5. Producing standard unified-diff text via <see cref="UnifiedDiffBuilder"/>.
+    /// 5. Producing structured diff hunks via <see cref="StructuredDiffBuilder"/>.
     /// </summary>
     public class AzureDevOpsDiffProvider : IPullRequestDiffProvider
     {
@@ -25,7 +24,7 @@ namespace REBUSS.Pure.Services.Diff
         private readonly IPullRequestMetadataParser _metadataParser;
         private readonly IIterationInfoParser _iterationParser;
         private readonly IFileChangesParser _changesParser;
-        private readonly IUnifiedDiffBuilder _diffBuilder;
+        private readonly IStructuredDiffBuilder _diffBuilder;
         private readonly IFileClassifier _fileClassifier;
         private readonly ILogger<AzureDevOpsDiffProvider> _logger;
 
@@ -34,7 +33,7 @@ namespace REBUSS.Pure.Services.Diff
             IPullRequestMetadataParser metadataParser,
             IIterationInfoParser iterationParser,
             IFileChangesParser changesParser,
-            IUnifiedDiffBuilder diffBuilder,
+            IStructuredDiffBuilder diffBuilder,
             IFileClassifier fileClassifier,
             ILogger<AzureDevOpsDiffProvider> logger)
         {
@@ -64,12 +63,13 @@ namespace REBUSS.Pure.Services.Diff
 
                 await BuildFileDiffsAsync(files, baseCommit, targetCommit, cancellationToken);
 
-                var result = BuildDiff(metadata, files, baseCommit, targetCommit);
+                var result = BuildDiff(metadata, files);
                 sw.Stop();
 
+                var totalHunks = result.Files.Sum(f => f.Hunks.Count);
                 _logger.LogInformation(
-                    "Diff for PR #{PrNumber} completed: {FileCount} file(s), {DiffLength} chars, {ElapsedMs}ms",
-                    prNumber, files.Count, result.DiffContent.Length, sw.ElapsedMilliseconds);
+                    "Diff for PR #{PrNumber} completed: {FileCount} file(s), {TotalHunks} hunk(s), {ElapsedMs}ms",
+                    prNumber, files.Count, totalHunks, sw.ElapsedMilliseconds);
 
                 return result;
             }
@@ -108,12 +108,13 @@ namespace REBUSS.Pure.Services.Diff
 
                 await BuildFileDiffsAsync(matchingFiles, baseCommit, targetCommit, cancellationToken);
 
-                var result = BuildDiff(metadata, matchingFiles, baseCommit, targetCommit);
+                var result = BuildDiff(metadata, matchingFiles);
                 sw.Stop();
 
+                var totalHunks = result.Files.Sum(f => f.Hunks.Count);
                 _logger.LogInformation(
-                    "File diff for '{Path}' in PR #{PrNumber} completed: {DiffLength} chars, {ElapsedMs}ms",
-                    path, prNumber, result.DiffContent.Length, sw.ElapsedMilliseconds);
+                    "File diff for '{Path}' in PR #{PrNumber} completed: {TotalHunks} hunk(s), {ElapsedMs}ms",
+                    path, prNumber, totalHunks, sw.ElapsedMilliseconds);
 
                 return result;
             }
@@ -176,7 +177,6 @@ namespace REBUSS.Pure.Services.Diff
                 if (skipReason is not null)
                 {
                     file.SkipReason = skipReason;
-                    file.Diff = BuildSkippedDiffMarker(file.Path, file.ChangeType, skipReason);
                     _logger.LogDebug(
                         "Skipping diff for '{FilePath}': {SkipReason}",
                         file.Path, skipReason);
@@ -187,22 +187,27 @@ namespace REBUSS.Pure.Services.Diff
 
                 var baseContent   = await _apiClient.GetFileContentAtCommitAsync(baseCommit,   file.Path);
                 var targetContent = await _apiClient.GetFileContentAtCommitAsync(targetCommit, file.Path);
-                file.Diff = _diffBuilder.Build(file.Path, baseContent, targetContent);
+                file.Hunks = _diffBuilder.Build(file.Path, baseContent, targetContent);
 
-                if (IsFullFileRewrite(baseContent, targetContent, file.Diff))
+                if (IsFullFileRewrite(baseContent, targetContent, file.Hunks))
                 {
                     file.SkipReason = "full file rewrite";
-                    file.Diff = BuildSkippedDiffMarker(file.Path, file.ChangeType, "full file rewrite");
+                    file.Hunks = new List<DiffHunk>();
                     _logger.LogDebug(
                         "Replaced diff for '{FilePath}': detected full file rewrite",
                         file.Path);
+                }
+                else
+                {
+                    file.Additions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '+');
+                    file.Deletions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '-');
                 }
 
                 fileSw.Stop();
 
                 _logger.LogDebug(
-                    "Built diff for '{FilePath}' ({ChangeType}): {DiffLength} chars, {ElapsedMs}ms",
-                    file.Path, file.ChangeType, file.Diff?.Length ?? 0, fileSw.ElapsedMilliseconds);
+                    "Built diff for '{FilePath}' ({ChangeType}): {HunkCount} hunk(s), {ElapsedMs}ms",
+                    file.Path, file.ChangeType, file.Hunks.Count, fileSw.ElapsedMilliseconds);
             }
         }
 
@@ -233,12 +238,12 @@ namespace REBUSS.Pure.Services.Diff
         /// Detects a full-file rewrite: both contents are non-trivial but the diff
         /// contains zero context (unchanged) lines, indicating every line changed.
         /// </summary>
-        internal static bool IsFullFileRewrite(string? baseContent, string? targetContent, string diff)
+        internal static bool IsFullFileRewrite(string? baseContent, string? targetContent, List<DiffHunk> hunks)
         {
             if (string.IsNullOrEmpty(baseContent) || string.IsNullOrEmpty(targetContent))
                 return false;
 
-            if (string.IsNullOrEmpty(diff))
+            if (hunks.Count == 0)
                 return false;
 
             var oldLineCount = baseContent.Replace("\r\n", "\n").Split('\n').Length;
@@ -247,40 +252,12 @@ namespace REBUSS.Pure.Services.Diff
             if (oldLineCount < FullRewriteMinLineCount && newLineCount < FullRewriteMinLineCount)
                 return false;
 
-            var diffLines = diff.Split('\n');
-            bool inHunk = false;
-
-            foreach (var line in diffLines)
-            {
-                if (line.StartsWith("@@"))
-                {
-                    inHunk = true;
-                    continue;
-                }
-
-                if (inHunk && line.Length > 0 && line[0] == ' ')
-                    return false;
-            }
-
-            return inHunk;
-        }
-
-        private static string BuildSkippedDiffMarker(string path, string changeType, string reason)
-        {
-            var p = path.TrimStart('/');
-            var sb = new StringBuilder();
-            sb.AppendLine($"diff --git a/{p} b/{p}");
-            sb.AppendLine($"--- a/{p}");
-            sb.AppendLine($"+++ b/{p}");
-            sb.Append($"# {changeType} — {reason}, diff skipped");
-            return sb.ToString();
+            return !hunks.SelectMany(h => h.Lines).Any(l => l.Op == ' ');
         }
 
         private static PullRequestDiff BuildDiff(
             PullRequestMetadata metadata,
-            List<FileChange> files,
-            string baseCommit,
-            string targetCommit)
+            List<FileChange> files)
         {
             return new PullRequestDiff
             {
@@ -290,42 +267,8 @@ namespace REBUSS.Pure.Services.Diff
                 TargetBranch  = metadata.TargetBranch,
                 SourceRefName = metadata.SourceRefName,
                 TargetRefName = metadata.TargetRefName,
-                Files         = files,
-                DiffContent   = BuildDiffContent(files, baseCommit, targetCommit)
+                Files         = files
             };
-        }
-
-        private static string BuildDiffContent(List<FileChange> files, string baseCommit, string targetCommit)
-        {
-            var diffSections = files
-                .Where(f => !string.IsNullOrEmpty(f.Diff))
-                .Select(f => f.Diff)
-                .ToList();
-
-            if (diffSections.Count > 0)
-                return string.Join("\n", diffSections);
-
-            var noCommitShas = string.IsNullOrEmpty(baseCommit) || string.IsNullOrEmpty(targetCommit);
-            return GenerateFallbackDiff(files, noCommitShas);
-        }
-
-        private static string GenerateFallbackDiff(List<FileChange> files, bool noCommitShas)
-        {
-            if (files.Count == 0) return string.Empty;
-
-            var reason = noCommitShas ? "commit SHAs not resolved from iteration" : "file content unavailable";
-            var sb = new StringBuilder();
-
-            foreach (var f in files)
-            {
-                var p = f.Path.TrimStart('/');
-                sb.AppendLine($"diff --git a/{p} b/{p}");
-                sb.AppendLine($"--- a/{p}");
-                sb.AppendLine($"+++ b/{p}");
-                sb.AppendLine($"# {f.ChangeType} ({reason})");
-            }
-
-            return sb.ToString().TrimEnd();
         }
     }
 }

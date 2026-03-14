@@ -24,9 +24,26 @@ public class GetFileDiffToolHandlerTests
         TargetRefName = "refs/heads/main",
         Files = new List<FileChange>
         {
-            new() { Path = "/src/A.cs", ChangeType = "edit", Diff = "-old\n+new" }
-        },
-        DiffContent = "-old\n+new"
+            new()
+            {
+                Path = "/src/A.cs",
+                ChangeType = "edit",
+                Additions = 1,
+                Deletions = 1,
+                Hunks = new List<DiffHunk>
+                {
+                    new()
+                    {
+                        OldStart = 1, OldCount = 1, NewStart = 1, NewCount = 1,
+                        Lines = new List<DiffLine>
+                        {
+                            new() { Op = '-', Text = "old" },
+                            new() { Op = '+', Text = "new" }
+                        }
+                    }
+                }
+            }
+        }
     };
 
     public GetFileDiffToolHandlerTests()
@@ -39,7 +56,7 @@ public class GetFileDiffToolHandlerTests
     // --- Happy path ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsTextResult_ByDefault()
+    public async Task ExecuteAsync_ReturnsStructuredJson_ByDefault()
     {
         _diffProvider.GetFileDiffAsync(42, "/src/A.cs", Arg.Any<CancellationToken>())
             .Returns(SampleFileDiff);
@@ -49,28 +66,16 @@ public class GetFileDiffToolHandlerTests
 
         Assert.False(result.IsError);
         var text = result.Content[0].Text;
-        Assert.Contains("Pull Request #42 File Diff: /src/A.cs", text);
-        Assert.Contains("-old", text);
-    }
-
-    [Theory]
-    [InlineData("json")]
-    [InlineData("structured")]
-    public async Task ExecuteAsync_ReturnsStructuredJson_WhenFormatRequested(string format)
-    {
-        _diffProvider.GetFileDiffAsync(42, "/src/A.cs", Arg.Any<CancellationToken>())
-            .Returns(SampleFileDiff);
-
-        var args = CreateArgs(42, "/src/A.cs", format);
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.False(result.IsError);
-        var text = result.Content[0].Text;
         var doc = JsonDocument.Parse(text);
         Assert.Equal(42, doc.RootElement.GetProperty("prNumber").GetInt32());
         Assert.True(doc.RootElement.TryGetProperty("files", out var files));
         Assert.Equal(1, files.GetArrayLength());
         Assert.Equal("/src/A.cs", files[0].GetProperty("path").GetString());
+
+        var hunks = files[0].GetProperty("hunks");
+        Assert.Equal(1, hunks.GetArrayLength());
+        Assert.True(hunks[0].TryGetProperty("lines", out var lines));
+        Assert.Equal(2, lines.GetArrayLength());
     }
 
     // --- Validation errors ---
@@ -221,23 +226,19 @@ public class GetFileDiffToolHandlerTests
         Assert.Equal("integer", tool.InputSchema.Properties["prNumber"].Type);
         Assert.Contains("path", tool.InputSchema.Properties.Keys);
         Assert.Equal("string", tool.InputSchema.Properties["path"].Type);
-        Assert.Contains("format", tool.InputSchema.Properties.Keys);
+        Assert.DoesNotContain("format", tool.InputSchema.Properties.Keys);
         Assert.Contains("prNumber", tool.InputSchema.Required!);
         Assert.Contains("path", tool.InputSchema.Required!);
     }
 
     // --- Helpers ---
 
-    private static Dictionary<string, object> CreateArgs(
-        int prNumber, string path, string? format = null)
+    private static Dictionary<string, object> CreateArgs(int prNumber, string path)
     {
-        var args = new Dictionary<string, object>
+        return new Dictionary<string, object>
         {
             ["prNumber"] = prNumber,
             ["path"] = path
         };
-        if (format != null)
-            args["format"] = format;
-        return args;
     }
 }

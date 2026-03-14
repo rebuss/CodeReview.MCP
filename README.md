@@ -85,31 +85,37 @@ This allows the AI agent to review the pull request **file-by-file** instead of 
 
 ---
 
-## get_pr_diff(prNumber, format?)
+## get_pr_diff(prNumber)
 
-Returns the complete diff for all changed files in the pull request.
+Returns a structured JSON object with per-file hunks for all changed files in the pull request.
 
-Supports an optional `format` parameter:
+The response includes for each file:
 
-- `text` (default) – human-readable summary followed by unified diff content
-- `json` / `structured` – structured JSON object with per-file diffs
+- file path and change type
+- skip reason (if the diff was skipped)
+- additions and deletions count
+- a list of hunks, each with location metadata and ordered lines
+- each line includes an operation (`+`, `-`, or ` `) and the line text
 
-Files where a textual diff is not meaningful (deletions, renames, binary files, generated files, and full-file rewrites) are **automatically skipped** — see [Diff Skip Behavior](#diff-skip-behavior) below.
+Files where a diff is not meaningful (deletions, renames, binary files, generated files, and full-file rewrites) are **automatically skipped** — see [Diff Skip Behavior](#diff-skip-behavior) below. Skipped files have a `skipReason` field and an empty `hunks` list.
 
 This tool is useful for a quick overview of all changes at once. For large pull requests, prefer `get_file_diff` to retrieve changes file-by-file.
 
 ---
 
-## get_file_diff(prNumber, path, format?)
+## get_file_diff(prNumber, path)
 
-Returns the diff for a specific file in the pull request.
+Returns a structured JSON object with the diff for a specific file in the pull request.
 
-Supports an optional `format` parameter:
+The response includes:
 
-- `text` (default) – human-readable summary followed by unified diff content
-- `json` / `structured` – structured JSON object scoped to the requested file
+- file path and change type
+- skip reason (if the diff was skipped)
+- additions and deletions count
+- a list of hunks, each with location metadata and ordered lines
+- each line includes an operation (`+`, `-`, or ` `) and the line text
 
-If the requested file falls into a skip category (deleted, renamed, binary, generated, or full-file rewrite) the response contains a short marker instead of a computed diff — see [Diff Skip Behavior](#diff-skip-behavior) below.
+If the requested file falls into a skip category (deleted, renamed, binary, generated, or full-file rewrite) the response includes a `skipReason` field and an empty `hunks` list — see [Diff Skip Behavior](#diff-skip-behavior) below.
 
 The agent uses this to analyze code changes with minimal context cost.
 
@@ -138,29 +144,33 @@ Full file retrieval is used **only when the diff alone is not sufficient** to un
 
 # Diff Skip Behavior
 
-The diff provider **automatically skips** diff generation for files where a textual diff would be unnecessary, misleading, or wasteful.
+The diff provider **automatically skips** diff generation for files where a diff would be unnecessary, misleading, or wasteful.
 
-When a diff is skipped, the file entry includes a `SkipReason` field that explains why, and the `Diff` field contains a short marker comment instead of computed diff hunks.
+When a diff is skipped, the file entry includes a `skipReason` field that explains why, and the `hunks` list is empty.
 
 ## Skip categories
 
-| Category | SkipReason value | Description |
+| Category | skipReason value | Description |
 |---|---|---|
 | **File deletions** | `file deleted` | The file was removed entirely. No content is fetched. |
 | **File renames** | `file renamed` | A pure rename. Fetching content at the new path against the base commit would produce a misleading full-file diff. |
-| **Binary files** | `binary file` | Detected by file extension (`.dll`, `.png`, `.zip`, `.pdf`, `.woff2`, etc.). Textual diffs are meaningless for binary content. |
+| **Binary files** | `binary file` | Detected by file extension (`.dll`, `.png`, `.zip`, `.pdf`, `.woff2`, etc.). Diffs are meaningless for binary content. |
 | **Generated files** | `generated file` | Detected by path patterns (`/obj/`, `/bin/`, `node_modules/`, `.g.cs`, `.designer.cs`, lock files, etc.). Generated output changes are noise. |
 | **Full-file rewrites** | `full file rewrite` | Both file versions exist and have at least 10 lines, but the diff contains zero unchanged context lines — every line was replaced. This typically indicates a formatting rewrite, re-encoding, or tooling regeneration. |
 
-## Marker format
+## Skipped file format
 
-Skipped files produce a marker in the standard git-diff header style:
+Skipped files appear in the structured JSON output with:
 
-```
-diff --git a/path b/path
---- a/path
-+++ b/path
-# <changeType> — <reason>, diff skipped
+```json
+{
+  "path": "path/to/file",
+  "changeType": "delete",
+  "skipReason": "file deleted",
+  "additions": 0,
+  "deletions": 0,
+  "hunks": []
+}
 ```
 
 This allows consumers to see the file in the changed-files list while keeping the diff output minimal.

@@ -1,30 +1,30 @@
 using System.Diagnostics;
-using System.Text;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.Services.Common.Models;
 
 namespace REBUSS.Pure.Services.Common;
 
 /// <summary>
-/// Produces unified-diff text for a single file given base and target content.
+/// Produces structured diff hunks for a single file given base and target content.
 /// Depends on <see cref="IDiffAlgorithm"/> for the line-level edit computation (DIP).
 /// </summary>
-public class UnifiedDiffBuilder : IUnifiedDiffBuilder
+public class StructuredDiffBuilder : IStructuredDiffBuilder
 {
     private const int DefaultContextLines = 3;
 
     private readonly IDiffAlgorithm _diffAlgorithm;
-    private readonly ILogger<UnifiedDiffBuilder> _logger;
+    private readonly ILogger<StructuredDiffBuilder> _logger;
 
-    public UnifiedDiffBuilder(IDiffAlgorithm diffAlgorithm, ILogger<UnifiedDiffBuilder> logger)
+    public StructuredDiffBuilder(IDiffAlgorithm diffAlgorithm, ILogger<StructuredDiffBuilder> logger)
     {
         _diffAlgorithm = diffAlgorithm;
         _logger = logger;
     }
 
-    public string Build(string filePath, string? baseContent, string? targetContent)
+    public List<DiffHunk> Build(string filePath, string? baseContent, string? targetContent)
     {
         if (baseContent == targetContent)
-            return string.Empty;
+            return new List<DiffHunk>();
 
         var sw = Stopwatch.StartNew();
 
@@ -33,27 +33,12 @@ public class UnifiedDiffBuilder : IUnifiedDiffBuilder
         var targetLines = SplitLines(targetContent);
 
         var hunks = ComputeHunks(baseLines, targetLines, DefaultContextLines);
-        if (hunks.Count == 0)
-        {
-            _logger.LogDebug(
-                "Diff for '{FilePath}': 0 hunks (old={OldLineCount}, new={NewLineCount})",
-                aPath, baseLines.Length, targetLines.Length);
-            return string.Empty;
-        }
-
-        var sb = new StringBuilder();
-        sb.Append(BuildDiffHeader(aPath, baseContent, targetContent));
-        foreach (var hunk in hunks)
-            sb.Append(hunk);
 
         sw.Stop();
 
-        var result = sb.ToString().TrimEnd();
-
         _logger.LogDebug(
-            "Diff for '{FilePath}': {HunkCount} hunk(s), old={OldLineCount} lines, new={NewLineCount} lines, " +
-            "diffLength={DiffLength} chars, {ElapsedMs}ms",
-            aPath, hunks.Count, baseLines.Length, targetLines.Length, result.Length, sw.ElapsedMilliseconds);
+            "Diff for '{FilePath}': {HunkCount} hunk(s), old={OldLineCount} lines, new={NewLineCount} lines, {ElapsedMs}ms",
+            aPath, hunks.Count, baseLines.Length, targetLines.Length, sw.ElapsedMilliseconds);
 
         if (hunks.Count > 50)
         {
@@ -62,7 +47,7 @@ public class UnifiedDiffBuilder : IUnifiedDiffBuilder
                 aPath, hunks.Count);
         }
 
-        return result;
+        return hunks;
     }
 
     internal static string[] SplitLines(string? content)
@@ -72,47 +57,12 @@ public class UnifiedDiffBuilder : IUnifiedDiffBuilder
         return content.Replace("\r\n", "\n").Split('\n');
     }
 
-    // --- Header ------------------------------------------------------------------
-
-    private static string BuildDiffHeader(string aPath, string? baseContent, string? targetContent)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"diff --git a/{aPath} b/{aPath}");
-
-        AppendFromHeader(sb, aPath, baseContent);
-        AppendToHeader(sb, aPath, targetContent);
-
-        return sb.ToString();
-    }
-
-    private static void AppendFromHeader(StringBuilder sb, string aPath, string? baseContent)
-    {
-        if (baseContent is null)
-        {
-            sb.AppendLine("new file mode 100644");
-            sb.AppendLine("--- /dev/null");
-        }
-        else
-            sb.AppendLine($"--- a/{aPath}");
-    }
-
-    private static void AppendToHeader(StringBuilder sb, string aPath, string? targetContent)
-    {
-        if (targetContent is null)
-        {
-            sb.AppendLine("deleted file mode 100644");
-            sb.AppendLine("+++ /dev/null");
-        }
-        else
-            sb.AppendLine($"+++ b/{aPath}");
-    }
-
     // --- Hunk computation --------------------------------------------------------
 
-    private List<string> ComputeHunks(string[] oldLines, string[] newLines, int contextLines)
+    private List<DiffHunk> ComputeHunks(string[] oldLines, string[] newLines, int contextLines)
     {
         var edits = _diffAlgorithm.ComputeEdits(oldLines, newLines);
-        var hunks = new List<string>();
+        var hunks = new List<DiffHunk>();
         int i = 0;
 
         while (i < edits.Count)
@@ -173,22 +123,27 @@ public class UnifiedDiffBuilder : IUnifiedDiffBuilder
 
     // --- Hunk formatting ---------------------------------------------------------
 
-    private static string FormatHunk(List<DiffEdit> hunkEdits, string[] oldLines, string[] newLines)
+    private static DiffHunk FormatHunk(List<DiffEdit> hunkEdits, string[] oldLines, string[] newLines)
     {
         int oldStart = hunkEdits.Where(e => e.Kind != '+').Select(e => e.OldIdx + 1).DefaultIfEmpty(1).First();
         int newStart = hunkEdits.Where(e => e.Kind != '-').Select(e => e.NewIdx + 1).DefaultIfEmpty(1).First();
         int oldCount = hunkEdits.Count(e => e.Kind != '+');
         int newCount = hunkEdits.Count(e => e.Kind != '-');
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@");
-
+        var lines = new List<DiffLine>();
         foreach (var edit in hunkEdits)
         {
             var lineText = edit.Kind == '+' ? newLines[edit.NewIdx] : oldLines[edit.OldIdx];
-            sb.AppendLine($"{edit.Kind}{lineText}");
+            lines.Add(new DiffLine { Op = edit.Kind, Text = lineText });
         }
 
-        return sb.ToString();
+        return new DiffHunk
+        {
+            OldStart = oldStart,
+            OldCount = oldCount,
+            NewStart = newStart,
+            NewCount = newCount,
+            Lines = lines
+        };
     }
 }

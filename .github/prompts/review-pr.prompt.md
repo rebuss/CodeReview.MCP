@@ -64,10 +64,12 @@ Use this to avoid loading the entire PR diff at once.
 Use for **small PRs** as a faster alternative to iterating `get_file_diff` over each file.
 
 Purpose:
-- retrieve the complete diff for all changed files in a single call
+- retrieve the complete structured diff for all changed files in a single call
 - get a quick overview of all changes at once
 
-Some files may have their diff **automatically skipped** by the server (see *Skipped Diffs* below). Their diff field will contain a short marker comment instead of computed hunks.
+The response is a structured JSON object containing per-file hunks. Each file includes `path`, `changeType`, `additions`, `deletions`, and a `hunks` array. Each hunk contains location metadata and ordered lines with operation types (`+`, `-`, ` `).
+
+Some files may have their diff **automatically skipped** by the server (see *Skipped Diffs* below). Their `hunks` array will be empty and a `skipReason` field will explain why.
 
 Do not use for large PRs — prefer `get_file_diff` to keep context small.
 
@@ -78,10 +80,12 @@ Do not use for large PRs — prefer `get_file_diff` to keep context small.
 Default method for reviewing code.
 
 Purpose:
-- retrieve only the patch for a specific file
+- retrieve the structured diff for a specific file
 - analyze changes with minimal context cost
 
-If the file belongs to a skip category (deleted, renamed, binary, generated, or full-file rewrite), the response contains a short marker comment and a `skipReason` value instead of a computed diff. In that case, do not attempt to analyze the diff content — acknowledge the skip reason and move on.
+The response is a structured JSON object containing the file's `path`, `changeType`, `additions`, `deletions`, and a `hunks` array. Each hunk contains `oldStart`, `oldCount`, `newStart`, `newCount`, and ordered `lines` with an `op` field (`+`, `-`, ` `) and `text`.
+
+If the file belongs to a skip category (deleted, renamed, binary, generated, or full-file rewrite), the response contains a `skipReason` value and an empty `hunks` array. In that case, do not attempt to analyze the diff content — acknowledge the skip reason and move on.
 
 Always prefer this before retrieving full file content.
 
@@ -151,15 +155,19 @@ Do not request diffs for files that are clearly binary or generated — the serv
 The diff provider **automatically skips** diff generation for certain files. When a diff is skipped, the file entry will contain:
 
 - a `skipReason` field explaining why (e.g. `"file deleted"`, `"file renamed"`, `"binary file"`, `"generated file"`, `"full file rewrite"`)
-- a short marker comment in the diff field instead of computed hunks
+- an empty `hunks` array
 
-The marker looks like:
+Example skipped file in the structured response:
 
-```
-diff --git a/path b/path
---- a/path
-+++ b/path
-# <changeType> — <reason>, diff skipped
+```json
+{
+  "path": "lib/tool.dll",
+  "changeType": "add",
+  "skipReason": "binary file",
+  "additions": 0,
+  "deletions": 0,
+  "hunks": []
+}
 ```
 
 ## Skip categories

@@ -87,7 +87,7 @@ namespace REBUSS.Pure
             services.AddSingleton<IIterationInfoParser, IterationInfoParser>();
             services.AddSingleton<IFileChangesParser, FileChangesParser>();
             services.AddSingleton<IDiffAlgorithm, LcsDiffAlgorithm>();
-            services.AddSingleton<IUnifiedDiffBuilder, UnifiedDiffBuilder>();
+            services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
             services.AddSingleton<IPullRequestDiffProvider, AzureDevOpsDiffProvider>();
             services.AddSingleton<IPullRequestMetadataProvider, AzureDevOpsMetadataProvider>();
             services.AddSingleton<IFileClassifier, FileClassifier>();

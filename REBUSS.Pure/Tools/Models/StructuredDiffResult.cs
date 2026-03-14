@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 namespace REBUSS.Pure.Tools.Models
 {
     /// <summary>
-    /// Structured JSON response model returned when format is "json" or "structured".
-    /// Contains only diff-related data; metadata is served by the get_pr_metadata tool.
+    /// Structured JSON response model for diff tools.
+    /// Contains hunk-level diff data optimized for AI code review.
     /// </summary>
     public class StructuredDiffResult
     {
@@ -23,7 +23,43 @@ namespace REBUSS.Pure.Tools.Models
         [JsonPropertyName("changeType")]
         public string ChangeType { get; set; } = string.Empty;
 
-        [JsonPropertyName("diff")]
-        public string Diff { get; set; } = string.Empty;
+        [JsonPropertyName("skipReason")]
+        public string? SkipReason { get; set; }
+
+        [JsonPropertyName("additions")]
+        public int Additions { get; set; }
+
+        [JsonPropertyName("deletions")]
+        public int Deletions { get; set; }
+
+        [JsonPropertyName("hunks")]
+        public List<StructuredHunk> Hunks { get; set; } = new();
+    }
+
+    public class StructuredHunk
+    {
+        [JsonPropertyName("oldStart")]
+        public int OldStart { get; set; }
+
+        [JsonPropertyName("oldCount")]
+        public int OldCount { get; set; }
+
+        [JsonPropertyName("newStart")]
+        public int NewStart { get; set; }
+
+        [JsonPropertyName("newCount")]
+        public int NewCount { get; set; }
+
+        [JsonPropertyName("lines")]
+        public List<StructuredLine> Lines { get; set; } = new();
+    }
+
+    public class StructuredLine
+    {
+        [JsonPropertyName("op")]
+        public string Op { get; set; } = string.Empty;
+
+        [JsonPropertyName("text")]
+        public string Text { get; set; } = string.Empty;
     }
 }

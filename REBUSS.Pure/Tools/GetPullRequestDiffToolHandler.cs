@@ -13,7 +13,7 @@ namespace REBUSS.Pure.Tools
     /// <summary>
     /// Handles the execution of the get_pr_diff MCP tool.
     /// Validates input, delegates to <see cref="IPullRequestDiffProvider"/>,
-    /// and formats the result as text or structured JSON.
+    /// and returns a structured JSON result with per-file hunks.
     /// </summary>
     public class GetPullRequestDiffToolHandler : IMcpToolHandler
     {
@@ -41,10 +41,7 @@ namespace REBUSS.Pure.Tools
         {
             Name = ToolName,
             Description = "Retrieves the diff (file changes) for a specific Pull Request from Azure DevOps. " +
-                          "Returns the complete diff of all changed files. " +
-                          "Use the optional 'format' parameter to choose the output format: " +
-                          "'text' (default) returns a human-readable summary followed by unified diff content; " +
-                          "'json' or 'structured' returns a structured JSON object with per-file diffs.",
+                          "Returns a structured JSON object with per-file hunks optimized for AI code review.",
             InputSchema = new ToolInputSchema
             {
                 Type = "object",
@@ -54,15 +51,6 @@ namespace REBUSS.Pure.Tools
                     {
                         Type = "integer",
                         Description = "The Pull Request number/ID to retrieve the diff for"
-                    },
-                    ["format"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description = "Output format for the diff result. " +
-                                      "'text' (default) returns a human-readable summary + unified diff. " +
-                                      "'json' or 'structured' returns a structured JSON object with prNumber and per-file diffs.",
-                        Enum = new List<string> { "text", "json", "structured" },
-                        Default = "text"
                     }
                 },
                 Required = new List<string> { "prNumber" }
@@ -81,24 +69,18 @@ namespace REBUSS.Pure.Tools
                     return CreateErrorResult(error);
                 }
 
-                var format = ExtractStringArgument(arguments!, "format", "text");
-
-                _logger.LogInformation("[{ToolName}] Entry: PR #{PrNumber}, format={Format}", ToolName, prNumber, format);
+                _logger.LogInformation("[{ToolName}] Entry: PR #{PrNumber}", ToolName, prNumber);
                 var sw = Stopwatch.StartNew();
 
                 var diff = await _diffProvider.GetDiffAsync(prNumber, cancellationToken);
 
-                var result = format.ToLowerInvariant() switch
-                {
-                    "json" or "structured" => BuildStructuredResult(prNumber, diff),
-                    _ => BuildTextResult(prNumber, diff)
-                };
+                var result = BuildStructuredResult(prNumber, diff);
 
                 sw.Stop();
 
                 _logger.LogInformation(
-                    "[{ToolName}] Completed: PR #{PrNumber}, format={Format}, {FileCount} file(s), {ResponseLength} chars, {ElapsedMs}ms",
-                    ToolName, prNumber, format, diff.Files.Count, result.Content[0].Text.Length, sw.ElapsedMilliseconds);
+                    "[{ToolName}] Completed: PR #{PrNumber}, {FileCount} file(s), {ResponseLength} chars, {ElapsedMs}ms",
+                    ToolName, prNumber, diff.Files.Count, result.Content[0].Text.Length, sw.ElapsedMilliseconds);
 
                 return result;
             }
@@ -109,8 +91,8 @@ namespace REBUSS.Pure.Tools
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{ToolName}] Error (prNumber={PrNumber}, format={Format})",
-                    ToolName, arguments?.GetValueOrDefault("prNumber"), arguments?.GetValueOrDefault("format"));
+                _logger.LogError(ex, "[{ToolName}] Error (prNumber={PrNumber})",
+                    ToolName, arguments?.GetValueOrDefault("prNumber"));
                 return CreateErrorResult($"Error retrieving PR diff: {ex.Message}");
             }
         }
@@ -152,47 +134,7 @@ namespace REBUSS.Pure.Tools
             return true;
         }
 
-        private static string ExtractStringArgument(
-            Dictionary<string, object> arguments, string key, string defaultValue)
-        {
-            if (!arguments.TryGetValue(key, out var value))
-                return defaultValue;
-
-            if (value is JsonElement jsonElement)
-            {
-                return jsonElement.ValueKind == JsonValueKind.String
-                    ? jsonElement.GetString() ?? defaultValue
-                    : defaultValue;
-            }
-
-            return value?.ToString() ?? defaultValue;
-        }
-
         // --- Result builders ------------------------------------------------------
-
-        private static ToolResult BuildTextResult(int prNumber, PullRequestDiff diff)
-        {
-            var lines = new List<string>
-            {
-                $"Pull Request #{prNumber} Diff",
-                "",
-                $"Files Changed: {diff.Files.Count}",
-                "",
-                "Changed Files:"
-            };
-
-            foreach (var file in diff.Files)
-                lines.Add($"  - {file.Path} ({file.ChangeType})");
-
-            lines.Add("");
-            lines.Add(new string('=', 80));
-            lines.Add("DIFF CONTENT:");
-            lines.Add(new string('=', 80));
-            lines.Add("");
-            lines.Add(diff.DiffContent);
-
-            return CreateSuccessResult(string.Join(Environment.NewLine, lines));
-        }
 
         private static ToolResult BuildStructuredResult(int prNumber, PullRequestDiff diff)
         {
@@ -203,7 +145,21 @@ namespace REBUSS.Pure.Tools
                 {
                     Path = f.Path,
                     ChangeType = f.ChangeType,
-                    Diff = f.Diff
+                    SkipReason = f.SkipReason,
+                    Additions = f.Additions,
+                    Deletions = f.Deletions,
+                    Hunks = f.Hunks.Select(h => new StructuredHunk
+                    {
+                        OldStart = h.OldStart,
+                        OldCount = h.OldCount,
+                        NewStart = h.NewStart,
+                        NewCount = h.NewCount,
+                        Lines = h.Lines.Select(l => new StructuredLine
+                        {
+                            Op = l.Op.ToString(),
+                            Text = l.Text
+                        }).ToList()
+                    }).ToList()
                 }).ToList()
             };
 

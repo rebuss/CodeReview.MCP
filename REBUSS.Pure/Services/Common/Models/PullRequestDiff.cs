@@ -12,7 +12,6 @@ namespace REBUSS.Pure.Services.Common.Models
         public string SourceRefName { get; set; } = string.Empty;
         public string TargetRefName { get; set; } = string.Empty;
         public List<FileChange> Files { get; set; } = new();
-        public string DiffContent { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -22,7 +21,7 @@ namespace REBUSS.Pure.Services.Common.Models
     {
         public string Path { get; set; } = string.Empty;
         public string ChangeType { get; set; } = string.Empty;
-        public string Diff { get; set; } = string.Empty;
+        public List<DiffHunk> Hunks { get; set; } = new();
 
         /// <summary>
         /// When set, indicates that diff generation was skipped and explains why
@@ -30,5 +29,33 @@ namespace REBUSS.Pure.Services.Common.Models
         /// <c>null</c> means the diff was computed normally.
         /// </summary>
         public string? SkipReason { get; set; }
+
+        public int Additions { get; set; }
+        public int Deletions { get; set; }
+    }
+
+    /// <summary>
+    /// Represents a single hunk in a structured diff.
+    /// </summary>
+    public class DiffHunk
+    {
+        public int OldStart { get; set; }
+        public int OldCount { get; set; }
+        public int NewStart { get; set; }
+        public int NewCount { get; set; }
+        public List<DiffLine> Lines { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Represents a single line operation within a diff hunk.
+    /// </summary>
+    public class DiffLine
+    {
+        /// <summary>
+        /// ' ' = unchanged context, '-' = removed, '+' = added.
+        /// </summary>
+        public char Op { get; set; }
+
+        public string Text { get; set; } = string.Empty;
     }
 }

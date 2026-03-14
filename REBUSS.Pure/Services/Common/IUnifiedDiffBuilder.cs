@@ -1,14 +1,16 @@
+using REBUSS.Pure.Services.Common.Models;
+
 namespace REBUSS.Pure.Services.Common;
 
 /// <summary>
-/// Produces unified-diff text for a single file given base and target content.
+/// Produces structured diff hunks for a single file given base and target content.
 /// </summary>
-public interface IUnifiedDiffBuilder
+public interface IStructuredDiffBuilder
 {
     /// <summary>
-    /// Produces a unified-diff string for a single file.
+    /// Produces a list of structured diff hunks for a single file.
     /// <c>null</c> content means the file did not exist at that commit (add/delete).
-    /// Returns <see cref="string.Empty"/> when both sides are identical.
+    /// Returns an empty list when both sides are identical.
     /// </summary>
-    string Build(string filePath, string? baseContent, string? targetContent);
+    List<DiffHunk> Build(string filePath, string? baseContent, string? targetContent);
 }

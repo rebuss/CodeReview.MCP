@@ -47,7 +47,7 @@ public class EndToEndTests
     }
 
     [Fact]
-    public async Task FullPipeline_TextFormat_ReturnsFormattedDiff()
+    public async Task FullPipeline_ReturnsStructuredJson_ByDefault()
     {
         _diffProvider
             .GetDiffAsync(42, Arg.Any<CancellationToken>())
@@ -59,9 +59,26 @@ public class EndToEndTests
                 TargetBranch = "main",
                 Files = new List<FileChange>
                 {
-                    new() { Path = "/src/App.cs", ChangeType = "edit", Diff = "@@ -1 +1 @@\n-old\n+new" }
-                },
-                DiffContent = "@@ -1 +1 @@\n-old\n+new"
+                    new()
+                    {
+                        Path = "/src/App.cs",
+                        ChangeType = "edit",
+                        Additions = 1,
+                        Deletions = 1,
+                        Hunks = new List<DiffHunk>
+                        {
+                            new()
+                            {
+                                OldStart = 1, OldCount = 1, NewStart = 1, NewCount = 1,
+                                Lines = new List<DiffLine>
+                                {
+                                    new() { Op = '-', Text = "old" },
+                                    new() { Op = '+', Text = "new" }
+                                }
+                            }
+                        }
+                    }
+                }
             });
 
         var request = JsonSerializer.Serialize(new
@@ -77,53 +94,16 @@ public class EndToEndTests
 
         Assert.False(result.GetProperty("isError").GetBoolean());
 
-        var text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        Assert.Contains("Pull Request #42 Diff", text);
-        Assert.DoesNotContain("Fix bug", text);
-        Assert.Contains("/src/App.cs", text);
-        Assert.Contains("-old", text);
-    }
-
-    [Fact]
-    public async Task FullPipeline_JsonFormat_ReturnsStructuredResult()
-    {
-        _diffProvider
-            .GetDiffAsync(7, Arg.Any<CancellationToken>())
-            .Returns(new PullRequestDiff
-            {
-                Title = "Add feature",
-                Status = "completed",
-                SourceBranch = "feature/add",
-                TargetBranch = "main",
-                SourceRefName = "refs/heads/feature/add",
-                TargetRefName = "refs/heads/main",
-                Files = new List<FileChange>
-                {
-                    new() { Path = "/src/New.cs", ChangeType = "add", Diff = "@@ +1 @@\n+line" }
-                },
-                DiffContent = "@@ +1 @@\n+line"
-            });
-
-        var request = JsonSerializer.Serialize(new
-        {
-            jsonrpc = "2.0",
-            id = "e2e-2",
-            method = "tools/call",
-            @params = new { name = "get_pr_diff", arguments = new { prNumber = 7, format = "json" } }
-        });
-
-        var doc = await SendAsync(request);
-        var result = doc.RootElement.GetProperty("result");
-
-        Assert.False(result.GetProperty("isError").GetBoolean());
-
         var innerJson = result.GetProperty("content")[0].GetProperty("text").GetString()!;
         var structured = JsonDocument.Parse(innerJson).RootElement;
 
-        Assert.Equal(7, structured.GetProperty("prNumber").GetInt32());
-        Assert.True(structured.TryGetProperty("files", out _));
+        Assert.Equal(42, structured.GetProperty("prNumber").GetInt32());
+        Assert.True(structured.TryGetProperty("files", out var files));
+        Assert.Equal(1, files.GetArrayLength());
+        Assert.Equal("/src/App.cs", files[0].GetProperty("path").GetString());
+        Assert.True(files[0].TryGetProperty("hunks", out var hunks));
+        Assert.Equal(1, hunks.GetArrayLength());
         Assert.False(structured.TryGetProperty("title", out _));
-        Assert.False(structured.TryGetProperty("metadata", out _));
     }
 
     [Fact]
@@ -174,6 +154,6 @@ public class EndToEndTests
 
         var props = tool.GetProperty("inputSchema").GetProperty("properties");
         Assert.True(props.TryGetProperty("prNumber", out _));
-        Assert.True(props.TryGetProperty("format", out _));
+        Assert.False(props.TryGetProperty("format", out _));
     }
 }

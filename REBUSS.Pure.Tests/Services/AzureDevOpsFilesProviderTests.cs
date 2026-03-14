@@ -28,7 +28,24 @@ public class AzureDevOpsFilesProviderTests
         {
             Files = new List<FileChange>
             {
-                new() { Path = "/src/Service.cs", ChangeType = "edit", Diff = "-old\n+new\n+extra" }
+                new()
+                {
+                    Path = "/src/Service.cs", ChangeType = "edit",
+                    Additions = 2, Deletions = 1,
+                    Hunks = new List<DiffHunk>
+                    {
+                        new()
+                        {
+                            OldStart = 1, OldCount = 1, NewStart = 1, NewCount = 2,
+                            Lines = new List<DiffLine>
+                            {
+                                new() { Op = '-', Text = "old" },
+                                new() { Op = '+', Text = "new" },
+                                new() { Op = '+', Text = "extra" }
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -77,8 +94,8 @@ public class AzureDevOpsFilesProviderTests
         {
             Files = new List<FileChange>
             {
-                new() { Path = "/src/App.cs", ChangeType = "edit", Diff = "+a\n+b" },
-                new() { Path = "/tests/AppTests.cs", ChangeType = "edit", Diff = "+t" },
+                new() { Path = "/src/App.cs", ChangeType = "edit", Additions = 2 },
+                new() { Path = "/tests/AppTests.cs", ChangeType = "edit", Additions = 1 },
                 new() { Path = "/appsettings.json", ChangeType = "edit" },
                 new() { Path = "/docs/readme.md", ChangeType = "edit" },
                 new() { Path = "/lib/tool.dll", ChangeType = "add" },
@@ -114,13 +131,13 @@ public class AzureDevOpsFilesProviderTests
     }
 
     [Fact]
-    public async Task GetFilesAsync_HandlesFileWithNoDiff()
+    public async Task GetFilesAsync_HandlesFileWithNoHunks()
     {
         _diffProvider.GetDiffAsync(6, Arg.Any<CancellationToken>()).Returns(new PullRequestDiff
         {
             Files = new List<FileChange>
             {
-                new() { Path = "/src/Empty.cs", ChangeType = "edit", Diff = "" }
+                new() { Path = "/src/Empty.cs", ChangeType = "edit" }
             }
         });
 
@@ -146,43 +163,5 @@ public class AzureDevOpsFilesProviderTests
         var result = await _provider.GetFilesAsync(7);
 
         Assert.Equal("src/A.cs", result.Files[0].Path);
-    }
-
-    // --- CountDiffStats ---
-
-    [Fact]
-    public void CountDiffStats_CountsAdditionsAndDeletions()
-    {
-        var diff = "--- a/file.cs\n+++ b/file.cs\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n+added";
-        var (additions, deletions) = AzureDevOpsFilesProvider.CountDiffStats(diff);
-
-        Assert.Equal(2, additions);
-        Assert.Equal(1, deletions);
-    }
-
-    [Fact]
-    public void CountDiffStats_ReturnsZero_ForEmptyDiff()
-    {
-        var (additions, deletions) = AzureDevOpsFilesProvider.CountDiffStats("");
-        Assert.Equal(0, additions);
-        Assert.Equal(0, deletions);
-    }
-
-    [Fact]
-    public void CountDiffStats_ReturnsZero_ForNullDiff()
-    {
-        var (additions, deletions) = AzureDevOpsFilesProvider.CountDiffStats(null!);
-        Assert.Equal(0, additions);
-        Assert.Equal(0, deletions);
-    }
-
-    [Fact]
-    public void CountDiffStats_IgnoresDiffHeaders()
-    {
-        var diff = "--- a/file.cs\n+++ b/file.cs\n@@ -1 +1 @@\n-old\n+new";
-        var (additions, deletions) = AzureDevOpsFilesProvider.CountDiffStats(diff);
-
-        Assert.Equal(1, additions);
-        Assert.Equal(1, deletions);
     }
 }

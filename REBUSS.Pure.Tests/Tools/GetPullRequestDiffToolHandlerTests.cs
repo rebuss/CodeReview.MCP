@@ -24,9 +24,26 @@ public class GetPullRequestDiffToolHandlerTests
         TargetRefName = "refs/heads/main",
         Files = new List<FileChange>
         {
-            new() { Path = "/src/A.cs", ChangeType = "edit", Diff = "-old\n+new" }
-        },
-        DiffContent = "-old\n+new"
+            new()
+            {
+                Path = "/src/A.cs",
+                ChangeType = "edit",
+                Additions = 1,
+                Deletions = 1,
+                Hunks = new List<DiffHunk>
+                {
+                    new()
+                    {
+                        OldStart = 1, OldCount = 1, NewStart = 1, NewCount = 1,
+                        Lines = new List<DiffLine>
+                        {
+                            new() { Op = '-', Text = "old" },
+                            new() { Op = '+', Text = "new" }
+                        }
+                    }
+                }
+            }
+        }
     };
 
     public GetPullRequestDiffToolHandlerTests()
@@ -39,7 +56,7 @@ public class GetPullRequestDiffToolHandlerTests
     // --- Happy path ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsTextResult_ByDefault()
+    public async Task ExecuteAsync_ReturnsStructuredJson_ByDefault()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
@@ -48,27 +65,35 @@ public class GetPullRequestDiffToolHandlerTests
 
         Assert.False(result.IsError);
         var text = result.Content[0].Text;
-        Assert.Contains("Pull Request #42 Diff", text);
-        Assert.DoesNotContain("Fix bug", text);
-        Assert.Contains("-old", text);
+        var doc = JsonDocument.Parse(text);
+        Assert.Equal(42, doc.RootElement.GetProperty("prNumber").GetInt32());
+        Assert.True(doc.RootElement.TryGetProperty("files", out var files));
+        Assert.Equal(1, files.GetArrayLength());
+
+        var file = files[0];
+        Assert.Equal("/src/A.cs", file.GetProperty("path").GetString());
+        Assert.Equal("edit", file.GetProperty("changeType").GetString());
+        Assert.Equal(1, file.GetProperty("additions").GetInt32());
+        Assert.Equal(1, file.GetProperty("deletions").GetInt32());
+
+        Assert.True(file.TryGetProperty("hunks", out var hunks));
+        Assert.Equal(1, hunks.GetArrayLength());
+        var hunk = hunks[0];
+        Assert.Equal(1, hunk.GetProperty("oldStart").GetInt32());
+        Assert.True(hunk.TryGetProperty("lines", out var lines));
+        Assert.Equal(2, lines.GetArrayLength());
     }
 
-    [Theory]
-    [InlineData("json")]
-    [InlineData("structured")]
-    public async Task ExecuteAsync_ReturnsStructuredJson_WhenFormatRequested(string format)
+    [Fact]
+    public async Task ExecuteAsync_DoesNotIncludeMetadataInOutput()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = CreateArgs(42, format);
+        var args = CreateArgs(42);
         var result = await _handler.ExecuteAsync(args);
 
         Assert.False(result.IsError);
-        var text = result.Content[0].Text;
-        // Should be valid JSON
-        var doc = JsonDocument.Parse(text);
-        Assert.Equal(42, doc.RootElement.GetProperty("prNumber").GetInt32());
-        Assert.True(doc.RootElement.TryGetProperty("files", out _));
+        var doc = JsonDocument.Parse(result.Content[0].Text);
         Assert.False(doc.RootElement.TryGetProperty("title", out _));
     }
 
@@ -165,11 +190,8 @@ public class GetPullRequestDiffToolHandlerTests
 
     // --- Helpers ---
 
-    private static Dictionary<string, object> CreateArgs(int prNumber, string? format = null)
+    private static Dictionary<string, object> CreateArgs(int prNumber)
     {
-        var args = new Dictionary<string, object> { ["prNumber"] = prNumber };
-        if (format != null)
-            args["format"] = format;
-        return args;
+        return new Dictionary<string, object> { ["prNumber"] = prNumber };
     }
 }

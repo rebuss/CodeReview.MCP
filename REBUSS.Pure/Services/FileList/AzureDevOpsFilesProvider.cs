@@ -58,15 +58,13 @@ namespace REBUSS.Pure.Services.FileList
 
         private static PullRequestFileInfo BuildFileInfo(FileChange fileChange, FileClassification classification)
         {
-            var (additions, deletions) = CountDiffStats(fileChange.Diff);
-
             return new PullRequestFileInfo
             {
                 Path = fileChange.Path.TrimStart('/'),
                 Status = MapStatus(fileChange.ChangeType),
-                Additions = additions,
-                Deletions = deletions,
-                Changes = additions + deletions,
+                Additions = fileChange.Additions,
+                Deletions = fileChange.Deletions,
+                Changes = fileChange.Additions + fileChange.Deletions,
                 Extension = classification.Extension,
                 IsBinary = classification.IsBinary,
                 IsGenerated = classification.IsGenerated,
@@ -83,22 +81,6 @@ namespace REBUSS.Pure.Services.FileList
             "rename" => "renamed",
             _ => changeType
         };
-
-        public static (int additions, int deletions) CountDiffStats(string diff)
-        {
-            if (string.IsNullOrEmpty(diff))
-                return (0, 0);
-
-            int additions = 0, deletions = 0;
-            foreach (var line in diff.Split('\n'))
-            {
-                if (line.StartsWith('+') && !line.StartsWith("+++"))
-                    additions++;
-                else if (line.StartsWith('-') && !line.StartsWith("---"))
-                    deletions++;
-            }
-            return (additions, deletions);
-        }
 
         private static PullRequestFilesSummary BuildSummary(
             List<FileClassification> classifications, List<PullRequestFileInfo> files)
