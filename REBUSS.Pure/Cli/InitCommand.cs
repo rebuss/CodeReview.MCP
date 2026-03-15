@@ -3,13 +3,21 @@ using System.Reflection;
 namespace REBUSS.Pure.Cli;
 
 /// <summary>
-/// Generates a <c>.vscode/mcp.json</c> configuration file in the current directory
+/// Generates MCP server configuration file(s) in the current Git repository
 /// and copies review prompt files to <c>.github/prompts/</c> so that MCP clients
-/// (e.g. VS Code, GitHub Copilot) can launch the server and use the prompts.
+/// (e.g. VS Code, Visual Studio, GitHub Copilot) can launch the server and use the prompts.
+/// <para>
+/// The target location is determined by IDE auto-detection:
+/// VS Code ? <c>.vscode/mcp.json</c>;
+/// Visual Studio ? <c>.vs/mcp.json</c>;
+/// both written when both IDEs are detected.
+/// Falls back to VS Code when no IDE markers are found.
+/// </para>
 /// </summary>
 public class InitCommand : ICliCommand
 {
     private const string VsCodeDir = ".vscode";
+    private const string VisualStudioDir = ".vs";
     private const string McpConfigFileName = "mcp.json";
     private const string ResourcePrefix = "REBUSS.Pure.Cli.Prompts.";
 
@@ -43,35 +51,75 @@ public class InitCommand : ICliCommand
             return 1;
         }
 
-        var vsCodeDir = Path.Combine(gitRoot, VsCodeDir);
-        var mcpConfigPath = Path.Combine(vsCodeDir, McpConfigFileName);
-
-        if (File.Exists(mcpConfigPath))
-        {
-            await _output.WriteLineAsync($"MCP configuration already exists: {mcpConfigPath}");
-            await _output.WriteLineAsync("Delete the file and run 'init' again to regenerate.");
-            return 1;
-        }
-
-        Directory.CreateDirectory(vsCodeDir);
+        var targets = ResolveConfigTargets(gitRoot);
 
         var normalizedExePath = _executablePath.Replace("\\", "\\\\");
-        var configContent = BuildConfigContent(normalizedExePath, _pat);
+        var normalizedRepoPath = gitRoot.Replace("\\", "\\\\");
 
-        await File.WriteAllTextAsync(mcpConfigPath, configContent, cancellationToken);
+        foreach (var target in targets)
+        {
+            Directory.CreateDirectory(target.Directory);
 
-        await _output.WriteLineAsync($"Created MCP configuration: {mcpConfigPath}");
+            string newContent;
+            if (File.Exists(target.ConfigPath))
+            {
+                var existing = await File.ReadAllTextAsync(target.ConfigPath, cancellationToken);
+                newContent = MergeConfigContent(existing, _executablePath, gitRoot, _pat);
+                await File.WriteAllTextAsync(target.ConfigPath, newContent, cancellationToken);
+                await _output.WriteLineAsync($"Updated MCP configuration ({target.IdeName}): {target.ConfigPath}");
+            }
+            else
+            {
+                newContent = BuildConfigContent(normalizedExePath, normalizedRepoPath, _pat);
+                await File.WriteAllTextAsync(target.ConfigPath, newContent, cancellationToken);
+                await _output.WriteLineAsync($"Created MCP configuration ({target.IdeName}): {target.ConfigPath}");
+            }
+        }
 
         await CopyPromptFilesAsync(gitRoot, cancellationToken);
 
         await _output.WriteLineAsync();
         await _output.WriteLineAsync("The MCP server will be launched with --repo pointing to your workspace.");
-        await _output.WriteLineAsync("Restart VS Code or reload the MCP client to pick up the new configuration.");
+        await _output.WriteLineAsync("Restart your IDE or reload the MCP client to pick up the new configuration.");
 
         return 0;
     }
 
-    internal static string BuildConfigContent(string normalizedExePath, string? pat = null)
+    /// <summary>
+    /// Detects which IDE(s) are in use and returns the list of config file targets to write.
+    /// Falls back to VS Code when no IDE markers are found.
+    /// </summary>
+    internal static List<McpConfigTarget> ResolveConfigTargets(string gitRoot)
+    {
+        var targets = new List<McpConfigTarget>();
+
+        bool hasVsCode = DetectsVsCode(gitRoot);
+        bool hasVisualStudio = DetectsVisualStudio(gitRoot);
+
+        if (hasVsCode || !hasVisualStudio)
+            targets.Add(new McpConfigTarget(
+                "VS Code",
+                Path.Combine(gitRoot, VsCodeDir),
+                Path.Combine(gitRoot, VsCodeDir, McpConfigFileName)));
+
+        if (hasVisualStudio)
+            targets.Add(new McpConfigTarget(
+                "Visual Studio",
+                Path.Combine(gitRoot, VisualStudioDir),
+                Path.Combine(gitRoot, VisualStudioDir, McpConfigFileName)));
+
+        return targets;
+    }
+
+    internal static bool DetectsVsCode(string gitRoot) =>
+        Directory.Exists(Path.Combine(gitRoot, VsCodeDir)) ||
+        Directory.EnumerateFiles(gitRoot, "*.code-workspace", SearchOption.TopDirectoryOnly).Any();
+
+    internal static bool DetectsVisualStudio(string gitRoot) =>
+        Directory.Exists(Path.Combine(gitRoot, VisualStudioDir)) ||
+        Directory.EnumerateFiles(gitRoot, "*.sln", SearchOption.TopDirectoryOnly).Any();
+
+    internal static string BuildConfigContent(string normalizedExePath, string normalizedRepoPath, string? pat = null)
     {
         var patArgs = string.IsNullOrWhiteSpace(pat)
             ? string.Empty
@@ -83,11 +131,87 @@ public class InitCommand : ICliCommand
                 "REBUSS.Pure": {
                   "type": "stdio",
                   "command": "{{normalizedExePath}}",
-                  "args": ["--repo", "${workspaceFolder}"{{patArgs}}]
+                  "args": ["--repo", "{{normalizedRepoPath}}"{{patArgs}}]
                 }
               }
             }
             """;
+    }
+
+    /// <summary>
+    /// Merges the REBUSS.Pure server entry into an existing <c>mcp.json</c> file,
+    /// preserving any other server entries already present.
+    /// Accepts raw (unescaped) paths — JSON escaping is handled by <see cref="System.Text.Json.Utf8JsonWriter"/>.
+    /// Falls back to <see cref="BuildConfigContent"/> when the existing content is not valid JSON.
+    /// </summary>
+    internal static string MergeConfigContent(
+        string existingJson,
+        string rawExePath,
+        string rawRepoPath,
+        string? pat = null)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(existingJson);
+            var root = doc.RootElement;
+
+            var options = new System.Text.Json.JsonWriterOptions { Indented = true };
+            using var ms = new System.IO.MemoryStream();
+            using (var writer = new System.Text.Json.Utf8JsonWriter(ms, options))
+            {
+                writer.WriteStartObject();
+
+                // Copy all top-level properties except "servers" verbatim
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (prop.Name != "servers")
+                        prop.WriteTo(writer);
+                }
+
+                // Write merged "servers" block
+                writer.WritePropertyName("servers");
+                writer.WriteStartObject();
+
+                // Copy existing servers except REBUSS.Pure
+                if (root.TryGetProperty("servers", out var serversEl))
+                {
+                    foreach (var server in serversEl.EnumerateObject())
+                    {
+                        if (server.Name != "REBUSS.Pure")
+                            server.WriteTo(writer);
+                    }
+                }
+
+                // Write the REBUSS.Pure entry — Utf8JsonWriter handles JSON escaping of raw paths
+                writer.WritePropertyName("REBUSS.Pure");
+                writer.WriteStartObject();
+                writer.WriteString("type", "stdio");
+                writer.WriteString("command", rawExePath);
+                writer.WritePropertyName("args");
+                writer.WriteStartArray();
+                writer.WriteStringValue("--repo");
+                writer.WriteStringValue(rawRepoPath);
+                if (!string.IsNullOrWhiteSpace(pat))
+                {
+                    writer.WriteStringValue("--pat");
+                    writer.WriteStringValue(pat);
+                }
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+
+                writer.WriteEndObject(); // servers
+                writer.WriteEndObject(); // root
+            }
+
+            return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Existing file is not valid JSON — replace it entirely
+            var normalizedExePath = rawExePath.Replace("\\", "\\\\");
+            var normalizedRepoPath = rawRepoPath.Replace("\\", "\\\\");
+            return BuildConfigContent(normalizedExePath, normalizedRepoPath, pat);
+        }
     }
 
     private async Task CopyPromptFilesAsync(string gitRoot, CancellationToken cancellationToken)
@@ -163,3 +287,8 @@ public class InitCommand : ICliCommand
         return null;
     }
 }
+
+/// <summary>
+/// Describes a single MCP configuration file target to be written by <see cref="InitCommand"/>.
+/// </summary>
+internal sealed record McpConfigTarget(string IdeName, string Directory, string ConfigPath);
