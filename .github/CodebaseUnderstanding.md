@@ -62,11 +62,11 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role | Depends on |
 |---|---|---|
 | `REBUSS.Pure\Services\LocalReview\ILocalGitClient.cs` | Interface: local git operations; defines `LocalFileStatus` record | — |
-| `REBUSS.Pure\Services\LocalReview\LocalGitClient.cs` | Runs git child processes; exposes `WorkingTreeRef` sentinel for filesystem reads | `ILocalGitClient` |
+| `REBUSS.Pure\Services\LocalReview\LocalGitClient.cs` | Runs git child processes; uses `diff --name-status` for all scopes; exposes `WorkingTreeRef` sentinel for filesystem reads | `ILocalGitClient` |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewScope.cs` | Value type: `WorkingTree`, `Staged`, `BranchDiff(base)` + `Parse(string?)` | — |
 | `REBUSS.Pure\Services\LocalReview\ILocalReviewProvider.cs` | Interface: lists local files + diffs; defines `LocalReviewFiles` model | `PullRequestDiff`, `PullRequestFileInfo`, `PullRequestFilesSummary` |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewProvider.cs` | Orchestrates git client + diff builder + file classifier | `IWorkspaceRootProvider`, `ILocalGitClient`, `IStructuredDiffBuilder`, `IFileClassifier`, domain models |
-| `REBUSS.Pure\Services\LocalReview\LocalReviewExceptions.cs` | `LocalRepositoryNotFoundException`, `LocalFileNotFoundException` | — |
+| `REBUSS.Pure\Services\LocalReview\LocalReviewExceptions.cs` | `LocalRepositoryNotFoundException`, `LocalFileNotFoundException`, `GitCommandException` | — |
 
 ### Metadata pipeline
 
@@ -110,7 +110,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role |
 |---|---|
-| `REBUSS.Pure\Tools\Models\StructuredDiffResult.cs` | `StructuredDiffResult`, `StructuredFileChange`, `StructuredHunk`, `StructuredLine` — diff tool JSON output (shared by PR and local tools) |
+| `REBUSS.Pure\Tools\Models\StructuredDiffResult.cs` | `StructuredDiffResult`, `StructuredFileChange`, `StructuredHunk`, `StructuredLine` — diff tool JSON output (shared by PR and local tools); `PrNumber` is `int?` (null for local diffs, omitted from JSON) |
 | `REBUSS.Pure\Tools\Models\PullRequestMetadataResult.cs` | `PullRequestMetadataResult`, `AuthorInfo`, `RefInfo`, `PrStats`, `DescriptionInfo`, `SourceInfo` |
 | `REBUSS.Pure\Tools\Models\PullRequestFilesResult.cs` | `PullRequestFilesResult`, `PullRequestFileItem`, `PullRequestFilesSummaryResult` (also reused by `LocalReviewFilesResult`) |
 | `REBUSS.Pure\Tools\Models\FileContentAtRefResult.cs` | `FileContentAtRefResult` |
@@ -397,16 +397,16 @@ services.AddSingleton<IFileContentProvider, AzureDevOpsFileContentProvider>();
 services.AddSingleton<IMcpToolHandler, GetPullRequestDiffToolHandler>();
 services.AddSingleton<IMcpToolHandler, GetFileDiffToolHandler>();
 services.AddSingleton<IMcpToolHandler, GetPullRequestMetadataToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetPullRequestFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetFileContentAtRefToolHandler>();
+services.AddSingleton<IMcpToolHandler, GetPullRequestFilesToolHandler>();
+services.AddSingleton<IMcpToolHandler, GetFileContentAtRefToolHandler>();
 
-            // Local self-review pipeline (no Azure DevOps required)
-            services.AddSingleton<ILocalGitClient, LocalGitClient>();
-            services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
-            services.AddSingleton<IMcpToolHandler, GetLocalChangesFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetLocalFileDiffToolHandler>();
+// Local self-review pipeline (no Azure DevOps required)
+services.AddSingleton<ILocalGitClient, LocalGitClient>();
+services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
+services.AddSingleton<IMcpToolHandler, GetLocalChangesFilesToolHandler>();
+services.AddSingleton<IMcpToolHandler, GetLocalFileDiffToolHandler>();
 
-            // JSON-RPC infrastructure
+// JSON-RPC infrastructure
 services.AddSingleton<IJsonRpcSerializer, SystemTextJsonSerializer>();
 services.AddSingleton<IJsonRpcTransport>(_ =>
     new StreamJsonRpcTransport(Console.OpenStandardInput(), Console.OpenStandardOutput()));
@@ -1704,7 +1704,7 @@ namespace REBUSS.Pure.Tools.Models
     public class StructuredDiffResult
     {
         [JsonPropertyName("prNumber")]
-        public int PrNumber { get; set; }
+        public int? PrNumber { get; set; }
 
         [JsonPropertyName("files")]
         public List<StructuredFileChange> Files { get; set; } = new();
@@ -1774,6 +1774,7 @@ using Microsoft.Extensions.Options;
 using REBUSS.Pure.AzureDevOpsIntegration.Configuration;
 using REBUSS.Pure.AzureDevOpsIntegration.Services;
 using REBUSS.Pure.Cli;
+using REBUSS.Pure.Logging;
 using REBUSS.Pure.Mcp;
 using REBUSS.Pure.Mcp.Handlers;
 using REBUSS.Pure.Services.Common;
@@ -1782,6 +1783,7 @@ using REBUSS.Pure.Services.Content;
 using REBUSS.Pure.Services.Diff;
 using REBUSS.Pure.Services.FileList;
 using REBUSS.Pure.Services.FileList.Classification;
+using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Services.Metadata;
 using REBUSS.Pure.Tools;
 
@@ -1807,7 +1809,8 @@ namespace REBUSS.Pure
                 "init" => new InitCommand(
                     Console.Error,
                     Environment.CurrentDirectory,
-                    GetExecutablePath()),
+                    GetExecutablePath(),
+                    parseResult.Pat),
                 _ => throw new InvalidOperationException($"Unknown command: {parseResult.CommandName}")
             };
 
@@ -1823,19 +1826,78 @@ namespace REBUSS.Pure
             return Path.Combine(AppContext.BaseDirectory, "REBUSS.Pure.exe");
         }
 
+        private static string GetLogFilePath()
+        {
+            var logDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "REBUSS.Pure");
+            Directory.CreateDirectory(logDir);
+            return Path.Combine(logDir, "server.log");
+        }
+
         private static async Task RunMcpServerAsync(CliParseResult parseResult)
         {
-            // ... CLI args (--pat, --org, --project, --repository) are collected via
-            // BuildCliConfigOverrides and added as in-memory config overrides (highest priority).
-            // After building the service provider:
-            // if parseResult.RepoPath is not null, it's set via
-            // IWorkspaceRootProvider.SetCliRepositoryPath before server.RunAsync
+            try
+            {
+                var cliOverrides = BuildCliConfigOverrides(parseResult);
+
+                var configuration = new ConfigurationBuilder()
+                    .SetBasePath(AppContext.BaseDirectory)
+                    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+                    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true)
+                    .AddEnvironmentVariables()
+                    .AddInMemoryCollection(cliOverrides)
+                    .Build();
+
+                var services = new ServiceCollection();
+                ConfigureServices(services, configuration);
+                await using var serviceProvider = services.BuildServiceProvider();
+
+                // Apply CLI --repo argument if provided
+                if (!string.IsNullOrWhiteSpace(parseResult.RepoPath))
+                {
+                    var workspaceRootProvider = serviceProvider.GetRequiredService<IWorkspaceRootProvider>();
+                    workspaceRootProvider.SetCliRepositoryPath(parseResult.RepoPath);
+                }
+
+                var server = serviceProvider.GetRequiredService<McpServer>();
+                using var cts = new CancellationTokenSource();
+
+                Console.CancelKeyPress += (_, e) =>
+                {
+                    e.Cancel = true;
+                    cts.Cancel();
+                };
+
+                await server.RunAsync(cts.Token);
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[REBUSS.Pure] FATAL: {ex.GetType().FullName}: {ex.Message}");
+                if (ex.InnerException is not null)
+                    await Console.Error.WriteLineAsync($"[REBUSS.Pure] INNER: {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}");
+                await Console.Error.WriteLineAsync(ex.StackTrace ?? string.Empty);
+                Environment.Exit(1);
+            }
         }
 
         private static Dictionary<string, string?> BuildCliConfigOverrides(CliParseResult parseResult)
         {
-            // Maps CLI arguments to AzureDevOps config section keys.
-            // Non-null values override all other configuration sources.
+            var overrides = new Dictionary<string, string?>();
+
+            if (!string.IsNullOrWhiteSpace(parseResult.Pat))
+                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.PersonalAccessToken)}"] = parseResult.Pat;
+
+            if (!string.IsNullOrWhiteSpace(parseResult.Organization))
+                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.OrganizationName)}"] = parseResult.Organization;
+
+            if (!string.IsNullOrWhiteSpace(parseResult.Project))
+                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.ProjectName)}"] = parseResult.Project;
+
+            if (!string.IsNullOrWhiteSpace(parseResult.Repository))
+                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.RepositoryName)}"] = parseResult.Repository;
+
+            return overrides;
         }
 
         private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)

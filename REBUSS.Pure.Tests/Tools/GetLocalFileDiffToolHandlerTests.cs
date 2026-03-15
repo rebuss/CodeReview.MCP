@@ -69,6 +69,9 @@ public class GetLocalFileDiffToolHandlerTests
         Assert.Equal("edit", file.GetProperty("changeType").GetString());
         Assert.Equal(1, file.GetProperty("additions").GetInt32());
 
+        // prNumber should be absent from local diff output
+        Assert.False(doc.RootElement.TryGetProperty("prNumber", out _));
+
         var hunks = file.GetProperty("hunks");
         Assert.Equal(1, hunks.GetArrayLength());
         var lines = hunks[0].GetProperty("lines");
@@ -185,6 +188,19 @@ public class GetLocalFileDiffToolHandlerTests
 
         Assert.True(result.IsError);
         Assert.Contains("boom", result.Content[0].Text);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReturnsError_WhenGitCommandFails()
+    {
+        _reviewProvider.GetFileDiffAsync(
+                Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new GitCommandException(128, "fatal: bad revision"));
+
+        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+
+        Assert.True(result.IsError);
+        Assert.Contains("Git command failed", result.Content[0].Text);
     }
 
     // --- Tool definition ---

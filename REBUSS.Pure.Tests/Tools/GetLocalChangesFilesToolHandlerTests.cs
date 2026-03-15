@@ -151,6 +151,18 @@ public class GetLocalChangesFilesToolHandlerTests
         Assert.Contains("boom", result.Content[0].Text);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ReturnsError_WhenGitCommandFails()
+    {
+        _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new GitCommandException(128, "fatal: not a git repository"));
+
+        var result = await _handler.ExecuteAsync(null);
+
+        Assert.True(result.IsError);
+        Assert.Contains("Git command failed", result.Content[0].Text);
+    }
+
     // --- Tool definition ---
 
     [Fact]

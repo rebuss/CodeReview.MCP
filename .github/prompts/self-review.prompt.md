@@ -1,267 +1,170 @@
-# Self-Review
+# Self-Review (MCP-Only)
 
-Perform a professional self-review of local git changes.
+Perform a professional self-review of **local git changes**, using **exclusively** the MCP server `REBUSS.Pure`.
 
-Scope (optional): {{input}}
+This review MUST:
+- use only MCP tools from `REBUSS.Pure`
+- NEVER inspect files or project state directly from the editor or local workspace
+- NEVER reason about local changes without calling MCP tools
+- rely solely on `get_local_files` and `get_local_file_diff`
+- abort if MCP tools are unavailable
 
-Use MCP server: `REBUSS.Pure`.
-
-The goal is to review local changes **before committing or pushing**, detecting real technical risks while keeping context usage minimal. No Azure DevOps connection is required.
-
----
-
-# Review Goals
-
-Focus on issues affecting:
-
-- correctness
-- potential bugs or regressions
-- null safety
-- concurrency and thread safety
-- async/await correctness
-- validation and error handling
-- maintainability
-- performance
-- security
-- missing or insufficient tests
-
-Avoid focusing on minor style issues unless they affect correctness or maintainability.
+If any required MCP tool is missing, respond with:  
+**"Cannot proceed: required MCP tools not available."**
 
 ---
 
-# MCP Tools
+# Scope Handling
 
-Use the following MCP tools from `REBUSS.Pure`.
+Unless the user explicitly specifies a scope (e.g. `working-tree`, `main`, `origin/main`), use:
 
-### get_local_files([scope])
+**`staged`**
 
-Use **first**.
+This ensures only intentionally staged changes are reviewed.
+No other input is needed to determine the scope.
+
+---
+
+# Allowed MCP Tools (Strict)
+
+### `get_local_files([scope])`
+Call this **first**.
 
 Purpose:
-- discover all locally changed files
-- understand the scope of changes
-- determine which files to review
-
-The `scope` parameter controls which changes are returned:
-
-| Value | What it returns |
-|---|---|
-| *(omitted)* or `working-tree` | All uncommitted changes vs HEAD (staged + unstaged) |
-| `staged` | Only staged (indexed) changes vs HEAD |
-| Any branch/ref name | All commits on the current branch not yet on that base (e.g. `main`, `origin/main`) |
+- detect locally changed files
+- understand the scope and categories of changes
+- decide which files need further inspection
 
 The response includes:
-- `repositoryRoot` — the resolved git repository path
-- `scope` — the effective scope used
-- `currentBranch` — the checked-out branch name
-- `totalFiles` — number of changed files
-- per-file metadata: path, status, additions, deletions, extension, classification flags, review priority
-- aggregated `summary` by category (source, test, config, docs, binary, generated)
+- repositoryRoot
+- scope
+- currentBranch
+- totalFiles
+- list of files with: path, status, additions, deletions, extension, classification, reviewPriority
+- summary by category (source / test / config / docs / binary / generated)
 
 ---
 
-### get_local_file_diff(path, [scope])
-
-Use **after listing files**.
+### `get_local_file_diff(path, [scope])`
+Call **only after** `get_local_files`.
 
 Purpose:
-- retrieve the structured diff for a single locally changed file
-- analyze what exactly changed with minimal context cost
+- obtain structured diffs for selected files
+- minimize context consumption
 
-The `scope` parameter must match what was used in `get_local_files`.
-
-The response uses the same structure as `get_file_diff`:
-- `path`, `changeType`, `additions`, `deletions`
-- `hunks` array — each hunk has `oldStart`, `oldCount`, `newStart`, `newCount`, and ordered `lines`
-- each line has `op` (`+`, `-`, ` `) and `text`
-
-Some files may have their diff **automatically skipped** (deleted, renamed, full-file rewrites). Their `hunks` array will be empty and a `skipReason` field explains why. See *Skipped Diffs* below.
+Notes:
+- must reuse the SAME `scope` as used in `get_local_files`
+- files may be skipped with a `skipReason`
+- skipped diffs must NOT be analyzed
 
 ---
 
-# Mandatory Review Workflow
+# Mandatory Workflow
 
-## Step 1 — Determine the scope
-
-If the user provided a scope string (e.g. `main`, `staged`, `origin/main`), use it.  
-If no scope was provided, use the default (`working-tree`).
-
+## Step 1 — List changed files
 Call:
 
-```
 get_local_files([scope])
-```
 
-Use the result to:
-- see the repository root and current branch
-- understand the full set of changed files
-- read the category summary (source / test / config / docs / binary / generated)
-- decide on review order and strategy
+Then:
+- note repositoryRoot and currentBranch  
+- read file categories and priorities  
+- decide which files are worth reviewing (source › config › tests › docs)
 
 ---
 
-## Step 2 — Review changed files
+## Step 2 — Retrieve diffs only for relevant files
 
-For each file worth reviewing, call:
+For each file that merits actual review:
 
-```
 get_local_file_diff(path, [scope])
-```
 
-Preferred review order:
-
-1. source files (`reviewPriority: high`)
-2. configuration files
-3. test files
-4. documentation
-
-Skip files that are binary, generated, or clearly trivial — the diff server will also skip them automatically.
+Skip:
+- binary files  
+- generated files  
+- trivial changes  
+- files with `skipReason`  
 
 ---
 
-# Skipped Diffs
+# Review Priorities
 
-The diff provider **automatically skips** diff generation for certain files.
-
-When a diff is skipped, the file entry contains:
-- a `skipReason` field (e.g. `"file deleted"`, `"file renamed"`, `"full file rewrite"`)
-- an empty `hunks` array
-
-## Skip categories
-
-| Category | skipReason | When it applies |
-|---|---|---|
-| File deletions | `file deleted` | File was removed. No content available. |
-| File renames | `file renamed` | Pure rename. |
-| Full-file rewrites | `full file rewrite` | Both versions exist (?10 lines) but every line changed. |
-
-## How to handle skipped diffs
-
-- **Do not** attempt to analyze the diff content of a skipped file.
-- **Acknowledge** the skip in the review notes (e.g. "File `src/Old.cs` skipped: file deleted").
-- For full-file rewrites on important source files, consider noting that the complete file changed and flag it for manual inspection.
+Order:
+1. High-priority source files  
+2. Other source files  
+3. Configuration files  
+4. Test files  
+5. Documentation  
 
 ---
 
-# Review Strategy
+# What to Look For
 
-Choose the strategy based on the number and nature of changed files.
+Check diffs for:
+- correctness issues  
+- potential bugs or regressions  
+- null safety problems  
+- concurrency hazards  
+- async/await correctness  
+- missing validation or error-handling  
+- unintended behavior changes  
+- performance regressions  
+- duplicated or fragile logic  
+- missing or insufficient tests  
 
----
-
-## Small change set
-
-If only a few files changed:
-
-- call `get_local_file_diff` for all relevant source files
-- review each diff in full
-
----
-
-## Medium change set
-
-If a moderate number of files changed:
-
-- prioritize high-priority source files first
-- review file-by-file
-- skip binary, generated, and configuration files unless there is a specific concern
-
----
-
-## Large change set
-
-If many files changed (e.g. a branch diff against main):
-
-- do **not** attempt to load all diffs at once
-- review iteratively, starting with the highest-priority files
-- focus on high-risk logic changes
-- if the change set is too large to fully review, explain which files were prioritized and why
-
----
-
-# What To Inspect
-
-When analyzing each diff look for:
-
-- incorrect assumptions
-- null reference risks
-- race conditions or synchronization issues
-- incorrect async usage
-- hidden behavior changes
-- missing input validation
-- unhandled exceptions
-- duplicated logic
-- performance regressions
-- insufficient or missing tests
-
-When reviewing tests:
-
-- check if new or changed logic is covered
-- verify that tests actually validate behavior
-- do not assume correctness based on test presence alone
+For test changes:
+- ensure coverage matches modified logic  
+- confirm assertions are meaningful  
 
 ---
 
 # Output Format
 
-Return the review using the following structure.
-
 ## Verdict
-
-Short summary of the overall quality and risk level of the local changes.  
-Include: repository root, current branch, scope used, number of files reviewed.
+Short summary including:
+- repository root  
+- current branch  
+- scope used  
+- number of files reviewed  
 
 ---
 
 ## Critical Issues
-
-Issues that may cause bugs, crashes, security problems, or serious regressions.
-
-For each issue include:
-
-- file path
-- severity
-- problem description
-- why it matters
-- suggested fix
+For each:
+- file path  
+- severity  
+- issue description  
+- why it matters  
+- recommended fix  
 
 ---
 
 ## Important Improvements
-
-Significant improvements related to maintainability, validation, robustness, or performance.
-
-Include:
-
-- file path
-- issue description
-- reason
-- suggested improvement
+For each:
+- file path  
+- what to improve  
+- reason  
+- suggested correction  
 
 ---
 
 ## Minor Suggestions
 
-Optional improvements that are helpful but not critical.
-
 ---
 
 ## Review Notes
-
-Briefly mention:
-
-- scope used and current branch
-- which files were reviewed in detail
-- which files had their diffs skipped and why
-- whether review scope was limited due to change set size
+Include:
+- scope used  
+- which files were reviewed  
+- which files were skipped and why  
+- limitations due to large change sets (if applicable)  
 
 ---
 
-# Behavior Rules
+# Behavioral Requirements
 
-- Be precise and concrete.
-- Do not invent missing context.
-- If something is uncertain, label it as a potential risk.
-- Prefer fewer high-quality findings over many weak comments.
-- Avoid flooding the review with trivial remarks.
-- Optimize for minimal context usage — request only the diffs you actually need.
+- Never infer file contents.  
+- Never analyze files outside MCP responses.  
+- Avoid unnecessary tool calls.  
+- Prefer fewer, higher-value insights.  
+- If something is uncertain, mark it as a potential risk.  

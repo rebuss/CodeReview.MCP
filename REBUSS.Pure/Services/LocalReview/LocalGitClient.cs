@@ -105,7 +105,7 @@ namespace REBUSS.Pure.Services.LocalReview
                     ("diff --name-status --cached HEAD", StatusParseMode.NameStatus),
 
                 LocalReviewScopeKind.WorkingTree =>
-                    ("status --porcelain -u no", StatusParseMode.Porcelain),
+                    ("diff --name-status HEAD", StatusParseMode.NameStatus),
 
                 LocalReviewScopeKind.BranchDiff =>
                     ($"diff --name-status {scope.BaseBranch}...HEAD", StatusParseMode.NameStatus),
@@ -214,21 +214,5 @@ namespace REBUSS.Pure.Services.LocalReview
 
         private static IEnumerable<string> SplitLines(string output) =>
             output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
-    }
-
-    /// <summary>
-    /// Thrown when a git command exits with a non-zero exit code.
-    /// </summary>
-    public sealed class GitCommandException : Exception
-    {
-        public int ExitCode { get; }
-        public string StdErr { get; }
-
-        public GitCommandException(int exitCode, string stdErr)
-            : base($"git exited with code {exitCode}: {stdErr}")
-        {
-            ExitCode = exitCode;
-            StdErr = stdErr;
-        }
     }
 }

@@ -15,4 +15,20 @@ namespace REBUSS.Pure.Services.LocalReview
     {
         public LocalFileNotFoundException(string message) : base(message) { }
     }
+
+    /// <summary>
+    /// Thrown when a git command exits with a non-zero exit code.
+    /// </summary>
+    public sealed class GitCommandException : Exception
+    {
+        public int ExitCode { get; }
+        public string StdErr { get; }
+
+        public GitCommandException(int exitCode, string stdErr)
+            : base($"git exited with code {exitCode}: {stdErr}")
+        {
+            ExitCode = exitCode;
+            StdErr = stdErr;
+        }
+    }
 }

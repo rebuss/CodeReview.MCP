@@ -123,6 +123,11 @@ namespace REBUSS.Pure.Tools
                 _logger.LogWarning(ex, "[{ToolName}] Repository not found", ToolName);
                 return CreateErrorResult($"Repository not found: {ex.Message}");
             }
+            catch (GitCommandException ex)
+            {
+                _logger.LogWarning(ex, "[{ToolName}] Git command failed", ToolName);
+                return CreateErrorResult($"Git command failed: {ex.Message}");
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[{ToolName}] Error", ToolName);

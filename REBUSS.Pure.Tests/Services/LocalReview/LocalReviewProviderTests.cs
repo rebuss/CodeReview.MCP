@@ -215,6 +215,30 @@ public class LocalReviewProviderTests
     }
 
     [Fact]
+    public async Task GetFileDiffAsync_SetsSkipReason_ForBinaryFile()
+    {
+        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(new List<LocalFileStatus> { new('M', "lib/tool.dll") });
+
+        var result = await _provider.GetFileDiffAsync("lib/tool.dll", LocalReviewScope.WorkingTree());
+
+        Assert.Equal("binary file", result.Files[0].SkipReason);
+        Assert.Empty(result.Files[0].Hunks);
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_SetsSkipReason_ForGeneratedFile()
+    {
+        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(new List<LocalFileStatus> { new('M', "/obj/Debug/net8.0/out.cs") });
+
+        var result = await _provider.GetFileDiffAsync("/obj/Debug/net8.0/out.cs", LocalReviewScope.WorkingTree());
+
+        Assert.Equal("generated file", result.Files[0].SkipReason);
+        Assert.Empty(result.Files[0].Hunks);
+    }
+
+    [Fact]
     public async Task GetFileDiffAsync_UsesStagedRef_ForStagedScope()
     {
         _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
@@ -268,27 +292,41 @@ public class LocalReviewProviderTests
     public void GetSkipReason_ReturnsFileDeleted_ForDeletedStatus()
     {
         var status = new LocalFileStatus('D', "src/File.cs");
-        Assert.Equal("file deleted", LocalReviewProvider.GetSkipReason(status));
+        Assert.Equal("file deleted", _provider.GetSkipReason(status));
     }
 
     [Fact]
     public void GetSkipReason_ReturnsFileRenamed_ForRenameStatus()
     {
         var status = new LocalFileStatus('R', "src/New.cs", "src/Old.cs");
-        Assert.Equal("file renamed", LocalReviewProvider.GetSkipReason(status));
+        Assert.Equal("file renamed", _provider.GetSkipReason(status));
     }
 
     [Fact]
     public void GetSkipReason_ReturnsNull_ForModifiedFile()
     {
         var status = new LocalFileStatus('M', "src/Service.cs");
-        Assert.Null(LocalReviewProvider.GetSkipReason(status));
+        Assert.Null(_provider.GetSkipReason(status));
     }
 
     [Fact]
     public void GetSkipReason_ReturnsNull_ForAddedFile()
     {
         var status = new LocalFileStatus('A', "src/New.cs");
-        Assert.Null(LocalReviewProvider.GetSkipReason(status));
+        Assert.Null(_provider.GetSkipReason(status));
+    }
+
+    [Fact]
+    public void GetSkipReason_ReturnsBinaryFile_ForBinaryExtension()
+    {
+        var status = new LocalFileStatus('M', "lib/tool.dll");
+        Assert.Equal("binary file", _provider.GetSkipReason(status));
+    }
+
+    [Fact]
+    public void GetSkipReason_ReturnsGeneratedFile_ForGeneratedPath()
+    {
+        var status = new LocalFileStatus('M', "/obj/Debug/net8.0/out.cs");
+        Assert.Equal("generated file", _provider.GetSkipReason(status));
     }
 }

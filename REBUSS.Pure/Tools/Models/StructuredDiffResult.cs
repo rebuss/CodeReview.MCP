@@ -9,7 +9,7 @@ namespace REBUSS.Pure.Tools.Models
     public class StructuredDiffResult
     {
         [JsonPropertyName("prNumber")]
-        public int PrNumber { get; set; }
+        public int? PrNumber { get; set; }
 
         [JsonPropertyName("files")]
         public List<StructuredFileChange> Files { get; set; } = new();

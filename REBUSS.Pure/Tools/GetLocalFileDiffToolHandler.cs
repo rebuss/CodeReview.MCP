@@ -90,7 +90,7 @@ namespace REBUSS.Pure.Tools
 
                 var structured = new StructuredDiffResult
                 {
-                    PrNumber = 0,
+                    PrNumber = null,
                     Files = diff.Files.Select(f => new StructuredFileChange
                     {
                         Path = f.Path,
@@ -132,6 +132,12 @@ namespace REBUSS.Pure.Tools
                 _logger.LogWarning(ex, "[{ToolName}] File not found in local changes (path='{Path}')",
                     ToolName, arguments?.GetValueOrDefault("path"));
                 return CreateErrorResult($"File not found in local changes: {ex.Message}");
+            }
+            catch (GitCommandException ex)
+            {
+                _logger.LogWarning(ex, "[{ToolName}] Git command failed (path='{Path}')",
+                    ToolName, arguments?.GetValueOrDefault("path"));
+                return CreateErrorResult($"Git command failed: {ex.Message}");
             }
             catch (Exception ex)
             {

@@ -195,12 +195,19 @@ namespace REBUSS.Pure.Services.LocalReview
             };
         }
 
-        internal static string? GetSkipReason(LocalFileStatus status)
+        internal string? GetSkipReason(LocalFileStatus status)
         {
             if (status.Status == 'D')
                 return "file deleted";
             if (status.Status == 'R')
                 return "file renamed";
+
+            var classification = _fileClassifier.Classify(status.Path);
+
+            if (classification.IsBinary)
+                return "binary file";
+            if (classification.IsGenerated)
+                return "generated file";
 
             return null;
         }

@@ -26,7 +26,8 @@ namespace REBUSS.Pure.Services.LocalReview
         public static LocalReviewScope Staged() => new(LocalReviewScopeKind.Staged);
 
         /// <summary>
-        /// All uncommitted changes in the working tree (staged + unstaged), excluding untracked files.
+        /// All uncommitted changes in tracked files (staged + unstaged) vs HEAD.
+        /// Untracked files are excluded.
         /// </summary>
         public static LocalReviewScope WorkingTree() => new(LocalReviewScopeKind.WorkingTree);
 
