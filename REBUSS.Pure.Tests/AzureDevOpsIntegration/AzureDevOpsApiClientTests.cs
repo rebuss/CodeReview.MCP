@@ -242,6 +242,94 @@ public class AzureDevOpsApiClientTests
         }
     }
 
+    // ---- HTML response detection ----
+
+    [Fact]
+    public async Task GetPullRequestDetailsAsync_ThrowsOnHtmlResponse_WithStatusCode203()
+    {
+        var htmlContent = "<!DOCTYPE html><html><head><title>Login</title></head><body></body></html>";
+        var handler = new FakeHandler((HttpStatusCode)203, htmlContent, "text/html");
+        var client = CreateClient(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.GetPullRequestDetailsAsync(42));
+
+        Assert.Contains("authentication", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPullRequestDetailsAsync_ThrowsOnHtmlBody_EvenWithoutHtmlContentType()
+    {
+        var htmlContent = "<!DOCTYPE html><html><body>Unable to complete authentication</body></html>";
+        var handler = new FakeHandler(HttpStatusCode.OK, htmlContent);
+        var client = CreateClient(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.GetPullRequestDetailsAsync(42));
+
+        Assert.Contains("authentication", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetPullRequestDetailsAsync_DoesNotThrow_ForValidJsonResponse()
+    {
+        var jsonContent = "{\"title\":\"Fix bug\"}";
+        var handler = new FakeHandler(HttpStatusCode.OK, jsonContent, "application/json");
+        var client = CreateClient(handler);
+
+        var result = await client.GetPullRequestDetailsAsync(42);
+
+        Assert.Equal(jsonContent, result);
+    }
+
+    // ---- IsHtmlResponse ----
+
+    [Fact]
+    public void IsHtmlResponse_ReturnsTrue_ForHtmlContentType()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html>", System.Text.Encoding.UTF8, "text/html")
+        };
+
+        Assert.True(AzureDevOpsApiClient.IsHtmlResponse(response, "<html>"));
+    }
+
+    [Fact]
+    public void IsHtmlResponse_ReturnsTrue_ForBodyStartingWithHtmlTag()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<!DOCTYPE html>", System.Text.Encoding.UTF8, "application/octet-stream")
+        };
+
+        Assert.True(AzureDevOpsApiClient.IsHtmlResponse(response, "<!DOCTYPE html>"));
+    }
+
+    [Fact]
+    public void IsHtmlResponse_ReturnsFalse_ForJsonBody()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"key\":\"value\"}", System.Text.Encoding.UTF8, "application/json")
+        };
+
+        Assert.False(AzureDevOpsApiClient.IsHtmlResponse(response, "{\"key\":\"value\"}"));
+    }
+
+    [Fact]
+    public void IsHtmlResponse_ReturnsFalse_ForXmlBody()
+    {
+        var xmlContent = "<?xml version=\"1.0\" encoding=\"utf-8\"?><error><message>Not found</message></error>";
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(xmlContent, System.Text.Encoding.UTF8, "application/xml")
+        };
+
+        Assert.False(AzureDevOpsApiClient.IsHtmlResponse(response, xmlContent));
+    }
+
     /// <summary>
     /// Minimal HttpMessageHandler stub that returns a fixed response.
     /// </summary>
@@ -249,23 +337,29 @@ public class AzureDevOpsApiClientTests
     {
         private readonly HttpStatusCode _statusCode;
         private readonly string _content;
+        private readonly string? _contentType;
 
         public Uri? LastRequestUri { get; private set; }
 
-        public FakeHandler(HttpStatusCode statusCode, string content)
+        public FakeHandler(HttpStatusCode statusCode, string content, string? contentType = null)
         {
             _statusCode = statusCode;
             _content = content;
+            _contentType = contentType;
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(_statusCode)
-            {
-                Content = new StringContent(_content)
-            });
+            var response = new HttpResponseMessage(_statusCode);
+
+            if (_contentType is not null)
+                response.Content = new StringContent(_content, System.Text.Encoding.UTF8, _contentType);
+            else
+                response.Content = new StringContent(_content);
+
+            return Task.FromResult(response);
         }
     }
 }

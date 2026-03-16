@@ -39,6 +39,7 @@ namespace REBUSS.Pure
             {
                 "init" => new InitCommand(
                     Console.Error,
+                    Console.In,
                     Environment.CurrentDirectory,
                     GetExecutablePath(),
                     parseResult.Pat),
@@ -158,7 +159,8 @@ namespace REBUSS.Pure
             services.AddSingleton<ILocalConfigStore, LocalConfigStore>();
             services.AddSingleton<IPostConfigureOptions<AzureDevOpsOptions>, ConfigurationResolver>();
 
-            // Authentication provider (chained: PAT → cached token → Entra ID)
+            // Authentication provider (chained: PAT → cached token → Azure CLI → error)
+            services.AddSingleton<IAzureCliTokenProvider, AzureCliTokenProvider>();
             services.AddSingleton<IAuthenticationProvider, ChainedAuthenticationProvider>();
             services.AddTransient<AuthenticationDelegatingHandler>();
 

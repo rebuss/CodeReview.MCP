@@ -120,7 +120,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role |
 |---|---|
-| `REBUSS.Pure\Mcp\McpServer.cs` | Main server loop: reads JSON-RPC over stdio, dispatches to method handlers |
+| `REBUSS.Pure\Mcp\McpServer.cs` | Main server loop: reads JSON-RPC over stdio, dispatches to method handlers; silently ignores notifications (messages without `id`) for unregistered methods per MCP/JSON-RPC spec — `notifications/initialized` and similar are not errored |
 | `REBUSS.Pure\Mcp\IMcpMethodHandler.cs` | Interface: handles one JSON-RPC method |
 | `REBUSS.Pure\Mcp\IMcpToolHandler.cs` | Interface: MCP tool (definition + execution) |
 | `REBUSS.Pure\Mcp\IWorkspaceRootProvider.cs` | Interface: stores CLI repo path, MCP roots, resolves repository root path |
@@ -161,16 +161,19 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role |
 |---|---|
 | `REBUSS.Pure\AzureDevOpsIntegration\Services\IAzureDevOpsApiClient.cs` | Interface: Azure DevOps REST API client |
-| `REBUSS.Pure\AzureDevOpsIntegration\Services\AzureDevOpsApiClient.cs` | HTTP client for Azure DevOps; sets BaseAddress lazily in constructor from `IOptions<AzureDevOpsOptions>`, auth delegated to `AuthenticationDelegatingHandler` |
+| `REBUSS.Pure\AzureDevOpsIntegration\Services\AzureDevOpsApiClient.cs` | HTTP client for Azure DevOps; sets BaseAddress lazily in constructor from `IOptions<AzureDevOpsOptions>`, auth delegated to `AuthenticationDelegatingHandler`; `GetStringAsync` detects HTML responses on 2xx status codes (e.g. 203) as authentication failures and throws `HttpRequestException` with `Unauthorized` status code and actionable message; `IsHtmlResponse` is `internal static` for testability — checks for `text/html` content type or body starting with `<!doctype`/`<html` (not just any `<`) |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AzureDevOpsOptions.cs` | Config model: org, project, repo, PAT, LocalRepoPath (all optional) |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AzureDevOpsOptionsValidator.cs` | Validates config field format (all fields optional) |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\IGitRemoteDetector.cs` | Interface + `DetectedGitInfo` record: detects Azure DevOps repo from Git remote; supports `Detect()` and `Detect(string repositoryPath)` |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\GitRemoteDetector.cs` | Parses HTTPS/SSH Azure DevOps remote URLs via `git remote get-url origin`; tries current directory and walks up from executable location to find repo root; `FindGitRepositoryRoot` accepts nullable `string?` and returns `null` for null/empty input |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\ILocalConfigStore.cs` | Interface + `CachedConfig` model: persists/retrieves cached config |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\LocalConfigStore.cs` | JSON file store under `%LOCALAPPDATA%/REBUSS.Pure/config.json` |
-| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\IAuthenticationProvider.cs` | Interface: provides `AuthenticationHeaderValue` for API calls |
-| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\ChainedAuthenticationProvider.cs` | Auth chain: PAT → cached token → error with PAT instructions; accepts `IOptions<AzureDevOpsOptions>` for lazy resolution; `BuildPatRequiredMessage` produces clear user-facing error with PAT config example and creation link |
-| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AuthenticationDelegatingHandler.cs` | `DelegatingHandler` that lazily sets auth header on each outgoing HTTP request via `IAuthenticationProvider` |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\IAuthenticationProvider.cs` | Interface: provides `AuthenticationHeaderValue` for API calls; `InvalidateCachedToken()` clears the cached token so the next request re-acquires via Azure CLI |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\IAzureCliTokenProvider.cs` | Interface: acquires Azure DevOps token via Azure CLI; defines `AzureCliToken` record |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AzureCliProcessHelper.cs` | `internal static` helper: resolves the correct `ProcessStartInfo` file name and arguments for running Azure CLI commands cross-platform; on Windows wraps via `cmd.exe /c az ...` (because `az.cmd` is not resolved by `Process.Start` with `UseShellExecute = false`); on Linux/macOS calls `az` directly |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AzureCliTokenProvider.cs` | Runs `az account get-access-token --resource 499b84ac...` to acquire Bearer tokens via `AzureCliProcessHelper`; `ParseTokenResponse` is `internal static` for testability; uses `CultureInfo.InvariantCulture` for locale-safe date parsing; reads stdout/stderr concurrently to prevent pipe deadlock |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\ChainedAuthenticationProvider.cs` | Auth chain: PAT → cached token (`Basic`/PAT tokens with `null` expiry are always valid since PAT expiry is managed in Azure DevOps; `Bearer` tokens with `null` expiry fall through to Azure CLI refresh; both types respect `TokenExpiresOn` when present) → Azure CLI (`az account get-access-token`) → error with `az login` and PAT instructions; `InvalidateCachedToken()` clears token fields in the config store; `BuildAuthRequiredMessage` produces clear user-facing error with both `az login` and PAT config options |
+| `REBUSS.Pure\AzureDevOpsIntegration\Configuration\AuthenticationDelegatingHandler.cs` | `DelegatingHandler` that lazily sets auth header on each outgoing HTTP request via `IAuthenticationProvider`; when the response is HTTP 203 with `text/html` content-type (Azure DevOps CDN auth redirect), invalidates the cached token via `IAuthenticationProvider.InvalidateCachedToken()` and retries the request once with a fresh token |
 | `REBUSS.Pure\AzureDevOpsIntegration\Configuration\ConfigurationResolver.cs` | `IPostConfigureOptions<AzureDevOpsOptions>` impl: merges explicit config, cached, and auto-detected values; returns empty strings for unresolved fields (no throw), skips caching when incomplete; uses `IWorkspaceRootProvider` for repo path resolution |
 
 ### CLI infrastructure
@@ -179,7 +182,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 |---|---|
 | `REBUSS.Pure\Cli\CliArgumentParser.cs` | Parses CLI args: detects `init` command vs server mode, extracts `--repo`, `--pat`, `--org`, `--project`, `--repository` |
 | `REBUSS.Pure\Cli\ICliCommand.cs` | Interface: executable CLI command |
-| `REBUSS.Pure\Cli\InitCommand.cs` | `init` command: detects IDE by presence of `.vscode/`, `*.code-workspace` (VS Code) and/or `.vs/`, `*.sln` (Visual Studio) in the git root; target selection: only `.vscode` → VS Code only; only `.vs` → Visual Studio only; both or neither → both; if a config file already exists, **merges** the `REBUSS.Pure` server entry into the existing `servers` object (preserving other servers and top-level properties) via `MergeConfigContent`; falls back to full overwrite when existing file is not valid JSON; `MergeConfigContent` carries over existing `--pat` value when no new PAT is provided via `ExtractExistingPat`; copies embedded review prompt files (`review-pr.prompt.md`, `self-review.prompt.md`) to `.github/prompts/` (skips existing files); exposes `ResolveConfigTargets`, `DetectsVsCode`, `DetectsVisualStudio`, `BuildConfigContent`, `MergeConfigContent` as `internal static` |
+| `REBUSS.Pure\Cli\InitCommand.cs` | `init` command: detects IDE by presence of `.vscode/`, `*.code-workspace` (VS Code) and/or `.vs/`, `*.sln` (Visual Studio) in the git root; target selection: only `.vscode` → VS Code only; only `.vs` → Visual Studio only; both or neither → both; when no `--pat` is provided, attempts Azure CLI authentication: first checks if `az` is installed via `IsAzCliInstalledAsync` (`az --version`); if not installed, prompts user with `[y/N]` to install (on Windows via `winget install -e --id Microsoft.AzureCLI`, on Linux/macOS via `curl \| bash`); after install verification, checks for existing `az` session, runs `az login` **interactively** via `RunAzLoginInteractiveAsync` (inherits parent console so the browser can open), acquires and caches an Azure DevOps token via `AzureCliTokenProvider.ParseTokenResponse`; `CacheAzureCliToken` delegates to `LocalConfigStore` (eliminates duplicated JSON serialization); `RunProcessAsync` reads stdout/stderr concurrently to prevent pipe deadlock; on login failure displays a prominent `AUTHENTICATION NOT CONFIGURED` banner via `WriteAuthFailureBannerAsync` with retry instructions (`rebuss-pure init`), `appsettings.Local.json` path/example, PAT creation link, and `--pat` inline option; if a config file already exists, **merges** the `REBUSS.Pure` server entry into the existing `servers` object (preserving other servers and top-level properties) via `MergeConfigContent`; falls back to full overwrite when existing file is not valid JSON; `MergeConfigContent` carries over existing `--pat` value when no new PAT is provided via `ExtractExistingPat`; copies embedded review prompt files (`review-pr.prompt.md`, `self-review.prompt.md`) to `.github/prompts/` (skips existing files); accepts `TextReader` for user input and optional `Func<string, CancellationToken, Task<...>>` process runner for testability; exposes `ResolveConfigTargets`, `DetectsVsCode`, `DetectsVisualStudio`, `BuildConfigContent`, `MergeConfigContent`, `RunProcessAsync`, `RunInteractiveProcessAsync` as `internal static` |
 | `REBUSS.Pure\Cli\Prompts\review-pr.prompt.md` | Embedded resource: PR review prompt template (bundled into assembly, copied by `init`) |
 | `REBUSS.Pure\Cli\Prompts\self-review.prompt.md` | Embedded resource: self-review prompt template (bundled into assembly, copied by `init`) |
 
@@ -228,16 +231,18 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Tests\Services\LocalReview\LocalReviewProviderTests.cs` | `LocalReviewProvider` — files listing, status mapping, classification, file diff, skip reasons, exception cases |
 | `REBUSS.Pure.Tests\Logging\FileLoggerProviderTests.cs` | `FileLoggerProvider` — daily rotation, file naming, write content, timestamp, retention/deletion, roll-over, non-log file safety |
 | `REBUSS.Pure.Tests\Integration\EndToEndTests.cs` | Full JSON-RPC pipeline: request → McpServer → handler → response |
-| `REBUSS.Pure.Tests\Mcp\McpServerTests.cs` | `McpServer` |
+| `REBUSS.Pure.Tests\Mcp\McpServerTests.cs` | `McpServer` — initialize, tools/list, tools/call, unknown method, invalid JSON, empty lines, notifications without id silently ignored, notifications don’t affect subsequent requests, unknown method with id still returns error |
 | `REBUSS.Pure.Tests\Mcp\InitializeMethodHandlerTests.cs` | `InitializeMethodHandler` — roots extraction, storage, edge cases |
 | `REBUSS.Pure.Tests\Mcp\McpWorkspaceRootProviderTests.cs` | `McpWorkspaceRootProvider` — URI conversion, repo root resolution, MCP roots, localRepoPath fallback, CLI `--repo` precedence, unexpanded variable guard |
 | `REBUSS.Pure.Tests\Cli\CliArgumentParserTests.cs` | `CliArgumentParser` — server mode, `--repo`, `--pat`, `--org`, `--project`, `--repository`, `init` command, combined args, edge cases |
-| `REBUSS.Pure.Tests\Cli\InitCommandTests.cs` | `InitCommand` — generates `mcp.json` for correct IDE target(s), copies prompt files to `.github/prompts/`, error cases, subdirectory support, skip-existing prompts, PAT carry-over in `MergeConfigContent` |
+| `REBUSS.Pure.Tests\Cli\InitCommandTests.cs` | `InitCommand` — generates `mcp.json` for correct IDE target(s), copies prompt files to `.github/prompts/`, error cases, subdirectory support, skip-existing prompts, PAT carry-over in `MergeConfigContent`, Azure CLI login during init (existing session reuse, interactive login, login failure displays auth banner with retry/PAT instructions, PAT skips login), Azure CLI installation prompt (detects missing az, prompts user y/n, installs on confirm, shows manual install hint on failure, skips prompt when az is installed) |
 | `REBUSS.Pure.Tests\AzureDevOpsIntegration\AzureDevOpsOptionsTests.cs` | Options validation (format-only, all fields optional) |
-| `REBUSS.Pure.Tests\AzureDevOpsIntegration\AzureDevOpsApiClientTests.cs` | API client |
+| `REBUSS.Pure.Tests\AzureDevOpsIntegration\AzureDevOpsApiClientTests.cs` | API client — URL construction, status codes, file content, version descriptor resolution, HTML response detection (203 with HTML content type, HTML body without content type, valid JSON not flagged, XML body not flagged as HTML) |
 | `REBUSS.Pure.Tests\AzureDevOpsIntegration\GitRemoteDetectorTests.cs` | `GitRemoteDetector.ParseRemoteUrl` — HTTPS, SSH, GitHub, edge cases; `FindGitRepositoryRoot`, `GetCandidateDirectories` |
 | `REBUSS.Pure.Tests\AzureDevOpsIntegration\ConfigurationResolverTests.cs` | `ConfigurationResolver` — PostConfigure precedence, fallback, caching, mixed sources, Resolve static method |
-| `REBUSS.Pure.Tests\AzureDevOpsIntegration\ChainedAuthenticationProviderTests.cs` | `ChainedAuthenticationProvider` — PAT precedence, cached tokens, expired token error, `BuildPatRequiredMessage` content validation |
+| `REBUSS.Pure.Tests\AzureDevOpsIntegration\ChainedAuthenticationProviderTests.cs` | `ChainedAuthenticationProvider` — PAT precedence, cached tokens, Azure CLI token acquisition and caching, expired token fallback to Azure CLI, null expiry falls through to Azure CLI refresh (not used as valid), `InvalidateCachedToken` clears cache fields, `BuildAuthRequiredMessage` content validation |
+| `REBUSS.Pure.Tests\AzureDevOpsIntegration\AzureCliProcessHelperTests.cs` | `AzureCliProcessHelper.GetProcessStartArgs` — Windows `cmd.exe /c az` wrapping, Linux direct `az` invocation |
+| `REBUSS.Pure.Tests\AzureDevOpsIntegration\AzureCliTokenProviderTests.cs` | `AzureCliTokenProvider.ParseTokenResponse` — valid JSON, missing/empty token, missing expiry, ISO 8601 dates, resource ID constant |
 
 ---
 
@@ -331,6 +336,15 @@ CachedConfig
   → LocalConfigStore                (produces/consumes: file I/O)
   → ConfigurationResolver           (consumes: fallback for org/project/repo)
   → ChainedAuthenticationProvider   (consumes: cached token; produces: saves new token)
+
+AzureCliProcessHelper
+  → AzureCliTokenProvider           (consumes: resolves az process start args)
+  → InitCommand                     (consumes: resolves az process start args for both captured and interactive execution)
+
+AzureCliToken
+→ AzureCliTokenProvider           (produces via GetTokenAsync / ParseTokenResponse)
+→ ChainedAuthenticationProvider   (consumes: acquires token, caches via ILocalConfigStore)
+→ InitCommand                     (consumes: uses ParseTokenResponse during init to cache token via LocalConfigStore)
 ```
 
 ---
@@ -365,8 +379,8 @@ services.AddSingleton<IGitRemoteDetector, GitRemoteDetector>();
 services.AddSingleton<ILocalConfigStore, LocalConfigStore>();
 services.AddSingleton<IPostConfigureOptions<AzureDevOpsOptions>, ConfigurationResolver>();
 
-// Authentication provider (chained: PAT → cached token → Entra ID)
-// Accepts IOptions<AzureDevOpsOptions> — options resolved lazily on first GetAuthenticationAsync call
+// Authentication provider (chained: PAT → cached token → Azure CLI → error)
+services.AddSingleton<IAzureCliTokenProvider, AzureCliTokenProvider>();
 services.AddSingleton<IAuthenticationProvider, ChainedAuthenticationProvider>();
 services.AddTransient<AuthenticationDelegatingHandler>();
 

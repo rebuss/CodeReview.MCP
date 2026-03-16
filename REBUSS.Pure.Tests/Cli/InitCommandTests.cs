@@ -4,6 +4,24 @@ namespace REBUSS.Pure.Tests.Cli;
 
 public class InitCommandTests
 {
+    /// <summary>
+    /// Mock process runner that simulates Azure CLI not being installed (all commands fail).
+    /// </summary>
+    private static readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>> AzCliNotInstalled =
+        (_, _) => Task.FromResult((-1, string.Empty, "az: command not found"));
+
+    /// <summary>
+    /// Creates an InitCommand with a mock process runner (Azure CLI unavailable by default).
+    /// The input reader defaults to "n" (decline install prompt).
+    /// </summary>
+    private static InitCommand CreateCommand(
+        TextWriter output, string workingDirectory, string executablePath, string? pat = null,
+        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
+        TextReader? input = null)
+    {
+        return new InitCommand(output, input ?? new StringReader("n"), workingDirectory, executablePath, pat,
+            processRunner ?? AzCliNotInstalled);
+    }
     // -------------------------------------------------------------------------
     // Error cases
     // -------------------------------------------------------------------------
@@ -17,7 +35,7 @@ public class InitCommandTests
 
         try
         {
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -43,7 +61,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, @"C:\tools\REBUSS.Pure.exe");
+            var command = CreateCommand(output, tempDir, @"C:\tools\REBUSS.Pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -78,7 +96,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, subDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, subDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -106,7 +124,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -130,7 +148,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -157,7 +175,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -182,7 +200,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -211,7 +229,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -241,7 +259,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -357,11 +375,11 @@ public class InitCommandTests
 
         try
         {
-            var command1 = new InitCommand(new StringWriter(), tempDir, "rebuss-pure.exe");
+            var command1 = CreateCommand(new StringWriter(), tempDir, "rebuss-pure.exe");
             await command1.ExecuteAsync();
 
             var output2 = new StringWriter();
-            var command2 = new InitCommand(output2, tempDir, "rebuss-pure-v2.exe");
+            var command2 = CreateCommand(output2, tempDir, "rebuss-pure-v2.exe");
             var exitCode = await command2.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
@@ -493,7 +511,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe", "my-pat-value");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", "my-pat-value");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -518,7 +536,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -588,7 +606,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -628,7 +646,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -657,7 +675,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, tempDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
 
             await command.ExecuteAsync();
 
@@ -682,7 +700,7 @@ public class InitCommandTests
         try
         {
             var output = new StringWriter();
-            var command = new InitCommand(output, subDir, "rebuss-pure.exe");
+            var command = CreateCommand(output, subDir, "rebuss-pure.exe");
 
             var exitCode = await command.ExecuteAsync();
 
@@ -691,6 +709,323 @@ public class InitCommandTests
             var reviewPrPath = Path.Combine(tempDir, ".github", "prompts", "review-pr.prompt.md");
             Assert.True(File.Exists(reviewPrPath));
             Assert.False(File.Exists(Path.Combine(subDir, ".github", "prompts", "review-pr.prompt.md")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Azure CLI login during init
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_SkipsAzLogin_WhenPatProvided()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var processRunnerCalled = false;
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (_, _) =>
+        {
+            processRunnerCalled = true;
+            return Task.FromResult((0, "", ""));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", "my-pat", processRunner);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.False(processRunnerCalled);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UsesExistingAzSession_WhenTokenAlreadyCached()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var expiresOn = DateTime.UtcNow.AddHours(1);
+        var tokenJson = $"{{\"accessToken\":\"existing-token\",\"expiresOn\":\"{expiresOn:O}\"}}";
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            if (args == "--version")
+                return Task.FromResult((0, "azure-cli 2.60.0", ""));
+            if (args.Contains("get-access-token"))
+                return Task.FromResult((0, tokenJson, ""));
+            return Task.FromResult((-1, "", "should not be called"));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", null, processRunner);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Using existing login session", output.ToString());
+            Assert.DoesNotContain("browser window", output.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RunsAzLogin_WhenNoExistingSession()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var callCount = 0;
+        var expiresOn = DateTime.UtcNow.AddHours(1);
+        var tokenJson = $"{{\"accessToken\":\"new-token\",\"expiresOn\":\"{expiresOn:O}\"}}";
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            callCount++;
+            if (args == "--version")
+                return Task.FromResult((0, "azure-cli 2.60.0", ""));
+            if (args.Contains("get-access-token") && callCount <= 2)
+                return Task.FromResult((-1, "", "not logged in")); // first token call: no session
+            if (args.Contains("login"))
+                return Task.FromResult((0, "", "")); // login succeeds
+            if (args.Contains("get-access-token"))
+                return Task.FromResult((0, tokenJson, "")); // second token call: token acquired
+            return Task.FromResult((-1, "", "unexpected"));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", null, processRunner);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("Azure CLI login successful", outputText);
+            Assert.Contains("token acquired and cached", outputText);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ContinuesGracefully_WhenAzLoginFails()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("AUTHENTICATION NOT CONFIGURED", outputText);
+            Assert.Contains("rebuss-pure init", outputText);
+            Assert.Contains("appsettings.Local.json", outputText);
+            Assert.Contains("PersonalAccessToken", outputText);
+            Assert.Contains("rebuss-pure init --pat", outputText);
+            Assert.Contains("dev.azure.com", outputText);
+            // MCP config should still be created
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Azure CLI installation prompt
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_PromptsToInstallAzCli_WhenNotInstalled()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var input = new StringReader("n");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", input: input);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("Azure CLI is not installed", outputText);
+            Assert.Contains("install Azure CLI now", outputText);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_InstallsAzCli_WhenUserConfirms()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var callLog = new List<string>();
+        var expiresOn = DateTime.UtcNow.AddHours(1);
+        var tokenJson = $"{{\"accessToken\":\"new-token\",\"expiresOn\":\"{expiresOn:O}\"}}";
+        var azInstalled = false;
+
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            callLog.Add(args);
+            if (args == "--version" && !azInstalled)
+                return Task.FromResult((-1, "", "not found"));
+            if (args == "install-az-cli")
+            {
+                azInstalled = true;
+                return Task.FromResult((0, "", ""));
+            }
+            if (args == "--version" && azInstalled)
+                return Task.FromResult((0, "azure-cli 2.60.0", ""));
+            if (args.Contains("get-access-token") && callLog.Count(a => a.Contains("get-access-token")) <= 1)
+                return Task.FromResult((-1, "", "not logged in"));
+            if (args.Contains("login"))
+                return Task.FromResult((0, "", ""));
+            if (args.Contains("get-access-token"))
+                return Task.FromResult((0, tokenJson, ""));
+            return Task.FromResult((-1, "", "unexpected"));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var input = new StringReader("y");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", processRunner: processRunner, input: input);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("Installing Azure CLI", outputText);
+            Assert.Contains("Azure CLI installed successfully", outputText);
+            Assert.Contains("Azure CLI login successful", outputText);
+            Assert.Contains("install-az-cli", callLog);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShowsAuthBanner_WhenUserDeclinesInstall()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var input = new StringReader("n");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", input: input);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("AUTHENTICATION NOT CONFIGURED", outputText);
+            // MCP config should still be created
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShowsManualInstallHint_WhenInstallFails()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            if (args == "--version")
+                return Task.FromResult((-1, "", "not found"));
+            if (args == "install-az-cli")
+                return Task.FromResult((-1, "", "winget not found"));
+            return Task.FromResult((-1, "", "unexpected"));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var input = new StringReader("y");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", processRunner: processRunner, input: input);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.Contains("installation failed", outputText);
+            Assert.Contains("https://aka.ms/install-azure-cli", outputText);
+            Assert.Contains("AUTHENTICATION NOT CONFIGURED", outputText);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SkipsInstallPrompt_WhenAzCliIsInstalled()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var expiresOn = DateTime.UtcNow.AddHours(1);
+        var tokenJson = $"{{\"accessToken\":\"token\",\"expiresOn\":\"{expiresOn:O}\"}}";
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            if (args == "--version")
+                return Task.FromResult((0, "azure-cli 2.60.0", ""));
+            if (args.Contains("get-access-token"))
+                return Task.FromResult((0, tokenJson, ""));
+            return Task.FromResult((-1, "", "unexpected"));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", processRunner: processRunner);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            var outputText = output.ToString();
+            Assert.DoesNotContain("not installed", outputText);
+            Assert.DoesNotContain("install Azure CLI", outputText);
+            Assert.Contains("Using existing login session", outputText);
         }
         finally
         {

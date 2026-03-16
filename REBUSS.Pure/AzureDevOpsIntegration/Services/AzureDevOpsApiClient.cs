@@ -190,6 +190,8 @@ namespace REBUSS.Pure.AzureDevOpsIntegration.Services
         /// <summary>
         /// Sends a GET request to the specified relative URL and returns the response body as a string.
         /// Logs the full URL at Debug level and throws on non-success status codes.
+        /// Also detects non-JSON (HTML) responses that indicate authentication failures
+        /// (e.g. HTTP 203 returning a login page instead of API data).
         /// </summary>
         private async Task<string> GetStringAsync(string relativeUrl, string endpointName = "Unknown")
         {
@@ -215,11 +217,49 @@ namespace REBUSS.Pure.AzureDevOpsIntegration.Services
 
             var body = await response.Content.ReadAsStringAsync();
 
+            // Detect HTML responses on 2xx status codes (e.g. 203 Non-Authoritative).
+            // Azure DevOps returns login/redirect HTML pages when authentication fails
+            // but the CDN/proxy returns a 2xx status code instead of 401.
+            if (IsHtmlResponse(response, body))
+            {
+                _logger.LogError(
+                    "Azure DevOps API {Endpoint} returned HTML instead of JSON (status {StatusCode}) — " +
+                    "this usually means the authentication token is invalid or expired. " +
+                    "Run 'rebuss-pure init' or 'az login' to re-authenticate.",
+                    endpointName, (int)response.StatusCode);
+
+                throw new HttpRequestException(
+                    $"Azure DevOps returned an authentication page instead of API data (HTTP {(int)response.StatusCode}). " +
+                    $"Your token is likely expired or invalid. Run 'rebuss-pure init' or 'az login' to re-authenticate.",
+                    inner: null,
+                    statusCode: System.Net.HttpStatusCode.Unauthorized);
+            }
+
             _logger.LogDebug(
                 "Azure DevOps API {Endpoint} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
                 endpointName, (int)response.StatusCode, body.Length, sw.ElapsedMilliseconds);
 
             return body;
+        }
+
+        /// <summary>
+        /// Detects whether a 2xx response actually contains HTML instead of JSON.
+        /// This happens when Azure DevOps returns an authentication/login page
+        /// through a CDN or proxy that doesn't convert it to a proper 401.
+        /// </summary>
+        internal static bool IsHtmlResponse(HttpResponseMessage response, string body)
+        {
+            var contentType = response.Content.Headers.ContentType?.MediaType;
+            if (string.Equals(contentType, "text/html", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Fallback: check body content for HTML markers when content-type is missing or ambiguous
+            var trimmed = body.TrimStart();
+            if (trimmed.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
         }
     }
 }

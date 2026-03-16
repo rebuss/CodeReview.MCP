@@ -137,6 +137,9 @@ namespace REBUSS.Pure.Mcp
 
         /// <summary>
         /// Parses the raw JSON line and dispatches it to the appropriate method handler.
+        /// JSON-RPC notifications (messages without an <c>id</c>) that have no registered
+        /// handler are silently ignored — per the MCP/JSON-RPC spec, notifications must
+        /// never receive a response.
         /// </summary>
         private async Task<JsonRpcResponse?> ProcessRequestAsync(string requestJson, CancellationToken cancellationToken)
         {
@@ -145,8 +148,20 @@ namespace REBUSS.Pure.Mcp
 
             _logger.LogInformation("Processing method: {Method}", request!.Method);
 
+            if (IsNotification(request) && !_methodHandlers.ContainsKey(request.Method))
+            {
+                _logger.LogDebug("Ignoring unhandled notification: {Method}", request.Method);
+                return null;
+            }
+
             return await DispatchAsync(request, cancellationToken);
         }
+
+        /// <summary>
+        /// A JSON-RPC notification is a message without an <c>id</c> field.
+        /// Notifications must not produce a response.
+        /// </summary>
+        private static bool IsNotification(JsonRpcRequest request) => request.Id is null;
 
         private bool TryDeserializeRequest(string requestJson, out JsonRpcRequest? request, out JsonRpcResponse? errorResponse)
         {

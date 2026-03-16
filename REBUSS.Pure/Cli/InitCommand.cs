@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Reflection;
+using REBUSS.Pure.AzureDevOpsIntegration.Configuration;
 
 namespace REBUSS.Pure.Cli;
 
@@ -6,6 +8,11 @@ namespace REBUSS.Pure.Cli;
 /// Generates MCP server configuration file(s) in the current Git repository
 /// and copies review prompt files to <c>.github/prompts/</c> so that MCP clients
 /// (e.g. VS Code, Visual Studio, GitHub Copilot) can launch the server and use the prompts.
+/// <para>
+/// When no <c>--pat</c> is provided, the command runs <c>az login</c> so the user
+/// authenticates via Azure CLI. The acquired token is cached locally and the MCP server
+/// will use it automatically at runtime.
+/// </para>
 /// <para>
 /// The target location is determined by IDE auto-detection:
 /// VS Code ? <c>.vscode/mcp.json</c>;
@@ -28,18 +35,41 @@ public class InitCommand : ICliCommand
     };
 
     private readonly TextWriter _output;
+    private readonly TextReader _input;
     private readonly string _workingDirectory;
     private readonly string _executablePath;
     private readonly string? _pat;
+    private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
 
     public string Name => "init";
 
     public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null)
+        : this(output, Console.In, workingDirectory, executablePath, pat, processRunner: null)
+    {
+    }
+
+    public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null)
+        : this(output, input, workingDirectory, executablePath, pat, processRunner: null)
+    {
+    }
+
+    /// <summary>
+    /// Constructor that accepts an optional input reader and process runner for testability.
+    /// </summary>
+    internal InitCommand(
+        TextWriter output,
+        TextReader input,
+        string workingDirectory,
+        string executablePath,
+        string? pat,
+        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner)
     {
         _output = output;
+        _input = input;
         _workingDirectory = workingDirectory;
         _executablePath = executablePath;
         _pat = pat;
+        _processRunner = processRunner;
     }
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -49,6 +79,12 @@ public class InitCommand : ICliCommand
         {
             await _output.WriteLineAsync("Error: Not inside a Git repository. Run this command from a Git repository root.");
             return 1;
+        }
+
+        // If no PAT was provided, try Azure CLI authentication
+        if (string.IsNullOrWhiteSpace(_pat))
+        {
+            await TryAzureCliLoginAsync(cancellationToken);
         }
 
         var targets = ResolveConfigTargets(gitRoot);
@@ -83,6 +119,320 @@ public class InitCommand : ICliCommand
         await _output.WriteLineAsync("Restart your IDE or reload the MCP client to pick up the new configuration.");
 
         return 0;
+    }
+
+    /// <summary>
+    /// Attempts Azure CLI authentication: checks for an existing token first,
+    /// runs <c>az login</c> if needed, then acquires and caches a token.
+    /// If Azure CLI is not installed, offers to install it interactively.
+    /// </summary>
+    private async Task TryAzureCliLoginAsync(CancellationToken cancellationToken)
+    {
+        // Check if Azure CLI is available
+        if (!await IsAzCliInstalledAsync(cancellationToken))
+        {
+            var installed = await PromptAndInstallAzCliAsync(cancellationToken);
+            if (!installed)
+            {
+                await WriteAuthFailureBannerAsync();
+                return;
+            }
+        }
+
+        // Check if a valid token is already cached
+        var existingToken = await RunAzCliCommandAsync(
+            $"account get-access-token --resource {AzureCliTokenProvider.AzureDevOpsResourceId} --output json",
+            cancellationToken);
+
+        if (existingToken.ExitCode == 0)
+        {
+            var parsed = AzureCliTokenProvider.ParseTokenResponse(existingToken.StdOut);
+            if (parsed is not null && parsed.ExpiresOn > DateTime.UtcNow.AddMinutes(5))
+            {
+                CacheAzureCliToken(parsed);
+                await _output.WriteLineAsync("Azure CLI: Using existing login session.");
+                await _output.WriteLineAsync();
+                return;
+            }
+        }
+
+        // No valid token — attempt az login (interactive — inherits console)
+        await _output.WriteLineAsync("No PAT provided. Attempting Azure CLI login...");
+        await _output.WriteLineAsync("A browser window will open for authentication.");
+        await _output.WriteLineAsync();
+
+        var loginExitCode = await RunAzLoginInteractiveAsync(cancellationToken);
+        if (loginExitCode != 0)
+        {
+            await WriteAuthFailureBannerAsync();
+            return;
+        }
+
+        await _output.WriteLineAsync("Azure CLI login successful.");
+
+        // Acquire and cache token
+        var tokenResult = await RunAzCliCommandAsync(
+            $"account get-access-token --resource {AzureCliTokenProvider.AzureDevOpsResourceId} --output json",
+            cancellationToken);
+
+        if (tokenResult.ExitCode == 0)
+        {
+            var token = AzureCliTokenProvider.ParseTokenResponse(tokenResult.StdOut);
+            if (token is not null)
+            {
+                CacheAzureCliToken(token);
+                await _output.WriteLineAsync("Azure DevOps token acquired and cached.");
+                await _output.WriteLineAsync();
+                return;
+            }
+        }
+
+        await _output.WriteLineAsync("Warning: Login succeeded but token acquisition failed.");
+        await _output.WriteLineAsync("The server will retry token acquisition at runtime.");
+        await _output.WriteLineAsync();
+    }
+
+    /// <summary>
+    /// Checks whether Azure CLI is installed by running <c>az --version</c>.
+    /// </summary>
+    private async Task<bool> IsAzCliInstalledAsync(CancellationToken cancellationToken)
+    {
+        var result = await RunAzCliCommandAsync("--version", cancellationToken);
+        return result.ExitCode == 0;
+    }
+
+    /// <summary>
+    /// Prompts the user to install Azure CLI. If confirmed, runs the appropriate
+    /// platform installer (<c>winget</c> on Windows, <c>curl | bash</c> on Linux/macOS).
+    /// Returns <c>true</c> if installation succeeded.
+    /// </summary>
+    private async Task<bool> PromptAndInstallAzCliAsync(CancellationToken cancellationToken)
+    {
+        await _output.WriteLineAsync("Azure CLI is not installed.");
+        await _output.WriteLineAsync();
+        await _output.WriteAsync("Would you like to install Azure CLI now? [y/N]: ");
+
+        var response = _input.ReadLine();
+        if (!string.Equals(response?.Trim(), "y", StringComparison.OrdinalIgnoreCase))
+        {
+            await _output.WriteLineAsync();
+            return false;
+        }
+
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("Installing Azure CLI...");
+        await _output.WriteLineAsync();
+
+        var installExitCode = await RunAzCliInstallAsync(cancellationToken);
+        if (installExitCode != 0)
+        {
+            await _output.WriteLineAsync("Azure CLI installation failed.");
+            await _output.WriteLineAsync("You can install it manually: https://aka.ms/install-azure-cli");
+            await _output.WriteLineAsync();
+            return false;
+        }
+
+        await _output.WriteLineAsync("Azure CLI installed successfully.");
+        await _output.WriteLineAsync();
+
+        // Verify installation
+        if (!await IsAzCliInstalledAsync(cancellationToken))
+        {
+            await _output.WriteLineAsync("Azure CLI was installed but could not be found.");
+            await _output.WriteLineAsync("You may need to restart your terminal and run 'rebuss-pure init' again.");
+            await _output.WriteLineAsync();
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Runs the platform-specific Azure CLI installer interactively.
+    /// On Windows uses <c>winget install -e --id Microsoft.AzureCLI</c>.
+    /// On Linux/macOS uses <c>curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash</c>.
+    /// </summary>
+    private async Task<int> RunAzCliInstallAsync(CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+        {
+            var result = await _processRunner("install-az-cli", cancellationToken);
+            return result.ExitCode;
+        }
+
+        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return await RunInteractiveProcessAsync(
+                "winget", "install -e --id Microsoft.AzureCLI", cancellationToken);
+        }
+
+        return await RunInteractiveProcessAsync(
+            "bash", "-c \"curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash\"", cancellationToken);
+    }
+
+    /// <summary>
+    /// Writes a prominent, actionable banner when Azure CLI login fails or is not available,
+    /// explaining how the user can authenticate for Azure DevOps PR reviews.
+    /// </summary>
+    private async Task WriteAuthFailureBannerAsync()
+    {
+        var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.Local.json");
+
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync("  AUTHENTICATION NOT CONFIGURED");
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("Azure CLI login failed, was cancelled, or Azure CLI is not installed.");
+        await _output.WriteLineAsync("PR review tools will NOT work until you authenticate.");
+        await _output.WriteLineAsync("(Local self-review tools work without authentication.)");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("You have two options:");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("  OPTION 1 — Try again with Azure CLI (recommended):");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("    Install Azure CLI: https://aka.ms/install-azure-cli");
+        await _output.WriteLineAsync("    Then run:");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("      rebuss-pure init");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("    A browser window will open for login.");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("  OPTION 2 — Use a Personal Access Token (PAT):");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync($"    Create the file: {appSettingsPath}");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("    With the following content:");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("      {");
+        await _output.WriteLineAsync("        \"AzureDevOps\": {");
+        await _output.WriteLineAsync("          \"PersonalAccessToken\": \"<your-pat-here>\"");
+        await _output.WriteLineAsync("        }");
+        await _output.WriteLineAsync("      }");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("    To create a PAT:");
+        await _output.WriteLineAsync("      1. Go to https://dev.azure.com/<your-org>/_usersSettings/tokens");
+        await _output.WriteLineAsync("      2. Click '+ New Token', select scope: Code (Read)");
+        await _output.WriteLineAsync("      3. Copy the token into the file above");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("    Or pass it directly:");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("      rebuss-pure init --pat <your-pat-here>");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync();
+    }
+
+    private static void CacheAzureCliToken(AzureCliToken token)
+    {
+        try
+        {
+            var store = new LocalConfigStore(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalConfigStore>.Instance);
+            var config = store.Load() ?? new CachedConfig();
+            config.AccessToken = token.AccessToken;
+            config.TokenType = "Bearer";
+            config.TokenExpiresOn = token.ExpiresOn;
+            store.Save(config);
+        }
+        catch
+        {
+            // Caching failure is non-fatal during init
+        }
+    }
+
+    private async Task<(int ExitCode, string StdOut, string StdErr)> RunAzCliCommandAsync(
+        string arguments, CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+            return await _processRunner(arguments, cancellationToken);
+
+        var (fileName, args) = AzureCliProcessHelper.GetProcessStartArgs(arguments);
+        return await RunProcessAsync(fileName, args, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs <c>az login</c> interactively — the process inherits the parent console
+    /// so it can open a browser and display progress to the user.
+    /// </summary>
+    private async Task<int> RunAzLoginInteractiveAsync(CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+        {
+            var result = await _processRunner("login", cancellationToken);
+            return result.ExitCode;
+        }
+
+        var (fileName, args) = AzureCliProcessHelper.GetProcessStartArgs("login");
+        return await RunInteractiveProcessAsync(fileName, args, cancellationToken);
+    }
+
+    internal static async Task<(int ExitCode, string StdOut, string StdErr)> RunProcessAsync(
+        string fileName, string arguments, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+                return (-1, string.Empty, "Failed to start process");
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await Task.WhenAll(stdoutTask, stderrTask);
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            await process.WaitForExitAsync(cancellationToken);
+
+            return (process.ExitCode, stdout, stderr);
+        }
+        catch (Exception ex)
+        {
+            return (-1, string.Empty, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Runs a process interactively — inherits the parent's stdin/stdout/stderr
+    /// so the child can open a browser, display prompts, and interact with the user.
+    /// Returns only the exit code (no captured output).
+    /// </summary>
+    internal static async Task<int> RunInteractiveProcessAsync(
+        string fileName, string arguments, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = false,
+                RedirectStandardError = false,
+                RedirectStandardInput = false
+            };
+
+            using var process = Process.Start(psi);
+            if (process is null)
+                return -1;
+
+            await process.WaitForExitAsync(cancellationToken);
+            return process.ExitCode;
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     /// <summary>

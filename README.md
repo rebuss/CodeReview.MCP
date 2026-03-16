@@ -89,7 +89,9 @@ The scripts download the `.nupkg` from the latest GitHub Release and install `RE
 
 ## Recommended configuration
 
-The recommended way to store your PAT is in **`appsettings.Local.json`** (never committed to Git) or as an **environment variable**. This keeps secrets out of `mcp.json`, which may be visible in MCP client UIs or accidentally committed to source control.
+**The recommended authentication method is Azure CLI** — run `az login` once (or let `rebuss-pure init` do it for you), and the server will automatically acquire and refresh tokens for Azure DevOps. No PAT needed.
+
+If you prefer to use a Personal Access Token, store it in **`appsettings.Local.json`** (never committed to Git) or as an **environment variable**. This keeps secrets out of `mcp.json`, which may be visible in MCP client UIs or accidentally committed to source control.
 
 `--pat` as a command-line argument in `mcp.json` is supported and convenient, but treat it as a shortcut — not a best practice for shared or versioned configurations.
 
@@ -114,7 +116,18 @@ This creates:
 
 If any of these files already exist, they are **not overwritten** — the command skips them and prints a message.
 
-To embed your PAT directly in the generated config, pass `--pat` to `init`:
+### Authentication during init
+
+When you run `init` **without `--pat`**, the command automatically attempts Azure CLI authentication:
+
+1. If you are already logged in via `az login`, the existing session is reused.
+2. If not, a browser window opens for interactive Azure login.
+3. On success, an Azure DevOps token is acquired and cached locally.
+4. If Azure CLI is not installed or login fails, the command continues — you can authenticate later.
+
+This means in most cases, **no PAT is needed** — just run `init` and log in once.
+
+To embed your PAT directly in the generated config instead, pass `--pat` to `init`:
 
 ```
 rebuss-pure init --pat your-pat-here
@@ -463,6 +476,8 @@ REBUSS.Pure was designed with the following goals:
 
 Generates a `.vscode/mcp.json` configuration file and copies GitHub Copilot prompt files to `.github/prompts/` in the current repository root.
 
+When no `--pat` is provided, the command attempts Azure CLI authentication (`az login`) so the user can log in once during initialization.
+
 ```
 cd /path/to/your/azure-devops-repo
 REBUSS.Pure.exe init
@@ -474,7 +489,7 @@ or, if installed as a global .NET tool:
 rebuss-pure init
 ```
 
-Optionally pass `--pat` to embed the token directly in the generated file:
+Optionally pass `--pat` to embed the token directly in the generated file (skips Azure CLI login):
 
 ```
 rebuss-pure init --pat your-pat-here
@@ -600,11 +615,24 @@ Successfully detected values are cached locally for future runs.
 
 ## Authentication
 
+> **Recommended:** Use `az login` (Azure CLI) for authentication. Run it once and the server handles token management automatically — no PAT needed. You can also run `rebuss-pure init` without `--pat` to log in during initialization.
+
 The server uses the following authentication chain (in priority order):
 
-1. **Personal Access Token** (recommended) — if `PersonalAccessToken` is provided in configuration, it is always used (Basic auth).
-2. **Cached token** — if a token was previously acquired and is not expired, it is reused.
-3. **Error with instructions** — if no PAT is configured and no cached token is available, the server returns a clear error message with step-by-step instructions for creating and configuring a PAT.
+1. **Personal Access Token** — if `PersonalAccessToken` is explicitly provided in configuration, it is always used (Basic auth). Choose this only if you intentionally prefer PAT-based authentication.
+2. **Cached token** — if a token was previously acquired (via Azure CLI or otherwise) and is not expired, it is reused.
+3. **Azure CLI** (`az account get-access-token`) — if the Azure CLI is installed and the user is logged in, the server automatically acquires a Bearer token for Azure DevOps and caches it locally.
+4. **Error with instructions** — if no authentication method is available, the server returns a clear error message with instructions to run `az login` or configure a PAT.
+
+### Token lifetime and re-authentication
+
+| Token type | Lifetime | Re-authentication |
+|---|---|---|
+| Azure CLI Bearer token | ~1 hour (auto-refreshed from the Azure CLI session) | Transparent — as long as the `az login` session is valid (~90 days), the server refreshes tokens automatically |
+| Azure CLI session (refresh token) | ~90 days | Run `az login` or `rebuss-pure init` again |
+| Personal Access Token (PAT) | Configurable (up to 1 year) | Create a new PAT in Azure DevOps and update your configuration |
+
+If you see authentication errors after a long period of inactivity, run `az login` or `rebuss-pure init` to re-authenticate.
 
 ## Configuration resolution priority
 

@@ -273,5 +273,63 @@ namespace REBUSS.Pure.Tests.Mcp
 
             Assert.Equal(0, tools.GetArrayLength());
         }
+
+        // --- notifications (no id) -----------------------------------------------
+
+        [Fact]
+        public async Task Notification_WithoutId_IsSilentlyIgnored()
+        {
+            // notifications/initialized has no id — should produce no response
+            var notification = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/initialized",
+                @params = new { }
+            });
+
+            var docs = await SendRequestsAsync(notification);
+
+            Assert.Empty(docs);
+        }
+
+        [Fact]
+        public async Task Notification_DoesNotAffectSubsequentRequests()
+        {
+            var notification = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/initialized",
+                @params = new { }
+            });
+            var request = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = "after-notif",
+                method = "tools/list"
+            });
+
+            var docs = await SendRequestsAsync(notification, request);
+
+            Assert.Single(docs);
+            Assert.Equal("after-notif", docs[0].RootElement.GetProperty("id").GetString());
+            Assert.False(docs[0].RootElement.TryGetProperty("error", out _));
+        }
+
+        [Fact]
+        public async Task UnknownMethod_WithId_StillReturnsError()
+        {
+            // Requests WITH an id should still return method-not-found error
+            var request = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                id = "req-with-id",
+                method = "notifications/initialized"
+            });
+
+            var doc = await SendSingleRequestAsync(request);
+            var error = doc.RootElement.GetProperty("error");
+
+            Assert.Equal(-32601, error.GetProperty("code").GetInt32());
+        }
     }
 }
