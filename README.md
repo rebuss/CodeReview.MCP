@@ -79,21 +79,19 @@ LLM → MCP → only needed data
 
 ## 1. Install
 
-<!-- TODO: uncomment after first NuGet release
 ### Option A — .NET global tool (recommended)
 
 ```bash
 dotnet tool install -g REBUSS.Pure
 ```
--->
 
-### PowerShell (pre-release)
+### Option B - PowerShell
 
 ```powershell
 irm https://raw.githubusercontent.com/rebuss/AzureDevOps.MCP.CodeReview/master/install.ps1 | iex
 ```
 
-### Bash (pre-release)
+### Option C - Bash
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rebuss/AzureDevOps.MCP.CodeReview/master/install.sh | bash
