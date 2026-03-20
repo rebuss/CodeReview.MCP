@@ -10,7 +10,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | Project | Path | Purpose |
 |---|---|---|
-| REBUSS.Pure | `REBUSS.Pure\REBUSS.Pure.csproj` | MCP server (console app, .NET 8) |
+| REBUSS.Pure | `REBUSS.Pure\REBUSS.Pure.csproj` | MCP server (console app, .NET 10; NuGet package `AzureDevOps.MCP.CodeReview`, command `rebuss-pure`) |
 | REBUSS.Pure.Tests | `REBUSS.Pure.Tests\REBUSS.Pure.Tests.csproj` | Unit + integration tests (xUnit, NSubstitute) |
 
 ---
@@ -182,9 +182,9 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 |---|---|
 | `REBUSS.Pure\Cli\CliArgumentParser.cs` | Parses CLI args: detects `init` command vs server mode, extracts `--repo`, `--pat`, `--org`, `--project`, `--repository` |
 | `REBUSS.Pure\Cli\ICliCommand.cs` | Interface: executable CLI command |
-| `REBUSS.Pure\Cli\InitCommand.cs` | `init` command: detects IDE by presence of `.vscode/`, `*.code-workspace` (VS Code) and/or `.vs/`, `*.sln` (Visual Studio) in the git root; target selection: only `.vscode` → VS Code only; only `.vs` → Visual Studio only; both or neither → both; **creates MCP config files and copies prompt files before any Azure CLI interaction** so that configs are on disk even if the user cancels during install or login; when no `--pat` is provided, attempts Azure CLI authentication: first checks if `az` is installed via `IsAzCliInstalledAsync` (`az --version`); if not installed, prompts user with `[y/N]` to install (on Windows via `winget install -e --id Microsoft.AzureCLI`, on Linux/macOS via `curl \| bash`); after install verification, checks for existing `az` session, runs `az login --allow-no-subscriptions` **interactively** via `RunAzLoginInteractiveAsync` (inherits parent console so the browser can open; `--allow-no-subscriptions` prevents the tenant/subscription selection prompt since Azure DevOps tokens do not require an active subscription), acquires and caches an Azure DevOps token via `AzureCliTokenProvider.ParseTokenResponse`; `CacheAzureCliToken` delegates to `LocalConfigStore` (eliminates duplicated JSON serialization); `RunProcessAsync` reads stdout/stderr concurrently to prevent pipe deadlock; on login failure displays a prominent `AUTHENTICATION NOT CONFIGURED` banner via `WriteAuthFailureBannerAsync` with retry instructions (`rebuss-pure init`), `appsettings.Local.json` path/example, PAT creation link, and `--pat` inline option; if a config file already exists, **merges** the `REBUSS.Pure` server entry into the existing `servers` object (preserving other servers and top-level properties) via `MergeConfigContent`; falls back to full overwrite when existing file is not valid JSON; `MergeConfigContent` carries over existing `--pat` value when no new PAT is provided via `ExtractExistingPat`; copies embedded review prompt files (`review-pr.prompt.md`, `self-review.prompt.md`) to `.github/prompts/` (skips existing files); accepts `TextReader` for user input and optional `Func<string, CancellationToken, Task<...>>` process runner for testability; exposes `ResolveConfigTargets`, `DetectsVsCode`, `DetectsVisualStudio`, `BuildConfigContent`, `MergeConfigContent`, `RunProcessAsync`, `RunInteractiveProcessAsync` as `internal static` |
-| `REBUSS.Pure\Cli\Prompts\review-pr.prompt.md` | Embedded resource: PR review prompt template (bundled into assembly, copied by `init`) |
-| `REBUSS.Pure\Cli\Prompts\self-review.prompt.md` | Embedded resource: self-review prompt template (bundled into assembly, copied by `init`) |
+| `REBUSS.Pure\Cli\InitCommand.cs` | `init` command: detects IDE by presence of `.vscode/`, `*.code-workspace` (VS Code) and/or `.vs/`, `*.sln` (Visual Studio) in the git root; target selection: only `.vscode` → VS Code only; only `.vs` → Visual Studio only; both or neither → both; **creates MCP config files and copies prompt files before any Azure CLI interaction** so that configs are on disk even if the user cancels during install or login; when no `--pat` is provided, attempts Azure CLI authentication: first checks if `az` is installed via `IsAzCliInstalledAsync` (`az --version`); if not installed, prompts user with `[y/N]` to install (on Windows via `winget install -e --id Microsoft.AzureCLI`, on Linux/macOS via `curl \| bash`); after install verification, checks for existing `az` session, runs `az login --allow-no-subscriptions` **interactively** via `RunAzLoginInteractiveAsync` (inherits parent console so the browser can open; `--allow-no-subscriptions` prevents the tenant/subscription selection prompt since Azure DevOps tokens do not require an active subscription), acquires and caches an Azure DevOps token via `AzureCliTokenProvider.ParseTokenResponse`; `CacheAzureCliToken` delegates to `LocalConfigStore` (eliminates duplicated JSON serialization); `RunProcessAsync` reads stdout/stderr concurrently to prevent pipe deadlock; on login failure displays a prominent `AUTHENTICATION NOT CONFIGURED` banner via `WriteAuthFailureBannerAsync` with retry instructions (`rebuss-pure init`), `appsettings.Local.json` path/example, PAT creation link, and `--pat` inline option; if a config file already exists, **merges** the `REBUSS.Pure` server entry into the existing `servers` object (preserving other servers and top-level properties) via `MergeConfigContent`; falls back to full overwrite when existing file is not valid JSON; `MergeConfigContent` carries over existing `--pat` value when no new PAT is provided via `ExtractExistingPat`; copies embedded review prompt files (`review-pr.md`, `self-review.md`) to `.github/prompts/` (skips existing files); accepts `TextReader` for user input and optional `Func<string, CancellationToken, Task<...>>` process runner for testability; exposes `ResolveConfigTargets`, `DetectsVsCode`, `DetectsVisualStudio`, `BuildConfigContent`, `MergeConfigContent`, `RunProcessAsync`, `RunInteractiveProcessAsync` as `internal static` |
+| `REBUSS.Pure\Cli\Prompts\review-pr.md` | Embedded resource: PR review prompt template (bundled into assembly, copied by `init`) |
+| `REBUSS.Pure\Cli\Prompts\self-review.md` | Embedded resource: self-review prompt template (bundled into assembly, copied by `init`) |
 
 ### Logging
 
@@ -202,8 +202,8 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role |
 |---|---|
 | `README.md` | Project documentation |
-| `.github\prompts\review-pr.prompt.md` | GitHub Copilot prompt for Azure DevOps PR review |
-| `.github\prompts\self-review.prompt.md` | GitHub Copilot prompt for local self-review (no Azure DevOps required) |
+| `.github\prompts\review-pr.md` | GitHub Copilot prompt for Azure DevOps PR review |
+| `.github\prompts\self-review.md` | GitHub Copilot prompt for local self-review (no Azure DevOps required) |
 
 ---
 
@@ -450,8 +450,8 @@ services.AddSingleton<McpServer>(...);
 
 | Aspect | Value |
 |---|---|
-| **Target framework** | .NET 8 (`net8.0`) |
-| **C# version** | 12.0 (implicit via .NET 8 SDK) |
+| **Target framework** | .NET 10 (`net10.0`) |
+| **C# version** | 13.0 (implicit via .NET 10 SDK) |
 | **Nullable context** | `enable` (project-wide) |
 | **Implicit usings** | `enable` |
 | **Test framework** | xUnit 2.9.3 |

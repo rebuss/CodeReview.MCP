@@ -1,8 +1,22 @@
 # Pull Request Code Review
 
+You are invoked with a message that starts with the pull request number, followed by a space and the rest of the prompt content.
+
+Example invocation:
+`123 #review-pr.md`
+
+**Interpretation rule (mandatory):**
+- Treat the **first contiguous sequence of digits at the very beginning of the message (before the first space)** as:
+  - `prNumber`
+  - the pull request number to use in all MCP tool calls.
+
+If the message does not start with such a number, ask the user to provide a valid pull request number and stop.
+
+---
+
 Perform a professional code review of the pull request.
 
-Pull request number: {{input}}
+Pull request number: the leading integer at the start of this message (`prNumber`).
 
 Use MCP server: `REBUSS.Pure`.
 
@@ -113,7 +127,7 @@ Do not retrieve full content for every file by default.
 
 Call:
 
-get_pr_metadata(prNumber)
+`get_pr_metadata(prNumber)`
 
 Use the result to determine:
 
@@ -130,7 +144,7 @@ Use the result to determine:
 
 Call:
 
-get_pr_files(prNumber)
+`get_pr_files(prNumber)`
 
 Use this to:
 
