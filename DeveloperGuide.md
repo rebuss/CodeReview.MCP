@@ -204,14 +204,38 @@ After running `rebuss-pure init`, you get:
 ```
 .github/prompts/
 ├── review-pr.md
-└── self-review.md
+├── self-review.md
+└── create-pr.md
 ```
 
-These prompts instruct the AI agent on the review workflow. You can customize them to:
+These prompts instruct the AI agent on the review and PR creation workflows. You can customize them to:
 
 - enforce team coding standards
 - adjust review priorities
 - change the default self-review scope (default: `staged`)
+
+### `#create-pr` command
+
+The `create-pr.md` prompt enables a `#create-pr` command in GitHub Copilot Chat.
+
+**Trigger syntax:**
+
+| Command | Description |
+|---------|-------------|
+| `123 #create-pr` | Creates a PR linked to work item 123 (Azure DevOps) or issue #123 (GitHub). |
+| `#create-pr` | Creates a PR; automatically resolves the active work item for the current user. |
+
+**How it works:**
+
+1. Parses an optional numeric work item ID from the leading digits in the message.
+2. Detects the current branch (`git rev-parse --abbrev-ref HEAD`) and base branch (upstream or repo default).
+3. Resolves the work item or issue:
+   - Explicit ID: fetches metadata via `gh issue view` (GitHub) or `az boards work-item show` (Azure DevOps).
+   - No ID: queries open/active items assigned to `@me`; uses the ID automatically when exactly one is found.
+4. Collects local changes using the `get_local_files` and `get_local_file_diff` MCP tools.
+5. Generates a concise PR description from the work item metadata and the code diff.
+6. Creates the PR via `gh pr create` (GitHub) or `az repos pr create` (Azure DevOps), and links the work item when applicable.
+7. Prints the PR URL on success, or a clear actionable error message on failure.
 
 ---
 

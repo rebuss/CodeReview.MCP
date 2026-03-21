@@ -27,6 +27,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Cli\Prompts\review-pr.md" />
     <EmbeddedResource Include="Cli\Prompts\self-review.md" />
+    <EmbeddedResource Include="Cli\Prompts\create-pr.md" />
   </ItemGroup>
 
   <ItemGroup>
