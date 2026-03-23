@@ -26,6 +26,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.AzureDevOps.Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.GitHub.Tests", "REBUSS.Pure.GitHub.Tests\REBUSS.Pure.GitHub.Tests.csproj", "{31F2C822-D593-423D-9A6A-CB493EA21F62}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.SmokeTests", "REBUSS.Pure.SmokeTests\REBUSS.Pure.SmokeTests.csproj", "{7F39631D-BB8A-4278-92B6-09C924EFBDC1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -132,6 +134,18 @@ Global
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x64.Build.0 = Release|Any CPU
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x86.ActiveCfg = Release|Any CPU
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x86.Build.0 = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x64.Build.0 = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x86.Build.0 = Debug|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x64.ActiveCfg = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x64.Build.0 = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x86.ActiveCfg = Release|Any CPU
+		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

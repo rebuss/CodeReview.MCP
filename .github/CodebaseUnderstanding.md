@@ -18,6 +18,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | REBUSS.Pure.AzureDevOps.Tests | `REBUSS.Pure.AzureDevOps.Tests\REBUSS.Pure.AzureDevOps.Tests.csproj` | Unit tests for Azure DevOps provider (xUnit, NSubstitute); references `REBUSS.Pure.AzureDevOps`, `REBUSS.Pure.Core` |
 | REBUSS.Pure.GitHub.Tests | `REBUSS.Pure.GitHub.Tests\REBUSS.Pure.GitHub.Tests.csproj` | Unit tests for GitHub provider (xUnit, NSubstitute); references `REBUSS.Pure.GitHub`, `REBUSS.Pure.Core` |
 | REBUSS.Pure.Tests | `REBUSS.Pure.Tests\REBUSS.Pure.Tests.csproj` | Unit + integration tests for MCP server app (xUnit, NSubstitute); references `REBUSS.Pure`, `REBUSS.Pure.Core` |
+| REBUSS.Pure.SmokeTests | `REBUSS.Pure.SmokeTests\REBUSS.Pure.SmokeTests.csproj` | Smoke tests (xUnit): runs the compiled binary as a child process; tests `init` command (GitHub + Azure DevOps), MCP stdio protocol, and full pack-install pipeline; build-order dependency on `REBUSS.Pure` |
 
 ---
 
@@ -250,7 +251,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role |
 |---|---|
-| `REBUSS.Pure\Cli\CliArgumentParser.cs` | Parses CLI args: detects `init` command vs server mode, extracts `--repo`, `--pat`, `--org`, `--project`, `--repository`, `--provider`, `--owner` |
+| `REBUSS.Pure\Cli\CliArgumentParser.cs` | Parses CLI args: detects `init` command vs server mode, extracts `--repo`, `--pat`, `--org`, `--project`, `--repository`, `--provider`, `--owner`; parses `--pat` for `init` command as well |
 | `REBUSS.Pure\Cli\ICliCommand.cs` | Interface: executable CLI command |
 | `REBUSS.Pure\Cli\ICliAuthFlow.cs` | Interface: provider-specific CLI authentication flow during `init` (`RunAsync`) |
 | `REBUSS.Pure\Cli\AzureDevOpsCliAuthFlow.cs` | Azure DevOps auth flow: checks for Azure CLI, runs `az login`, caches token; offers to install Azure CLI if not found |
@@ -332,6 +333,13 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Tests\Mcp\McpWorkspaceRootProviderTests.cs` | `McpWorkspaceRootProvider` — URI conversion, repo root resolution, MCP roots, localRepoPath fallback, CLI `--repo` precedence |
 | `REBUSS.Pure.Tests\Cli\CliArgumentParserTests.cs` | `CliArgumentParser` — server mode, `--repo`, `--pat`, `--org`, `--project`, `--repository`, `init` command, combined args, edge cases |
 | `REBUSS.Pure.Tests\Cli\InitCommandTests.cs` | `InitCommand` — generates `mcp.json`, copies prompt files, error cases, subdirectory support, Azure DevOps CLI login, GitHub CLI login, PAT carry-over |
+| `REBUSS.Pure.SmokeTests\Fixtures\TempGitRepoFixture.cs` | Test fixture: creates/disposes temp git repositories with configurable remote URL and IDE markers |
+| `REBUSS.Pure.SmokeTests\Fixtures\McpProcessFixture.cs` | Test fixture: starts MCP server as child process, sends JSON-RPC via stdin, reads responses from stdout; async stderr drain prevents pipe deadlocks |
+| `REBUSS.Pure.SmokeTests\Fixtures\CliProcessHelper.cs` | Test helper: runs `dotnet run --project REBUSS.Pure` with stdin piping, env overrides, and timeout; `BuildRestrictedPathEnv()` isolates auth CLI tools |
+| `REBUSS.Pure.SmokeTests\InitCommand\GitHubInitSmokeTests.cs` | Smoke tests for `init` in GitHub repos: PAT, no-PAT, IDE detection, config merge |
+| `REBUSS.Pure.SmokeTests\InitCommand\AzureDevOpsInitSmokeTests.cs` | Smoke tests for `init` in Azure DevOps repos: PAT, no-PAT, SSH remote, non-git dir, subdirectory |
+| `REBUSS.Pure.SmokeTests\McpProtocol\McpServerSmokeTests.cs` | Smoke tests for MCP protocol: initialize, tools/list, get_local_files, unknown method, graceful shutdown |
+| `REBUSS.Pure.SmokeTests\Installation\FullInstallSmokeTests.cs` | Smoke test: pack → tool install → init → MCP handshake (full user installation flow) |
 
 ---
 

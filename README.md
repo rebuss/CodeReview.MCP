@@ -159,3 +159,24 @@ Where `123` is the Azure DevOps or GitHub Pull Request number.
 ```
 
 Works **offline** — no Azure DevOps connection required.
+
+---
+
+## 🧪 Running Tests
+
+### Unit tests
+
+```bash
+dotnet test REBUSS.Pure.Tests
+dotnet test REBUSS.Pure.Core.Tests
+dotnet test REBUSS.Pure.AzureDevOps.Tests
+dotnet test REBUSS.Pure.GitHub.Tests
+```
+
+### Smoke tests
+
+Smoke tests exercise the compiled binary as a child process — covering the `init` command (GitHub & Azure DevOps), MCP protocol tools over stdio, and a full pack → install → handshake flow.
+
+```bash
+dotnet test REBUSS.Pure.SmokeTests
+```

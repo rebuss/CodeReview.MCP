@@ -19,7 +19,18 @@ public class CliArgumentParser
         var command = args[0];
 
         if (string.Equals(command, "init", StringComparison.OrdinalIgnoreCase))
-            return CliParseResult.CliMode("init");
+        {
+            string? initPat = null;
+            for (int i = 1; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--pat", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    initPat = args[i + 1];
+                    break;
+                }
+            }
+            return CliParseResult.CliMode("init", initPat);
+        }
 
         string? repoPath = null;
         string? pat = null;
@@ -144,10 +155,11 @@ public sealed class CliParseResult
         Owner = owner
     };
 
-    public static CliParseResult CliMode(string commandName) => new()
+    public static CliParseResult CliMode(string commandName, string? pat = null) => new()
     {
         IsServerMode = false,
         CommandName = commandName,
+        Pat = pat,
         RepoPath = null
     };
 }
