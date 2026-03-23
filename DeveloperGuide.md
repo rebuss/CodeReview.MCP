@@ -208,11 +208,14 @@ After running `rebuss-pure init`, you get:
 └── create-pr.md
 ```
 
-These prompts instruct the AI agent on the review and PR creation workflows. You can customize them to:
+> **Note for contributors:** The files in `.github/prompts/` are **generated** by `rebuss-pure init` from embedded resources compiled into the tool (`REBUSS.Pure/Cli/Prompts/*.md`). The embedded files in `REBUSS.Pure/Cli/Prompts/` are the **source of truth**. Always edit the embedded source files and keep the `.github/prompts/` copies in sync — do **not** edit `.github/prompts/` files directly, as those changes will be lost when a user re-runs `init` on a fresh repository.
+
+These prompts instruct the AI agent on the review and PR creation workflows. You can customize the **deployed** copies (in `.github/prompts/`) in your own repository to:
 
 - enforce team coding standards
 - adjust review priorities
 - change the default self-review scope (default: `staged`)
+- adjust the Azure DevOps WIQL state filter for work item auto-resolution (see below)
 
 ### `#create-pr` command
 
@@ -227,15 +230,26 @@ The `create-pr.md` prompt enables a `#create-pr` command in GitHub Copilot Chat.
 
 **How it works:**
 
-1. Parses an optional numeric work item ID from the leading digits in the message.
+1. Parses an optional numeric work item ID from the leading digits in the message (Step 1–2: branch detection).
 2. Detects the current branch (`git rev-parse --abbrev-ref HEAD`) and base branch (upstream or repo default).
-3. Resolves the work item or issue:
+3. Resolves the work item or issue (Step 3):
    - Explicit ID: fetches metadata via `gh issue view` (GitHub) or `az boards work-item show` (Azure DevOps).
    - No ID: queries open/active items assigned to `@me`; uses the ID automatically when exactly one is found.
-4. Collects local changes using the `get_local_files` and `get_local_file_diff` MCP tools.
-5. Generates a concise PR description from the work item metadata and the code diff.
-6. Creates the PR via `gh pr create` (GitHub) or `az repos pr create` (Azure DevOps), and links the work item when applicable.
-7. Prints the PR URL on success, or a clear actionable error message on failure.
+4. Collects local changes using the `get_local_files` and `get_local_file_diff` MCP tools (Step 4).
+5. Generates a concise PR description from the work item metadata and the code diff (Step 5).
+6. Asks the user whether the PR should be created as a **draft** (Step 6).
+7. Creates the PR via `gh pr create` (GitHub) or `az repos pr create` (Azure DevOps), passing `--draft` when requested, and links the work item when applicable (Step 7).
+8. Prints the PR URL on success, or a clear actionable error message on failure (Step 8).
+
+**Azure DevOps WIQL state filter:**
+
+When no work item ID is provided, the prompt queries:
+
+```sql
+[System.State] = 'Active'
+```
+
+This matches the standard Agile and Scrum process templates. Teams using custom process templates may use different state names (e.g., `'In Progress'`, `'Doing'`). To adapt, edit `.github/prompts/create-pr.md` in your repository and change the state value in the WIQL query to match your team's process.
 
 ---
 

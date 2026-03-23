@@ -92,12 +92,14 @@ gh issue list --assignee @me --state open --json number,title --limit 10
 az boards query --wiql "SELECT [System.Id],[System.Title] FROM workitems WHERE [System.AssignedTo] = @Me AND [System.State] = 'Active'"
 ```
 
+> **Note — custom process templates:** The state value `'Active'` matches the standard Agile and Scrum process templates. Teams using custom process templates may use different state names (e.g., `'In Progress'`, `'Doing'`). If the query returns no results unexpectedly, update the state value in the WIQL query to match your team's process template. You can customise this by editing `.github/prompts/create-pr.md` in your repository.
+
 Apply the following logic:
 
 1. If **exactly one** work item or issue is found: use its ID as `workItemId` and fetch its metadata as in Case A.
 2. If **more than one** is found:
    - Set `workItemId` to null.
-   - Attempt PR creation without a linked work item (proceed to Step 5).
+   - Attempt PR creation without a linked work item (proceed to Step 7).
    - If PR creation fails due to a policy that requires a work item, stop and return this error:
      > "Failed to create pull request without a related work item. Multiple active work items found for this user; please specify the work item ID explicitly, e.g. `123 #create-pr`."
 3. If **none** are found: set `workItemId` to null and proceed without a linked work item.
@@ -161,7 +163,19 @@ Write a concise description of what was changed in this pull request, using the 
 
 ---
 
-# Step 6 — Create the pull request
+# Step 6 — Ask whether the PR should be a draft
+
+Ask the user:
+
+> "Should this pull request be created as a **draft**? (yes/no)"
+
+- If the user answers **yes** (or any affirmative variant), set `isDraft = true`.
+- If the user answers **no** (or any negative variant), set `isDraft = false`.
+- If the session is non-interactive (e.g., running in a scripted context), default to `isDraft = false`.
+
+---
+
+# Step 7 — Create the pull request
 
 ## GitHub
 
@@ -173,6 +187,8 @@ gh pr create \
   --head <currentBranch>
 ```
 
+If `isDraft` is `true`, add `--draft` to the command above.
+
 ## Azure DevOps
 
 ```
@@ -182,6 +198,8 @@ az repos pr create \
   --target-branch <baseBranch> \
   --source-branch <currentBranch>
 ```
+
+If `isDraft` is `true`, add `--draft` to the command above.
 
 After creating the PR on Azure DevOps, if `workItemId` is set, link the work item:
 
@@ -193,7 +211,7 @@ For GitHub, the work item reference is already included in the PR body as `Relat
 
 ---
 
-# Step 7 — Output the result
+# Step 8 — Output the result
 
 **On success:**
 - Print a short confirmation that includes the PR URL.
