@@ -147,7 +147,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub\Configuration\GitHubOptions.cs` | Config model: Owner, RepositoryName, PersonalAccessToken, LocalRepoPath (all optional); `SectionName = "GitHub"` |
 | `REBUSS.Pure.GitHub\Configuration\GitHubOptionsValidator.cs` | Validates config field format (no-spaces format checks, all fields optional) |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubRemoteDetector.cs` | Interface + `DetectedGitHubInfo` record: detects GitHub owner/repo from Git remote |
-| `REBUSS.Pure.GitHub\Configuration\GitHubRemoteDetector.cs` | Parses HTTPS/SSH GitHub remote URLs via `git remote get-url origin`; tries current directory and executable location; `ParseRemoteUrl`, `FindGitRepositoryRoot`, `GetCandidateDirectories` are `internal static` |
+| `REBUSS.Pure.GitHub\Configuration\GitHubRemoteDetector.cs` | Parses HTTPS/SSH GitHub remote URLs via `git remote get-url origin`; supports repo names with dots (e.g. `CodeReview.MCP`); tries current directory and executable location; `ParseRemoteUrl`, `FindGitRepositoryRoot`, `GetCandidateDirectories` are `internal static` |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubConfigStore.cs` | Interface + `GitHubCachedConfig` model (Owner, RepositoryName, AccessToken, TokenExpiresOn): persists/retrieves cached GitHub config |
 | `REBUSS.Pure.GitHub\Configuration\GitHubConfigStore.cs` | JSON file store under `%LOCALAPPDATA%/REBUSS.Pure/github-config.json` |
 | `REBUSS.Pure.GitHub\Configuration\GitHubConfigurationResolver.cs` | `IPostConfigureOptions<GitHubOptions>`: merges explicit config, cached, and auto-detected values (same pattern as Azure DevOps `ConfigurationResolver`) |

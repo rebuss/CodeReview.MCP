@@ -39,6 +39,28 @@ public class GitHubRemoteDetectorTests
         Assert.Equal("CodeReview", result.RepositoryName);
     }
 
+    [Fact]
+    public void ParseRemoteUrl_Parses_HttpsUrlWithDotsInRepoName()
+    {
+        var result = GitHubRemoteDetector.ParseRemoteUrl(
+            "https://github.com/rebuss/CodeReview.MCP");
+
+        Assert.NotNull(result);
+        Assert.Equal("rebuss", result.Owner);
+        Assert.Equal("CodeReview.MCP", result.RepositoryName);
+    }
+
+    [Fact]
+    public void ParseRemoteUrl_Parses_HttpsUrlWithDotsInRepoNameAndDotGit()
+    {
+        var result = GitHubRemoteDetector.ParseRemoteUrl(
+            "https://github.com/rebuss/CodeReview.MCP.git");
+
+        Assert.NotNull(result);
+        Assert.Equal("rebuss", result.Owner);
+        Assert.Equal("CodeReview.MCP", result.RepositoryName);
+    }
+
     // ---- SSH URLs ----
 
     [Fact]
@@ -61,6 +83,28 @@ public class GitHubRemoteDetectorTests
         Assert.NotNull(result);
         Assert.Equal("rebuss", result.Owner);
         Assert.Equal("CodeReview", result.RepositoryName);
+    }
+
+    [Fact]
+    public void ParseRemoteUrl_Parses_SshUrlWithDotsInRepoName()
+    {
+        var result = GitHubRemoteDetector.ParseRemoteUrl(
+            "git@github.com:rebuss/CodeReview.MCP");
+
+        Assert.NotNull(result);
+        Assert.Equal("rebuss", result.Owner);
+        Assert.Equal("CodeReview.MCP", result.RepositoryName);
+    }
+
+    [Fact]
+    public void ParseRemoteUrl_Parses_SshUrlWithDotsInRepoNameAndDotGit()
+    {
+        var result = GitHubRemoteDetector.ParseRemoteUrl(
+            "git@github.com:rebuss/CodeReview.MCP.git");
+
+        Assert.NotNull(result);
+        Assert.Equal("rebuss", result.Owner);
+        Assert.Equal("CodeReview.MCP", result.RepositoryName);
     }
 
     // ---- Non-GitHub URLs ----

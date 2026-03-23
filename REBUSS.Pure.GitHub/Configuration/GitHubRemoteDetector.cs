@@ -12,6 +12,7 @@ namespace REBUSS.Pure.GitHub.Configuration;
 ///   <item><c>https://github.com/{owner}/{repo}.git</c></item>
 ///   <item><c>git@github.com:{owner}/{repo}.git</c></item>
 /// </list>
+/// Repository names may contain dots (e.g. <c>CodeReview.MCP</c>).
 /// </summary>
 public partial class GitHubRemoteDetector : IGitHubRemoteDetector
 {
@@ -151,9 +152,9 @@ public partial class GitHubRemoteDetector : IGitHubRemoteDetector
         return null;
     }
 
-    [GeneratedRegex(@"^https?://github\.com/(?<owner>[^/]+)/(?<repo>[^/.]+?)(?:\.git)?/?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^https?://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?/?$", RegexOptions.IgnoreCase)]
     private static partial Regex HttpsRemotePattern();
 
-    [GeneratedRegex(@"^git@github\.com:(?<owner>[^/]+)/(?<repo>[^/.]+?)(?:\.git)?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^git@github\.com:(?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?$", RegexOptions.IgnoreCase)]
     private static partial Regex SshRemotePattern();
 }
