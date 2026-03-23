@@ -614,9 +614,11 @@ public class InitCommandTests
 
             var reviewPrPath = Path.Combine(tempDir, ".github", "prompts", "review-pr.md");
             var selfReviewPath = Path.Combine(tempDir, ".github", "prompts", "self-review.md");
+            var createPrPath = Path.Combine(tempDir, ".github", "prompts", "create-pr.md");
 
             Assert.True(File.Exists(reviewPrPath), $"Expected prompt file at {reviewPrPath}");
             Assert.True(File.Exists(selfReviewPath), $"Expected prompt file at {selfReviewPath}");
+            Assert.True(File.Exists(createPrPath), $"Expected prompt file at {createPrPath}");
 
             var reviewPrContent = await File.ReadAllTextAsync(reviewPrPath);
             Assert.Contains("Pull Request Code Review", reviewPrContent);
@@ -625,6 +627,10 @@ public class InitCommandTests
             var selfReviewContent = await File.ReadAllTextAsync(selfReviewPath);
             Assert.Contains("Self-Review", selfReviewContent);
             Assert.Contains("get_local_files", selfReviewContent);
+
+            var createPrContent = await File.ReadAllTextAsync(createPrPath);
+            Assert.Contains("Create Pull Request", createPrContent);
+            Assert.Contains("#create-pr", createPrContent);
         }
         finally
         {

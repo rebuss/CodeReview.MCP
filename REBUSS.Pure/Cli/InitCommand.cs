@@ -30,7 +30,8 @@ public class InitCommand : ICliCommand
     private static readonly string[] PromptFileNames =
     {
         "review-pr.md",
-        "self-review.md"
+        "self-review.md",
+        "create-pr.md"
     };
 
     private readonly TextWriter _output;
@@ -83,7 +84,7 @@ public class InitCommand : ICliCommand
             return 1;
         }
 
-        // Create MCP config files and copy prompts FIRST — before any potentially
+        // Create MCP config files and copy prompts FIRST ï¿½ before any potentially
         // interactive or long-running Azure CLI steps. This ensures files are written
         // even if the user cancels during az install or az login.
         var targets = ResolveConfigTargets(gitRoot);
@@ -176,7 +177,7 @@ public class InitCommand : ICliCommand
         }
         catch
         {
-            // Ignore detection errors — fall back to Azure DevOps
+            // Ignore detection errors ï¿½ fall back to Azure DevOps
         }
 
         return "AzureDevOps";
@@ -217,7 +218,7 @@ public class InitCommand : ICliCommand
     }
 
     /// <summary>
-    /// Runs a process interactively — inherits the parent's stdin/stdout/stderr
+    /// Runs a process interactively ï¿½ inherits the parent's stdin/stdout/stderr
     /// so the child can open a browser, display prompts, and interact with the user.
     /// Returns only the exit code (no captured output).
     /// </summary>
@@ -317,7 +318,7 @@ public class InitCommand : ICliCommand
     /// <summary>
     /// Merges the REBUSS.Pure server entry into an existing <c>mcp.json</c> file,
     /// preserving any other server entries already present.
-    /// Accepts raw (unescaped) paths — JSON escaping is handled by <see cref="System.Text.Json.Utf8JsonWriter"/>.
+    /// Accepts raw (unescaped) paths ï¿½ JSON escaping is handled by <see cref="System.Text.Json.Utf8JsonWriter"/>.
     /// Falls back to <see cref="BuildConfigContent"/> when the existing content is not valid JSON.
     /// </summary>
     internal static string MergeConfigContent(
@@ -358,7 +359,7 @@ public class InitCommand : ICliCommand
                     }
                 }
 
-                // Write the REBUSS.Pure entry — Utf8JsonWriter handles JSON escaping of raw paths
+                // Write the REBUSS.Pure entry ï¿½ Utf8JsonWriter handles JSON escaping of raw paths
                 // If no PAT was supplied, carry over any existing PAT from the current config.
                 var effectivePat = pat;
                 if (string.IsNullOrWhiteSpace(effectivePat))
@@ -388,7 +389,7 @@ public class InitCommand : ICliCommand
         }
         catch (System.Text.Json.JsonException)
         {
-            // Existing file is not valid JSON — replace it entirely
+            // Existing file is not valid JSON ï¿½ replace it entirely
             var normalizedExePath = rawExePath.Replace("\\", "\\\\");
             var normalizedRepoPath = rawRepoPath.Replace("\\", "\\\\");
             return BuildConfigContent(normalizedExePath, normalizedRepoPath, pat);
