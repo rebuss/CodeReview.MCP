@@ -180,3 +180,31 @@ Smoke tests exercise the compiled binary as a child process — covering the `in
 ```bash
 dotnet test REBUSS.Pure.SmokeTests
 ```
+
+### Contract tests
+
+Live contract tests run the compiled binary against **real Azure DevOps and GitHub APIs** using dedicated fixture PRs that are never merged. They validate the full stack: CLI arg parsing → DI → provider → API → response structure.
+
+**Protocol tests** (no credentials needed):
+
+```bash
+dotnet test REBUSS.Pure.SmokeTests --filter "Category=Protocol"
+```
+
+**Azure DevOps contract tests** (requires env vars):
+
+```bash
+REBUSS_ADO_PAT=<pat> REBUSS_ADO_ORG=<org> REBUSS_ADO_PROJECT=<project> \
+REBUSS_ADO_REPO=<repo> REBUSS_ADO_PR_NUMBER=<pr> \
+dotnet test REBUSS.Pure.SmokeTests --filter "Category=ContractAdo"
+```
+
+**GitHub contract tests** (requires env vars):
+
+```bash
+REBUSS_GH_PAT=<pat> REBUSS_GH_OWNER=<owner> \
+REBUSS_GH_REPO=<repo> REBUSS_GH_PR_NUMBER=<pr> \
+dotnet test REBUSS.Pure.SmokeTests --filter "Category=ContractGitHub"
+```
+
+When credentials are not configured, contract tests are **automatically skipped**.
