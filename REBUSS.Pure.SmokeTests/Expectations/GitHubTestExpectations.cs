@@ -31,7 +31,7 @@ public static class GitHubTestExpectations
     public const int LoggerAdditions = 0;                // ← update after creating fixture
 
     // --- get_pr_diff ---
-    public const string ExpectedCodeFragment = "public double Add"; // ← update after creating fixture
+    public const string ExpectedCodeFragment = "public double Abs"; // ← update after creating fixture
 
     // --- get_file_content_at_ref ---
     public const string OriginalCodeFragment = "public double Negate";    // ← update after creating fixture
