@@ -22,7 +22,7 @@ public static class GitHubTestExpectations
     public static readonly Dictionary<string, string> FileStatuses = new()
     {
         ["src/Calculator.cs"] = "modified",
-        ["src/Logger.cs"] = "add"
+        ["src/Logger.cs"] = "added"
     };
 
     // --- get_pr_files — additions/deletions ---
@@ -31,9 +31,9 @@ public static class GitHubTestExpectations
     public const int LoggerAdditions = 0;                // ← update after creating fixture
 
     // --- get_pr_diff ---
-    public const string ExpectedCodeFragment = "public int Add"; // ← update after creating fixture
+    public const string ExpectedCodeFragment = "public double Add"; // ← update after creating fixture
 
     // --- get_file_content_at_ref ---
-    public const string OriginalCodeFragment = "// Original";    // ← update after creating fixture
-    public const string ModifiedCodeFragment = "// Modified";    // ← update after creating fixture
+    public const string OriginalCodeFragment = "public double Negate";    // ← update after creating fixture
+    public const string ModifiedCodeFragment = "public double Percentage";    // ← update after creating fixture
 }
