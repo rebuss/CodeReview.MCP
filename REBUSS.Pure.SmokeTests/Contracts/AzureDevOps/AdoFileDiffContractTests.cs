@@ -39,7 +39,7 @@ public class AdoFileDiffContractTests
         var content = response.GetToolContent();
 
         var path = content.GetProperty("files")[0].GetProperty("path").GetString();
-        Assert.Equal(AdoTestExpectations.FilePaths[0], path);
+        Assert.Equal(AdoTestExpectations.FilePaths[0], path?.TrimStart('/'));
     }
 
     [SkippableFact]

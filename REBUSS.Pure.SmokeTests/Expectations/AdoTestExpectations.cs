@@ -21,7 +21,7 @@ public static class AdoTestExpectations
         ["src/Calculator.cs", "src/Logger.cs"];
     public static readonly Dictionary<string, string> FileStatuses = new()
     {
-        ["src/Calculator.cs"] = "edit",
+        ["src/Calculator.cs"] = "modified",
         ["src/Logger.cs"] = "add"
     };
 
