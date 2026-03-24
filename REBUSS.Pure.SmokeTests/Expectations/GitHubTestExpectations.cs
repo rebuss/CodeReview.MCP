@@ -7,7 +7,7 @@ namespace REBUSS.Pure.SmokeTests.Expectations;
 public static class GitHubTestExpectations
 {
     // --- get_pr_metadata ---
-    public const string Title = "test: fixture PR for contract tests";
+    public const string Title = "Contract test fixture PR — do not merge";
     public const string DescriptionFragment = "do not merge";
     public const string State = "open";                  // GitHub uses "open", not "active"
     public const bool IsDraft = false;
@@ -21,7 +21,7 @@ public static class GitHubTestExpectations
         ["src/Calculator.cs", "src/Logger.cs"];           // no leading slash for GitHub
     public static readonly Dictionary<string, string> FileStatuses = new()
     {
-        ["src/Calculator.cs"] = "edit",
+        ["src/Calculator.cs"] = "modified",
         ["src/Logger.cs"] = "add"
     };
 
