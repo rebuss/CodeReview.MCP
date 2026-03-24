@@ -22,7 +22,7 @@ public static class AdoTestExpectations
     public static readonly Dictionary<string, string> FileStatuses = new()
     {
         ["src/Calculator.cs"] = "modified",
-        ["src/Logger.cs"] = "add"
+        ["src/Logger.cs"] = "added"
     };
 
     // --- get_pr_diff ---
