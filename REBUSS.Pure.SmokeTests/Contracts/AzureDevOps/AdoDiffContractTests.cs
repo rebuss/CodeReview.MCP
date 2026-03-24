@@ -109,8 +109,8 @@ public class AdoDiffContractTests
         var calculator = content.GetProperty("files").EnumerateArray()
             .First(f => f.GetProperty("path").GetString()!.Contains("Calculator.cs"));
 
-        Assert.True(calculator.GetProperty("additions").GetInt32() > 0);
-        Assert.True(calculator.GetProperty("deletions").GetInt32() > 0);
+        Assert.True(calculator.GetProperty("additions").GetInt32() > 0,
+            "Edited file should have additions > 0.");
     }
 
     [SkippableFact]

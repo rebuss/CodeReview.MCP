@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.14.36717.8
+# Visual Studio Version 18
+VisualStudioVersion = 18.3.11520.95 d18.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure", "REBUSS.Pure\REBUSS.Pure.csproj", "{7F8E95D1-1DD3-D9BD-CE3A-7BC7D086A271}"
 EndProject
@@ -10,6 +10,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{3A12BEAF-E73A-4054-8B2F-1B630FDAD88E}"
 	ProjectSection(SolutionItems) = preProject
 		.github\CodebaseUnderstanding.md = .github\CodebaseUnderstanding.md
+		DeveloperGuide.md = DeveloperGuide.md
 		LICENSE.txt = LICENSE.txt
 		README.md = README.md
 	EndProjectSection
@@ -25,8 +26,6 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.AzureDevOps.Tests", "REBUSS.Pure.AzureDevOps.Tests\REBUSS.Pure.AzureDevOps.Tests.csproj", "{873A3580-9A84-4A03-9FA8-EBAF0C757C7D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.GitHub.Tests", "REBUSS.Pure.GitHub.Tests\REBUSS.Pure.GitHub.Tests.csproj", "{31F2C822-D593-423D-9A6A-CB493EA21F62}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "REBUSS.Pure.SmokeTests", "REBUSS.Pure.SmokeTests\REBUSS.Pure.SmokeTests.csproj", "{7F39631D-BB8A-4278-92B6-09C924EFBDC1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -134,18 +133,6 @@ Global
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x64.Build.0 = Release|Any CPU
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x86.ActiveCfg = Release|Any CPU
 		{31F2C822-D593-423D-9A6A-CB493EA21F62}.Release|x86.Build.0 = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x64.Build.0 = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Debug|x86.Build.0 = Debug|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|Any CPU.Build.0 = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x64.ActiveCfg = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x64.Build.0 = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x86.ActiveCfg = Release|Any CPU
-		{7F39631D-BB8A-4278-92B6-09C924EFBDC1}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

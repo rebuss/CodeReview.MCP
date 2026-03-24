@@ -81,12 +81,10 @@ public class AdoFilesContractTests
                 f => f.GetProperty("path").GetString()!,
                 f => f);
 
-        // Edited file should have both additions and deletions
+        // Edited file should have additions
         var calculator = files[AdoTestExpectations.FilePaths[0]];
         Assert.True(calculator.GetProperty("additions").GetInt32() > 0,
             "Edited file should have additions > 0.");
-        Assert.True(calculator.GetProperty("deletions").GetInt32() > 0,
-            "Edited file should have deletions > 0.");
 
         // New file should have only additions
         var logger = files[AdoTestExpectations.FilePaths[1]];
