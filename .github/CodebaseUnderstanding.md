@@ -107,7 +107,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.AzureDevOps\Configuration\AzureCliTokenProvider.cs` | Runs `az account get-access-token` for Bearer tokens; `ParseTokenResponse` is `internal static` |
 | `REBUSS.Pure.AzureDevOps\Configuration\ChainedAuthenticationProvider.cs` | Auth chain: PAT ? cached token ? Azure CLI ? error with actionable instructions |
 | `REBUSS.Pure.AzureDevOps\Configuration\AuthenticationDelegatingHandler.cs` | `DelegatingHandler` that lazily sets auth header; retries once on HTTP 203 HTML redirect |
-| `REBUSS.Pure.AzureDevOps\Configuration\ConfigurationResolver.cs` | `IPostConfigureOptions<AzureDevOpsOptions>`: merges explicit config, cached, and auto-detected values |
+| `REBUSS.Pure.AzureDevOps\Configuration\ConfigurationResolver.cs` | `IPostConfigureOptions<AzureDevOpsOptions>`: merges explicit config, auto-detected (from git remote), and cached values (priority: user > detected > cached) |
 
 ### Azure DevOps provider � Providers (REBUSS.Pure.AzureDevOps\Providers)
 
@@ -151,7 +151,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub\Configuration\GitHubRemoteDetector.cs` | Parses HTTPS/SSH GitHub remote URLs via `git remote get-url origin`; supports repo names with dots (e.g. `CodeReview.MCP`); tries current directory and executable location; `ParseRemoteUrl`, `FindGitRepositoryRoot`, `GetCandidateDirectories` are `internal static` |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubConfigStore.cs` | Interface + `GitHubCachedConfig` model (Owner, RepositoryName, AccessToken, TokenExpiresOn): persists/retrieves cached GitHub config |
 | `REBUSS.Pure.GitHub\Configuration\GitHubConfigStore.cs` | JSON file store under `%LOCALAPPDATA%/REBUSS.Pure/github-config.json` |
-| `REBUSS.Pure.GitHub\Configuration\GitHubConfigurationResolver.cs` | `IPostConfigureOptions<GitHubOptions>`: merges explicit config, cached, and auto-detected values (same pattern as Azure DevOps `ConfigurationResolver`) |
+| `REBUSS.Pure.GitHub\Configuration\GitHubConfigurationResolver.cs` | `IPostConfigureOptions<GitHubOptions>`: merges explicit config, auto-detected (from git remote), and cached values (priority: user > detected > cached; same pattern as Azure DevOps `ConfigurationResolver`) |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubAuthenticationProvider.cs` | Interface: `GetAuthenticationAsync` + `InvalidateCachedToken`; mirrors `IAuthenticationProvider` from AzureDevOps |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubCliTokenProvider.cs` | Interface: acquires GitHub token via GitHub CLI; defines `GitHubCliToken` record |
 | `REBUSS.Pure.GitHub\Configuration\GitHubCliProcessHelper.cs` | `internal static` helper: resolves `ProcessStartInfo` for cross-platform GitHub CLI execution (Windows `cmd.exe /c gh`, Linux direct `gh`) |
@@ -310,6 +310,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub.Tests\Parsers\GitHubPullRequestParserTests.cs` | `GitHubPullRequestParser` — lightweight parse, full parse, base/head SHA extraction, closed state, invalid JSON fallbacks, `MapState` |
 | `REBUSS.Pure.GitHub.Tests\Parsers\GitHubFileChangesParserTests.cs` | `GitHubFileChangesParser` — status mapping (`added`→`add`, `removed`→`delete`, `modified`→`edit`, etc.), empty array, invalid JSON, non-array JSON |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubRemoteDetectorTests.cs` | `GitHubRemoteDetector.ParseRemoteUrl` — HTTPS (with/without `.git`), SSH, Azure DevOps/GitLab URLs return null, empty/malformed; `FindGitRepositoryRoot`, `GetCandidateDirectories` |
+| `REBUSS.Pure.GitHub.Tests\Configuration\GitHubConfigurationResolverTests.cs` | `GitHubConfigurationResolver` — PostConfigure precedence (user > detected > cached), fallback, caching, mixed sources, Resolve static method, workspace root integration |
 | `REBUSS.Pure.GitHub.Tests\GitHubScmClientTests.cs` | `GitHubScmClient` — provider name, facade delegation (diff/metadata/files/content), metadata enrichment (`WebUrl`, `RepositoryFullName`) |
 | `REBUSS.Pure.GitHub.Tests\Providers\GitHubMetadataProviderTests.cs` | `GitHubMetadataProvider` — parsed metadata, commit SHAs, statistics, empty commits, 404 handling, invalid commits JSON |
 | `REBUSS.Pure.GitHub.Tests\Providers\GitHubFileContentProviderTests.cs` | `GitHubFileContentProvider` — content retrieval, leading slash trim, binary detection, file not found, size calculation, cancellation |
@@ -456,7 +457,7 @@ LocalReviewFiles
   ? GetLocalChangesFilesToolHandler [Pure]          (consumes: maps to LocalReviewFilesResult)
 
 AzureDevOpsOptions (+ LocalRepoPath) [AzureDevOps]
-  ? ConfigurationResolver [AzureDevOps]            (IPostConfigureOptions: merges cached + detected values into options)
+  ? ConfigurationResolver [AzureDevOps]            (IPostConfigureOptions: merges user > detected > cached values into options)
   ? ChainedAuthenticationProvider [AzureDevOps]    (consumes via IOptions<AzureDevOpsOptions>: reads PersonalAccessToken lazily)
   ? AzureDevOpsApiClient [AzureDevOps]             (consumes via IOptions<AzureDevOpsOptions>: reads ProjectName, RepositoryName, sets BaseAddress lazily)
   ? AzureDevOpsScmClient [AzureDevOps]             (consumes via IOptions<AzureDevOpsOptions>: reads org/project/repo for WebUrl/RepositoryFullName)
@@ -496,7 +497,7 @@ AzureCliToken
   ? AzureDevOpsCliAuthFlow [Pure]                  (consumes: uses ParseTokenResponse during init to cache token via LocalConfigStore)
 
 GitHubOptions (+ LocalRepoPath) [GitHub]
-  ? GitHubConfigurationResolver [GitHub]           (IPostConfigureOptions: merges cached + detected values into options)
+  ? GitHubConfigurationResolver [GitHub]           (IPostConfigureOptions: merges user > detected > cached values into options)
   ? GitHubChainedAuthenticationProvider [GitHub]   (consumes via IOptions<GitHubOptions>: reads PersonalAccessToken lazily)
   ? GitHubAuthenticationHandler [GitHub]           (consumes IGitHubAuthenticationProvider: sets auth header lazily; retries on 401/403)
   ? GitHubApiClient [GitHub]                       (consumes via constructor: reads Owner/RepositoryName for API URLs)

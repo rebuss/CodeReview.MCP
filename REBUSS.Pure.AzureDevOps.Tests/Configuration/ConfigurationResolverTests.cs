@@ -103,7 +103,7 @@ public class ConfigurationResolverTests
     }
 
     [Fact]
-    public void PostConfigure_CachedTakesPrecedence_OverDetected()
+    public void PostConfigure_DetectedTakesPrecedence_OverCached()
     {
         _configStore.Load().Returns(new CachedConfig
         {
@@ -116,9 +116,9 @@ public class ConfigurationResolverTests
 
         var options = PostConfigure(new AzureDevOpsOptions());
 
-        Assert.Equal("CachedOrg", options.OrganizationName);
-        Assert.Equal("CachedProj", options.ProjectName);
-        Assert.Equal("CachedRepo", options.RepositoryName);
+        Assert.Equal("DetectedOrg", options.OrganizationName);
+        Assert.Equal("DetectedProj", options.ProjectName);
+        Assert.Equal("DetectedRepo", options.RepositoryName);
     }
 
     [Fact]
@@ -194,7 +194,7 @@ public class ConfigurationResolverTests
 
     [Theory]
     [InlineData("explicit", "cached", "detected", "explicit")]
-    [InlineData("", "cached", "detected", "cached")]
+    [InlineData("", "cached", "detected", "detected")]
     [InlineData("", "", "detected", "detected")]
     public void Resolve_ReturnsByPrecedence(string user, string cached, string detected, string expected)
     {

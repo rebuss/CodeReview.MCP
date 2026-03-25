@@ -8,10 +8,12 @@ namespace REBUSS.Pure.AzureDevOps.Configuration;
 /// Post-configures <see cref="AzureDevOpsOptions"/> by merging values from:
 /// <list type="number">
 ///   <item>Explicit user configuration (appsettings, environment variables) — already bound.</item>
-///   <item>Locally cached configuration.</item>
 ///   <item>Auto-detected Git remote information (using workspace root from MCP roots or localRepoPath).</item>
+///   <item>Locally cached configuration (fallback when detection is unavailable).</item>
 /// </list>
-/// Explicit user values always take precedence. After resolution, the merged
+/// Explicit user values always take precedence. Auto-detected values from the
+/// current workspace take priority over cached values to prevent stale config
+/// from overriding the actual repository. After resolution, the merged
 /// repository information is cached locally for future runs.
 /// Runs automatically during the first <c>IOptions&lt;AzureDevOpsOptions&gt;.Value</c> access.
 /// </summary>
@@ -103,11 +105,11 @@ public class ConfigurationResolver : IPostConfigureOptions<AzureDevOpsOptions>
         if (!string.IsNullOrWhiteSpace(userValue))
             return userValue;
 
-        if (!string.IsNullOrWhiteSpace(cachedValue))
-            return cachedValue;
-
         if (!string.IsNullOrWhiteSpace(detectedValue))
             return detectedValue;
+
+        if (!string.IsNullOrWhiteSpace(cachedValue))
+            return cachedValue;
 
         return string.Empty;
     }
