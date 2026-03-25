@@ -12,6 +12,12 @@ public sealed class McpProcessFixture : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
+
     private readonly Process _process;
     private readonly StringBuilder _stderrBuffer = new();
     private readonly Task _stderrDrainTask;
@@ -46,7 +52,7 @@ public sealed class McpProcessFixture : IAsyncDisposable
     {
         var projectDir = ResolveProjectDirectory();
 
-        var arguments = $"run --project \"{projectDir}\" --no-launch-profile --verbosity quiet -- --repo \"{repoPath}\"";
+        var arguments = $"run --project \"{projectDir}\" -c {BuildConfiguration} --no-build --no-launch-profile --verbosity quiet -- --repo \"{repoPath}\"";
         if (!string.IsNullOrEmpty(extraArgs))
             arguments += " " + extraArgs;
 

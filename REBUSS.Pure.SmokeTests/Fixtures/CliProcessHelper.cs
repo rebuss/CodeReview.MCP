@@ -13,6 +13,12 @@ public static class CliProcessHelper
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
 
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
+
     /// <summary>
     /// Runs <c>dotnet run --project REBUSS.Pure -- {arguments}</c> with the given working directory.
     /// Pipes <paramref name="stdin"/> into the process (useful for answering auth prompts).
@@ -30,7 +36,7 @@ public static class CliProcessHelper
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --project \"{projectDir}\" --no-launch-profile -- {arguments}",
+            Arguments = $"run --project \"{projectDir}\" -c {BuildConfiguration} --no-build --no-launch-profile -- {arguments}",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -52,10 +58,20 @@ public static class CliProcessHelper
 
         if (stdin is not null)
         {
-            await process.StandardInput.WriteAsync(stdin);
-            await process.StandardInput.FlushAsync();
+            try
+            {
+                await process.StandardInput.WriteAsync(stdin);
+                await process.StandardInput.FlushAsync();
+            }
+            catch (IOException)
+            {
+                // Process may have exited before consuming stdin — this is expected
+                // for commands that finish without reading interactive input.
+            }
         }
-        process.StandardInput.Close();
+
+        try { process.StandardInput.Close(); }
+        catch (IOException) { }
 
         using var cts = new CancellationTokenSource(effectiveTimeout);
 
@@ -72,8 +88,20 @@ public static class CliProcessHelper
             return new CliProcessResult(-1, string.Empty, "Process timed out.");
         }
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        string stdout, stderr;
+        try
+        {
+            stdout = await stdoutTask;
+            stderr = await stderrTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // The timeout expired while draining pipes after the process exited.
+            // This can happen when child processes inherit and hold pipe handles open.
+            try { process.Kill(entireProcessTree: true); } catch { }
+            stdout = string.Empty;
+            stderr = string.Empty;
+        }
 
         return new CliProcessResult(process.ExitCode, stdout, stderr);
     }
