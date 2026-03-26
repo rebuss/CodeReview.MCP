@@ -40,7 +40,7 @@ public class GitHubInitSmokeTests
         Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "self-review.md")),
             "Expected self-review.md prompt to be copied.");
         Assert.False(repo.FileExists(Path.Combine(".github", "prompts", "create-pr.md")),
-            "Expected create-pr.md prompt to be copied.");
+            "Expected create-pr.md prompt to be not copied.");
 
         // Instruction files should be copied
         Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "review-pr.instructions.md")),
