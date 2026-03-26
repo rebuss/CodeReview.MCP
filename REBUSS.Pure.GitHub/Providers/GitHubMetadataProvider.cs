@@ -35,10 +35,10 @@ public class GitHubMetadataProvider
             _logger.LogInformation("Fetching metadata for PR #{PrNumber}", prNumber);
             var sw = Stopwatch.StartNew();
 
-            var prDetailsJson = await _apiClient.GetPullRequestDetailsAsync(prNumber);
+            var prDetailsJson = await _apiClient.GetPullRequestDetailsAsync(prNumber, cancellationToken);
             var metadata = _prParser.ParseFull(prDetailsJson);
 
-            var commitsJson = await _apiClient.GetPullRequestCommitsAsync(prNumber);
+            var commitsJson = await _apiClient.GetPullRequestCommitsAsync(prNumber, cancellationToken);
             metadata.CommitShas = ParseCommitShas(commitsJson);
 
             sw.Stop();

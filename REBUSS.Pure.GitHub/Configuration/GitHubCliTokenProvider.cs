@@ -77,11 +77,11 @@ public class GitHubCliTokenProvider : IGitHubCliTokenProvider
             return null;
         }
 
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        await process.StandardError.ReadToEndAsync(cancellationToken);
-
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(CommandTimeout);
+
+        var stdout = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+        await process.StandardError.ReadToEndAsync(timeoutCts.Token);
         await process.WaitForExitAsync(timeoutCts.Token);
 
         if (process.ExitCode != 0)

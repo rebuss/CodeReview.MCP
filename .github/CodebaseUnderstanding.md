@@ -129,8 +129,8 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role |
 |---|---|
-| `REBUSS.Pure.GitHub\Api\IGitHubApiClient.cs` | Interface: GitHub REST API v3 client (PR details, files, commits, file content at ref) |
-| `REBUSS.Pure.GitHub\Api\GitHubApiClient.cs` | HTTP client for GitHub REST API; base URL `https://api.github.com/`; supports pagination (`GetPaginatedArrayAsync`, max 10 pages); raw file content via `Accept: application/vnd.github.raw+json` header; `GetFileContentAtRefAsync` returns `null` only for 404, throws on other non-success |
+| `REBUSS.Pure.GitHub\Api\IGitHubApiClient.cs` | Interface: GitHub REST API v3 client (PR details, files, commits, file content at ref); all methods accept optional `CancellationToken` |
+| `REBUSS.Pure.GitHub\Api\GitHubApiClient.cs` | HTTP client for GitHub REST API; base URL `https://api.github.com/`; supports pagination (`GetPaginatedArrayAsync`, max 10 pages); raw file content via `Accept: application/vnd.github.raw+json` header; `GetFileContentAtRefAsync` returns `null` only for 404, throws on other non-success; all methods propagate `CancellationToken` to `HttpClient` calls |
 
 ### GitHub provider � Parsers (REBUSS.Pure.GitHub\Parsers)
 
@@ -155,7 +155,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub\Configuration\IGitHubAuthenticationProvider.cs` | Interface: `GetAuthenticationAsync` + `InvalidateCachedToken`; mirrors `IAuthenticationProvider` from AzureDevOps |
 | `REBUSS.Pure.GitHub\Configuration\IGitHubCliTokenProvider.cs` | Interface: acquires GitHub token via GitHub CLI; defines `GitHubCliToken` record |
 | `REBUSS.Pure.GitHub\Configuration\GitHubCliProcessHelper.cs` | `internal static` helper: resolves `ProcessStartInfo` for cross-platform GitHub CLI execution (Windows `cmd.exe /c gh`, Linux direct `gh`) |
-| `REBUSS.Pure.GitHub\Configuration\GitHubCliTokenProvider.cs` | Runs `gh auth token` for Bearer tokens; `ParseTokenResponse` is `internal static`; `DefaultTokenLifetime = 24 hours` |
+| `REBUSS.Pure.GitHub\Configuration\GitHubCliTokenProvider.cs` | Runs `gh auth token` for Bearer tokens; `ParseTokenResponse` is `internal static`; `DefaultTokenLifetime = 24 hours`; `RunGhCliAsync` creates a linked timeout CTS (`CommandTimeout = 30s`) before reading stdout/stderr to ensure the timeout covers the full operation |
 | `REBUSS.Pure.GitHub\Configuration\GitHubChainedAuthenticationProvider.cs` | Auth chain: PAT ? cached token ? GitHub CLI (`gh auth token`) ? error with actionable instructions; `BuildAuthRequiredMessage` is `internal static` |
 | `REBUSS.Pure.GitHub\Configuration\GitHubAuthenticationHandler.cs` | `DelegatingHandler` that lazily resolves auth via `IGitHubAuthenticationProvider`; sets GitHub API headers (`Accept`, `User-Agent`, `X-GitHub-Api-Version: 2022-11-28`); retries once on HTTP 401 or 403 (excluding rate-limit 403 detected via `X-RateLimit-Remaining: 0`) with token invalidation |
 

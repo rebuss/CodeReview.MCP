@@ -121,7 +121,7 @@ public class GitHubDiffProviderTests
     public async Task GetDiffAsync_RespectsCancellation()
     {
         SetupStandardMocks();
-        _apiClient.GetFileContentAtRefAsync(Arg.Any<string>(), Arg.Any<string>()).Returns("x");
+        _apiClient.GetFileContentAtRefAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns("x");
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -237,7 +237,7 @@ public class GitHubDiffProviderTests
 
     private void SetupStandardMocks()
     {
-        _apiClient.GetPullRequestDetailsAsync(42).Returns(PrDetailsJson);
-        _apiClient.GetPullRequestFilesAsync(42).Returns(FilesJson);
+        _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);
+        _apiClient.GetPullRequestFilesAsync(42, Arg.Any<CancellationToken>()).Returns(FilesJson);
     }
 }

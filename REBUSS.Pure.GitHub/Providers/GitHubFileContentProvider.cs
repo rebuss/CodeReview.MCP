@@ -32,7 +32,7 @@ public class GitHubFileContentProvider
         var sw = Stopwatch.StartNew();
         cancellationToken.ThrowIfCancellationRequested();
 
-        var content = await _apiClient.GetFileContentAtRefAsync(gitRef, path);
+        var content = await _apiClient.GetFileContentAtRefAsync(gitRef, path, cancellationToken);
 
         if (content == null)
         {

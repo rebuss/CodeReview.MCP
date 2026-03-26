@@ -35,31 +35,31 @@ public class GitHubApiClient : IGitHubApiClient
             _httpClient.BaseAddress = new Uri(BaseUrl);
     }
 
-    public async Task<string> GetPullRequestDetailsAsync(int pullRequestNumber)
+    public async Task<string> GetPullRequestDetailsAsync(int pullRequestNumber, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("API call: GetPullRequestDetails for PR #{PullRequestNumber}", pullRequestNumber);
 
         var url = $"repos/{_options.Owner}/{_options.RepositoryName}/pulls/{pullRequestNumber}";
-        return await GetStringAsync(url, "GetPullRequestDetails");
+        return await GetStringAsync(url, "GetPullRequestDetails", cancellationToken);
     }
 
-    public async Task<string> GetPullRequestFilesAsync(int pullRequestNumber)
+    public async Task<string> GetPullRequestFilesAsync(int pullRequestNumber, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("API call: GetPullRequestFiles for PR #{PullRequestNumber}", pullRequestNumber);
 
         var url = $"repos/{_options.Owner}/{_options.RepositoryName}/pulls/{pullRequestNumber}/files";
-        return await GetPaginatedArrayAsync(url, "GetPullRequestFiles");
+        return await GetPaginatedArrayAsync(url, "GetPullRequestFiles", cancellationToken);
     }
 
-    public async Task<string> GetPullRequestCommitsAsync(int pullRequestNumber)
+    public async Task<string> GetPullRequestCommitsAsync(int pullRequestNumber, CancellationToken cancellationToken = default)
     {
         _logger.LogDebug("API call: GetPullRequestCommits for PR #{PullRequestNumber}", pullRequestNumber);
 
         var url = $"repos/{_options.Owner}/{_options.RepositoryName}/pulls/{pullRequestNumber}/commits";
-        return await GetPaginatedArrayAsync(url, "GetPullRequestCommits");
+        return await GetPaginatedArrayAsync(url, "GetPullRequestCommits", cancellationToken);
     }
 
-    public async Task<string?> GetFileContentAtRefAsync(string gitRef, string filePath)
+    public async Task<string?> GetFileContentAtRefAsync(string gitRef, string filePath, CancellationToken cancellationToken = default)
     {
         var encodedPath = Uri.EscapeDataString(filePath).Replace("%2F", "/");
         var url = $"repos/{_options.Owner}/{_options.RepositoryName}/contents/{encodedPath}?ref={Uri.EscapeDataString(gitRef)}";
@@ -72,7 +72,7 @@ public class GitHubApiClient : IGitHubApiClient
         request.Headers.Accept.Clear();
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
 
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
         sw.Stop();
 
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -85,14 +85,14 @@ public class GitHubApiClient : IGitHubApiClient
 
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync();
-            _logger.LogWarning(
-                "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
-                (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
-            response.EnsureSuccessStatusCode();
-        }
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning(
+                    "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
+                    (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
+                response.EnsureSuccessStatusCode();
+            }
 
-        var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
         _logger.LogDebug(
             "GetFileContentAtRef {FilePath}@{GitRef} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
@@ -101,11 +101,11 @@ public class GitHubApiClient : IGitHubApiClient
         return content;
     }
 
-    private async Task<string> GetStringAsync(string url, string operationName)
+    private async Task<string> GetStringAsync(string url, string operationName, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
-        var response = await _httpClient.GetAsync(url);
-        var body = await response.Content.ReadAsStringAsync();
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
         sw.Stop();
 
         _logger.LogDebug(
@@ -120,7 +120,7 @@ public class GitHubApiClient : IGitHubApiClient
     /// Fetches a paginated GitHub API endpoint that returns a JSON array.
     /// Combines all pages into a single JSON array string.
     /// </summary>
-    private async Task<string> GetPaginatedArrayAsync(string baseUrl, string operationName)
+    private async Task<string> GetPaginatedArrayAsync(string baseUrl, string operationName, CancellationToken cancellationToken)
     {
         var allItems = new List<JsonElement>();
         var page = 1;
@@ -131,8 +131,8 @@ public class GitHubApiClient : IGitHubApiClient
             var url = $"{baseUrl}{separator}per_page={DefaultPerPage}&page={page}";
 
             var sw = Stopwatch.StartNew();
-            var response = await _httpClient.GetAsync(url);
-            var body = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             sw.Stop();
 
             _logger.LogDebug(

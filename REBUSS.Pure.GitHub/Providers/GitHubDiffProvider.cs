@@ -49,7 +49,7 @@ public class GitHubDiffProvider
             _logger.LogInformation("Fetching diff for PR #{PrNumber}", prNumber);
             var sw = Stopwatch.StartNew();
 
-            var (metadata, files, baseCommit, headCommit) = await FetchPullRequestDataAsync(prNumber);
+            var (metadata, files, baseCommit, headCommit) = await FetchPullRequestDataAsync(prNumber, cancellationToken);
 
             _logger.LogInformation(
                 "PR #{PrNumber}: {FileCount} file(s) changed, building diffs (base={BaseCommit}, head={HeadCommit})",
@@ -88,7 +88,7 @@ public class GitHubDiffProvider
             _logger.LogInformation("Fetching diff for file '{Path}' in PR #{PrNumber}", path, prNumber);
             var sw = Stopwatch.StartNew();
 
-            var (metadata, files, baseCommit, headCommit) = await FetchPullRequestDataAsync(prNumber);
+            var (metadata, files, baseCommit, headCommit) = await FetchPullRequestDataAsync(prNumber, cancellationToken);
 
             var normalizedPath = NormalizePath(path);
             var matchingFiles = files
@@ -131,12 +131,12 @@ public class GitHubDiffProvider
     }
 
     private async Task<(PullRequestMetadata metadata, List<FileChange> files, string baseCommit, string headCommit)>
-        FetchPullRequestDataAsync(int prNumber)
+        FetchPullRequestDataAsync(int prNumber, CancellationToken cancellationToken)
     {
-        var prJson = await _apiClient.GetPullRequestDetailsAsync(prNumber);
+        var prJson = await _apiClient.GetPullRequestDetailsAsync(prNumber, cancellationToken);
         var (metadata, baseCommit, headCommit) = _prParser.ParseWithCommits(prJson);
 
-        var filesJson = await _apiClient.GetPullRequestFilesAsync(prNumber);
+        var filesJson = await _apiClient.GetPullRequestFilesAsync(prNumber, cancellationToken);
         var files = _changesParser.Parse(filesJson);
 
         return (metadata, files, baseCommit, headCommit);
@@ -174,8 +174,8 @@ public class GitHubDiffProvider
 
             var fileSw = Stopwatch.StartNew();
 
-            var baseContentTask = _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path);
-            var headContentTask = _apiClient.GetFileContentAtRefAsync(headCommit, file.Path);
+            var baseContentTask = _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path, cancellationToken);
+            var headContentTask = _apiClient.GetFileContentAtRefAsync(headCommit, file.Path, cancellationToken);
             await Task.WhenAll(baseContentTask, headContentTask);
 
             var baseContent = await baseContentTask;
