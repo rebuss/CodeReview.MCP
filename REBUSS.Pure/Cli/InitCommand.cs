@@ -5,7 +5,8 @@ namespace REBUSS.Pure.Cli;
 
 /// <summary>
 /// Generates MCP server configuration file(s) in the current Git repository
-/// and copies review prompt files to <c>.github/prompts/</c> so that MCP clients
+/// and copies review prompt files to <c>.github/prompts/</c> and instruction files
+/// to <c>.github/instructions/</c> so that MCP clients
 /// (e.g. VS Code, Visual Studio, GitHub Copilot) can launch the server and use the prompts.
 /// <para>
 /// When no <c>--pat</c> is provided, the command runs <c>az login</c> so the user
@@ -421,10 +422,13 @@ public class InitCommand : ICliCommand
     private async Task CopyPromptFilesAsync(string gitRoot, CancellationToken cancellationToken)
     {
         var promptsTargetDir = Path.Combine(gitRoot, ".github", "prompts");
+        var instructionsTargetDir = Path.Combine(gitRoot, ".github", "instructions");
         Directory.CreateDirectory(promptsTargetDir);
+        Directory.CreateDirectory(instructionsTargetDir);
 
         var assembly = Assembly.GetExecutingAssembly();
-        var copiedCount = 0;
+        var promptsWritten = 0;
+        var instructionsWritten = 0;
 
         foreach (var promptFileName in PromptFileNames)
         {
@@ -436,24 +440,37 @@ public class InitCommand : ICliCommand
                 continue;
             }
 
-            var targetPath = Path.Combine(promptsTargetDir, promptFileName);
-
-            if (File.Exists(targetPath))
-            {
-                await _output.WriteLineAsync($"Prompt already exists, skipping: {targetPath}");
-                continue;
-            }
-
             using var stream = assembly.GetManifestResourceStream(resourceName)!;
             using var reader = new StreamReader(stream);
             var content = await reader.ReadToEndAsync(cancellationToken);
 
-            await File.WriteAllTextAsync(targetPath, content, cancellationToken);
-            copiedCount++;
+            // Always write to .github/prompts/ (overwrite enables prompt updates)
+            var promptPath = Path.Combine(promptsTargetDir, promptFileName);
+            await File.WriteAllTextAsync(promptPath, content, cancellationToken);
+            promptsWritten++;
+
+            // Always write to .github/instructions/ (overwrite enables instruction updates)
+            var instructionFileName = ToInstructionsFileName(promptFileName);
+            var instructionPath = Path.Combine(instructionsTargetDir, instructionFileName);
+            await File.WriteAllTextAsync(instructionPath, content, cancellationToken);
+            instructionsWritten++;
         }
 
-        if (copiedCount > 0)
-            await _output.WriteLineAsync($"Copied {copiedCount} prompt file(s) to {promptsTargetDir}");
+        if (promptsWritten > 0)
+            await _output.WriteLineAsync($"Copied {promptsWritten} prompt file(s) to {promptsTargetDir}");
+
+        if (instructionsWritten > 0)
+            await _output.WriteLineAsync($"Copied {instructionsWritten} instruction file(s) to {instructionsTargetDir}");
+    }
+
+    /// <summary>
+    /// Converts a prompt file name (e.g. <c>review-pr.md</c>) to the corresponding
+    /// instructions file name (e.g. <c>review-pr.instructions.md</c>).
+    /// </summary>
+    internal static string ToInstructionsFileName(string promptFileName)
+    {
+        var nameWithoutExtension = Path.GetFileNameWithoutExtension(promptFileName);
+        return $"{nameWithoutExtension}.instructions.md";
     }
 
     /// <summary>

@@ -41,6 +41,12 @@ public class GitHubInitSmokeTests
             "Expected self-review.md prompt to be copied.");
         Assert.False(repo.FileExists(Path.Combine(".github", "prompts", "create-pr.md")),
             "Expected create-pr.md prompt to be copied.");
+
+        // Instruction files should be copied
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "review-pr.instructions.md")),
+            "Expected review-pr.instructions.md instruction file to be copied.");
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "self-review.instructions.md")),
+            "Expected self-review.instructions.md instruction file to be copied.");
     }
 
     [Fact]
@@ -62,6 +68,7 @@ public class GitHubInitSmokeTests
         // Config and prompts should still be created (they're written before auth)
         Assert.True(repo.FileExists(Path.Combine(".vscode", "mcp.json")));
         Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "review-pr.md")));
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "review-pr.instructions.md")));
 
         // Config should NOT contain --pat when none was provided
         var config = repo.ReadFile(Path.Combine(".vscode", "mcp.json"));

@@ -635,7 +635,45 @@ public class InitCommandTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_SkipsPromptFiles_WhenAlreadyExist()
+    public async Task ExecuteAsync_CopiesInstructionFiles_ToGitHubInstructionsDirectory()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+
+            var reviewPrInstr = Path.Combine(tempDir, ".github", "instructions", "review-pr.instructions.md");
+            var selfReviewInstr = Path.Combine(tempDir, ".github", "instructions", "self-review.instructions.md");
+            var createPrInstr = Path.Combine(tempDir, ".github", "instructions", "create-pr.instructions.md");
+
+            Assert.True(File.Exists(reviewPrInstr), $"Expected instruction file at {reviewPrInstr}");
+            Assert.True(File.Exists(selfReviewInstr), $"Expected instruction file at {selfReviewInstr}");
+            Assert.False(File.Exists(createPrInstr), "create-pr.instructions.md should not be deployed yet");
+
+            var reviewPrContent = await File.ReadAllTextAsync(reviewPrInstr);
+            Assert.Contains("Pull Request Code Review", reviewPrContent);
+
+            var selfReviewContent = await File.ReadAllTextAsync(selfReviewInstr);
+            Assert.Contains("Self-Review", selfReviewContent);
+
+            var outputText = output.ToString();
+            Assert.Contains("instruction file(s)", outputText);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OverwritesPromptFiles_WhenAlreadyExist()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         var promptsDir = Path.Combine(tempDir, ".github", "prompts");
@@ -654,13 +692,13 @@ public class InitCommandTests
 
             Assert.Equal(0, exitCode);
 
+            // Existing prompt file should be overwritten with embedded content
             var reviewPrContent = await File.ReadAllTextAsync(Path.Combine(promptsDir, "review-pr.md"));
-            Assert.Equal(existingContent, reviewPrContent);
+            Assert.NotEqual(existingContent, reviewPrContent);
+            Assert.Contains("Pull Request Code Review", reviewPrContent);
 
             var selfReviewPath = Path.Combine(promptsDir, "self-review.md");
             Assert.True(File.Exists(selfReviewPath));
-
-            Assert.Contains("already exists, skipping", output.ToString());
         }
         finally
         {
@@ -669,7 +707,43 @@ public class InitCommandTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_OutputMentionsPromptCopy()
+    public async Task ExecuteAsync_OverwritesInstructionFiles_WhenAlreadyExist()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var instructionsDir = Path.Combine(tempDir, ".github", "instructions");
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        Directory.CreateDirectory(instructionsDir);
+
+        var existingContent = "# My custom instruction";
+        await File.WriteAllTextAsync(Path.Combine(instructionsDir, "review-pr.instructions.md"), existingContent);
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+
+            // Existing instruction file should be overwritten with embedded content
+            var reviewPrContent = await File.ReadAllTextAsync(
+                Path.Combine(instructionsDir, "review-pr.instructions.md"));
+            Assert.NotEqual(existingContent, reviewPrContent);
+            Assert.Contains("Pull Request Code Review", reviewPrContent);
+
+            // Other instruction file should also be created
+            var selfReviewInstr = Path.Combine(instructionsDir, "self-review.instructions.md");
+            Assert.True(File.Exists(selfReviewInstr));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OutputMentionsPromptAndInstructionCopy()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
@@ -684,6 +758,7 @@ public class InitCommandTests
             var outputText = output.ToString();
             Assert.Contains("Copied", outputText);
             Assert.Contains("prompt file(s)", outputText);
+            Assert.Contains("instruction file(s)", outputText);
         }
         finally
         {
@@ -711,11 +786,29 @@ public class InitCommandTests
             var reviewPrPath = Path.Combine(tempDir, ".github", "prompts", "review-pr.md");
             Assert.True(File.Exists(reviewPrPath));
             Assert.False(File.Exists(Path.Combine(subDir, ".github", "prompts", "review-pr.md")));
+
+            var reviewPrInstr = Path.Combine(tempDir, ".github", "instructions", "review-pr.instructions.md");
+            Assert.True(File.Exists(reviewPrInstr));
+            Assert.False(File.Exists(Path.Combine(subDir, ".github", "instructions", "review-pr.instructions.md")));
         }
         finally
         {
             Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // ToInstructionsFileName
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("review-pr.md", "review-pr.instructions.md")]
+    [InlineData("self-review.md", "self-review.instructions.md")]
+    [InlineData("create-pr.md", "create-pr.instructions.md")]
+    public void ToInstructionsFileName_ConvertsCorrectly(string input, string expected)
+    {
+        var result = InitCommand.ToInstructionsFileName(input);
+        Assert.Equal(expected, result);
     }
 
     // -------------------------------------------------------------------------
@@ -1085,6 +1178,7 @@ public class InitCommandTests
 
         var configExistedDuringLogin = false;
         var promptsExistedDuringLogin = false;
+        var instructionsExistedDuringLogin = false;
         Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
         {
             if (args == "--version")
@@ -1094,6 +1188,7 @@ public class InitCommandTests
                 configExistedDuringLogin = File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json"))
                     || File.Exists(Path.Combine(tempDir, ".vs", "mcp.json"));
                 promptsExistedDuringLogin = Directory.Exists(Path.Combine(tempDir, ".github", "prompts"));
+                instructionsExistedDuringLogin = Directory.Exists(Path.Combine(tempDir, ".github", "instructions"));
                 return Task.FromResult((-1, "", "not logged in"));
             }
             if (args.Contains("login"))
@@ -1111,6 +1206,7 @@ public class InitCommandTests
             Assert.Equal(0, exitCode);
             Assert.True(configExistedDuringLogin, "MCP config should be written before az login is attempted");
             Assert.True(promptsExistedDuringLogin, "Prompt files should be copied before az login is attempted");
+            Assert.True(instructionsExistedDuringLogin, "Instruction files should be copied before az login is attempted");
         }
         finally
         {
@@ -1349,6 +1445,7 @@ public class InitCommandTests
 
         var configExistedDuringLogin = false;
         var promptsExistedDuringLogin = false;
+        var instructionsExistedDuringLogin = false;
         Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
         {
             if (args == "--version")
@@ -1358,6 +1455,7 @@ public class InitCommandTests
                 configExistedDuringLogin = File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json"))
                     || File.Exists(Path.Combine(tempDir, ".vs", "mcp.json"));
                 promptsExistedDuringLogin = Directory.Exists(Path.Combine(tempDir, ".github", "prompts"));
+                instructionsExistedDuringLogin = Directory.Exists(Path.Combine(tempDir, ".github", "instructions"));
                 return Task.FromResult((-1, "", "not logged in"));
             }
             if (args == "auth login --web")
@@ -1376,6 +1474,7 @@ public class InitCommandTests
             Assert.Equal(0, exitCode);
             Assert.True(configExistedDuringLogin, "MCP config should be written before gh login is attempted");
             Assert.True(promptsExistedDuringLogin, "Prompt files should be copied before gh login is attempted");
+            Assert.True(instructionsExistedDuringLogin, "Instruction files should be copied before gh login is attempted");
         }
         finally
         {

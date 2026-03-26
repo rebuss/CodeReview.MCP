@@ -20,6 +20,7 @@ rebuss-pure init --pat <your-pat>
 2. Authenticates (Azure CLI or PAT)
 3. Detects IDEs and writes `mcp.json` to the appropriate directory
 4. Copies prompt files to `.github/prompts/`
+5. Copies instruction files to `.github/instructions/` (`.instructions.md` extension)
 
 **IDE detection logic:**
 
@@ -205,15 +206,15 @@ After running `rebuss-pure init`, you get:
 .github/prompts/
 ├── review-pr.md
 └── self-review.md
+
+.github/instructions/
+├── review-pr.instructions.md
+└── self-review.instructions.md
 ```
 
-> **Note for contributors:** The files in `.github/prompts/` are **generated** by `rebuss-pure init` from embedded resources compiled into the tool (`REBUSS.Pure/Cli/Prompts/*.md`). The embedded files in `REBUSS.Pure/Cli/Prompts/` are the **source of truth**. Always edit the embedded source files and keep the `.github/prompts/` copies in sync — do **not** edit `.github/prompts/` files directly, as those changes will be lost when a user re-runs `init` on a fresh repository.
+> **Note for contributors:** The files in `.github/prompts/` and `.github/instructions/` are **generated** by `rebuss-pure init` from embedded resources compiled into the tool (`REBUSS.Pure/Cli/Prompts/*.md`). The embedded files in `REBUSS.Pure/Cli/Prompts/` are the **source of truth**. Always edit the embedded source files — do **not** edit the deployed files directly, as `init` **always overwrites** them on every run to ensure prompt updates are deployed.
 
-These prompts instruct the AI agent on the review workflows. You can customize the **deployed** copies (in `.github/prompts/`) in your own repository to:
-
-- enforce team coding standards
-- adjust review priorities
-- change the default self-review scope (default: `staged`)
+These prompts instruct the AI agent on the review workflows. If you need to add custom rules for your repository, create **separate** files (e.g. `.github/instructions/team-rules.instructions.md`) rather than editing the deployed copies, which will be overwritten by the next `rebuss-pure init` run.
 
 ---
 

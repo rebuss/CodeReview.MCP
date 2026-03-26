@@ -32,6 +32,10 @@ public class AzureDevOpsInitSmokeTests
         Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "review-pr.md")));
         Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "self-review.md")));
         Assert.False(repo.FileExists(Path.Combine(".github", "prompts", "create-pr.md")));
+
+        // Instruction files should be copied
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "review-pr.instructions.md")));
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "self-review.instructions.md")));
     }
 
     [Fact]
@@ -50,6 +54,7 @@ public class AzureDevOpsInitSmokeTests
         Assert.Equal(0, result.ExitCode);
         Assert.True(repo.FileExists(Path.Combine(".vscode", "mcp.json")));
         Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "review-pr.md")));
+        Assert.True(repo.FileExists(Path.Combine(".github", "instructions", "review-pr.instructions.md")));
 
         var config = repo.ReadFile(Path.Combine(".vscode", "mcp.json"));
         Assert.DoesNotContain("--pat", config);

@@ -136,6 +136,7 @@ This will:
 - ✔ detect your IDE (VS Code → `.vscode/mcp.json`, Visual Studio → `.vs/mcp.json`)
 - ✔ generate MCP server configuration
 - ✔ copy review prompts to `.github/prompts/`
+- ✔ copy instruction files to `.github/instructions/` (for GitHub Copilot custom instructions)
 - ✔ authenticate via Azure CLI (opens browser for login) or accept a GitHub PAT
 
 ---
