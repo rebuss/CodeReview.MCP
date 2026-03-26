@@ -61,52 +61,44 @@ public class GitHubApiClient : IGitHubApiClient
 
     public async Task<string?> GetFileContentAtRefAsync(string gitRef, string filePath)
     {
-        try
+        var encodedPath = Uri.EscapeDataString(filePath).Replace("%2F", "/");
+        var url = $"repos/{_options.Owner}/{_options.RepositoryName}/contents/{encodedPath}?ref={Uri.EscapeDataString(gitRef)}";
+
+        _logger.LogDebug("Fetching file content for {FilePath} at ref {GitRef}", filePath, gitRef);
+
+        var sw = Stopwatch.StartNew();
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
+
+        var response = await _httpClient.SendAsync(request);
+        sw.Stop();
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            var encodedPath = Uri.EscapeDataString(filePath).Replace("%2F", "/");
-            var url = $"repos/{_options.Owner}/{_options.RepositoryName}/contents/{encodedPath}?ref={Uri.EscapeDataString(gitRef)}";
-
-            _logger.LogDebug("Fetching file content for {FilePath} at ref {GitRef}", filePath, gitRef);
-
-            var sw = Stopwatch.StartNew();
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Accept.Clear();
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
-
-            var response = await _httpClient.SendAsync(request);
-            sw.Stop();
-
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                _logger.LogDebug(
-                    "File {FilePath} not found at ref {GitRef} [{StatusCode}, {ElapsedMs}ms]",
-                    filePath, gitRef, (int)response.StatusCode, sw.ElapsedMilliseconds);
-                return null;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning(
-                    "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
-                    (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
-                return null;
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-
             _logger.LogDebug(
-                "GetFileContentAtRef {FilePath}@{GitRef} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
-                filePath, gitRef, (int)response.StatusCode, content.Length, sw.ElapsedMilliseconds);
-
-            return content;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching file content for {FilePath} at {GitRef}", filePath, gitRef);
+                "File {FilePath} not found at ref {GitRef} [{StatusCode}, {ElapsedMs}ms]",
+                filePath, gitRef, (int)response.StatusCode, sw.ElapsedMilliseconds);
             return null;
         }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogWarning(
+                "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
+                (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
+            response.EnsureSuccessStatusCode();
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+
+        _logger.LogDebug(
+            "GetFileContentAtRef {FilePath}@{GitRef} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
+            filePath, gitRef, (int)response.StatusCode, content.Length, sw.ElapsedMilliseconds);
+
+        return content;
     }
 
     private async Task<string> GetStringAsync(string url, string operationName)

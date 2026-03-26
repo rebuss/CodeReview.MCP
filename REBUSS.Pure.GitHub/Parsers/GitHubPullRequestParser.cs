@@ -24,11 +24,12 @@ public class GitHubPullRequestParser : IGitHubPullRequestParser
 
             var title = GetString(root, "title", "Unknown");
             var state = GetString(root, "state", "Unknown");
+            var merged = GetBool(root, "merged", false);
             var sourceBranch = GetNestedString(root, "head", "ref", string.Empty);
             var targetBranch = GetNestedString(root, "base", "ref", string.Empty);
 
             return new PullRequestMetadata(
-                title, MapState(state),
+                title, MapState(state, merged),
                 sourceBranch, targetBranch,
                 $"refs/heads/{sourceBranch}", $"refs/heads/{targetBranch}");
         }
@@ -48,6 +49,7 @@ public class GitHubPullRequestParser : IGitHubPullRequestParser
 
             var sourceBranch = GetNestedString(root, "head", "ref", string.Empty);
             var targetBranch = GetNestedString(root, "base", "ref", string.Empty);
+            var merged = GetBool(root, "merged", false);
 
             return new FullPullRequestMetadata
             {
@@ -55,7 +57,7 @@ public class GitHubPullRequestParser : IGitHubPullRequestParser
                 CodeReviewId = GetInt(root, "number", 0),
                 Title = GetString(root, "title", "Unknown"),
                 Description = GetString(root, "body", string.Empty),
-                Status = MapState(GetString(root, "state", "Unknown")),
+                Status = MapState(GetString(root, "state", "Unknown"), merged),
                 IsDraft = GetBool(root, "draft", false),
                 AuthorLogin = GetNestedString(root, "user", "login", string.Empty),
                 AuthorDisplayName = GetNestedString(root, "user", "login", string.Empty),
@@ -109,14 +111,46 @@ public class GitHubPullRequestParser : IGitHubPullRequestParser
         }
     }
 
+    public (PullRequestMetadata Metadata, string BaseCommit, string HeadCommit) ParseWithCommits(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var title = GetString(root, "title", "Unknown");
+            var state = GetString(root, "state", "Unknown");
+            var merged = GetBool(root, "merged", false);
+            var sourceBranch = GetNestedString(root, "head", "ref", string.Empty);
+            var targetBranch = GetNestedString(root, "base", "ref", string.Empty);
+            var baseCommit = GetNestedString(root, "base", "sha", string.Empty);
+            var headCommit = GetNestedString(root, "head", "sha", string.Empty);
+
+            var metadata = new PullRequestMetadata(
+                title, MapState(state, merged),
+                sourceBranch, targetBranch,
+                $"refs/heads/{sourceBranch}", $"refs/heads/{targetBranch}");
+
+            return (metadata, baseCommit, headCommit);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error parsing GitHub PR details JSON with commits");
+            return (new PullRequestMetadata("Unknown", "Unknown", "Unknown", "Unknown", string.Empty, string.Empty),
+                    string.Empty, string.Empty);
+        }
+    }
+
     /// <summary>
     /// Maps GitHub PR state to a normalized status string.
-    /// GitHub uses: "open", "closed" (also check "merged" via merged flag).
+    /// GitHub uses: "open", "closed". When the PR is closed, the <paramref name="merged"/>
+    /// flag distinguishes a successful merge ("completed") from a rejected close ("abandoned").
     /// </summary>
-    internal static string MapState(string state) => state.ToLowerInvariant() switch
+    internal static string MapState(string state, bool merged) => state.ToLowerInvariant() switch
     {
         "open" => "active",
-        "closed" => "completed",
+        "closed" when merged => "completed",
+        "closed" => "abandoned",
         _ => state
     };
 

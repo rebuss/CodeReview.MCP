@@ -116,11 +116,15 @@ namespace REBUSS.Pure
             if (!string.IsNullOrWhiteSpace(parseResult.Provider))
                 overrides["Provider"] = parseResult.Provider;
 
-            // Azure DevOps CLI overrides
+            // Determine which provider should receive the PAT based on CLI context
+            var patTarget = ResolvePatTarget(parseResult);
+
             if (!string.IsNullOrWhiteSpace(parseResult.Pat))
             {
-                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.PersonalAccessToken)}"] = parseResult.Pat;
-                overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.PersonalAccessToken)}"] = parseResult.Pat;
+                if (patTarget is null || string.Equals(patTarget, "AzureDevOps", StringComparison.OrdinalIgnoreCase))
+                    overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.PersonalAccessToken)}"] = parseResult.Pat;
+                if (patTarget is null || string.Equals(patTarget, "GitHub", StringComparison.OrdinalIgnoreCase))
+                    overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.PersonalAccessToken)}"] = parseResult.Pat;
             }
 
             if (!string.IsNullOrWhiteSpace(parseResult.Organization))
@@ -131,8 +135,10 @@ namespace REBUSS.Pure
 
             if (!string.IsNullOrWhiteSpace(parseResult.Repository))
             {
-                overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.RepositoryName)}"] = parseResult.Repository;
-                overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.RepositoryName)}"] = parseResult.Repository;
+                if (patTarget is null || string.Equals(patTarget, "AzureDevOps", StringComparison.OrdinalIgnoreCase))
+                    overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.RepositoryName)}"] = parseResult.Repository;
+                if (patTarget is null || string.Equals(patTarget, "GitHub", StringComparison.OrdinalIgnoreCase))
+                    overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.RepositoryName)}"] = parseResult.Repository;
             }
 
             // GitHub CLI overrides
@@ -140,6 +146,22 @@ namespace REBUSS.Pure
                 overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.Owner)}"] = parseResult.Owner;
 
             return overrides;
+        }
+
+        /// <summary>
+        /// Infers which provider the CLI arguments are targeting so that secrets
+        /// (e.g. PAT) are only written to the relevant configuration section.
+        /// Returns <c>null</c> when the target cannot be determined.
+        /// </summary>
+        private static string? ResolvePatTarget(CliParseResult parseResult)
+        {
+            if (!string.IsNullOrWhiteSpace(parseResult.Provider))
+                return parseResult.Provider;
+            if (!string.IsNullOrWhiteSpace(parseResult.Owner))
+                return "GitHub";
+            if (!string.IsNullOrWhiteSpace(parseResult.Organization))
+                return "AzureDevOps";
+            return null;
         }
 
         private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
@@ -213,10 +235,15 @@ namespace REBUSS.Pure
         /// </summary>
         internal static string DetectProvider(IConfiguration configuration)
         {
-            // 1. Explicit provider setting
-            var explicit_ = configuration.GetValue<string>("Provider");
-            if (!string.IsNullOrWhiteSpace(explicit_))
-                return explicit_;
+            // 1. Explicit provider setting (normalized to canonical casing)
+            var explicitProvider = configuration.GetValue<string>("Provider");
+            if (!string.IsNullOrWhiteSpace(explicitProvider))
+                return explicitProvider.ToLowerInvariant() switch
+                {
+                    "github" => "GitHub",
+                    "azuredevops" => "AzureDevOps",
+                    _ => explicitProvider
+                };
 
             // 2. Check if GitHub section has owner configured
             var githubOwner = configuration[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.Owner)}"];

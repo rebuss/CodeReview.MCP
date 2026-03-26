@@ -23,4 +23,10 @@ public interface IGitHubPullRequestParser
     /// Extracts the head commit SHA from the PR details JSON.
     /// </summary>
     string ParseHeadCommit(string json);
+
+    /// <summary>
+    /// Parses lightweight PR metadata along with base and head commit SHAs
+    /// from a single JSON parse operation.
+    /// </summary>
+    (PullRequestMetadata Metadata, string BaseCommit, string HeadCommit) ParseWithCommits(string json);
 }

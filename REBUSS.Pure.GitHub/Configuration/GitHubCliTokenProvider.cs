@@ -10,10 +10,11 @@ namespace REBUSS.Pure.GitHub.Configuration;
 public class GitHubCliTokenProvider : IGitHubCliTokenProvider
 {
     /// <summary>
-    /// GitHub CLI tokens do not carry an explicit expiry. We use a far-future sentinel
-    /// to indicate the token is valid until explicitly revoked.
+    /// GitHub CLI tokens do not carry an explicit expiry. We use a 24-hour window
+    /// so the cached token is periodically refreshed, mitigating the risk of using
+    /// a revoked token for an extended period.
     /// </summary>
-    internal static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromDays(365);
+    internal static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromHours(24);
 
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
 

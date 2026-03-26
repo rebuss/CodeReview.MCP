@@ -134,9 +134,7 @@ public class GitHubDiffProvider
         FetchPullRequestDataAsync(int prNumber)
     {
         var prJson = await _apiClient.GetPullRequestDetailsAsync(prNumber);
-        var metadata = _prParser.Parse(prJson);
-        var baseCommit = _prParser.ParseBaseCommit(prJson);
-        var headCommit = _prParser.ParseHeadCommit(prJson);
+        var (metadata, baseCommit, headCommit) = _prParser.ParseWithCommits(prJson);
 
         var filesJson = await _apiClient.GetPullRequestFilesAsync(prNumber);
         var files = _changesParser.Parse(filesJson);
@@ -176,8 +174,12 @@ public class GitHubDiffProvider
 
             var fileSw = Stopwatch.StartNew();
 
-            var baseContent = await _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path);
-            var headContent = await _apiClient.GetFileContentAtRefAsync(headCommit, file.Path);
+            var baseContentTask = _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path);
+            var headContentTask = _apiClient.GetFileContentAtRefAsync(headCommit, file.Path);
+            await Task.WhenAll(baseContentTask, headContentTask);
+
+            var baseContent = await baseContentTask;
+            var headContent = await headContentTask;
             file.Hunks = _diffBuilder.Build(file.Path, baseContent, headContent);
 
             if (IsFullFileRewrite(baseContent, headContent, file.Hunks))

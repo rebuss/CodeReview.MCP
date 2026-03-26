@@ -82,13 +82,32 @@ public class GitHubPullRequestParserTests
     }
 
     [Fact]
-    public void Parse_HandlesClosedState()
+    public void Parse_HandlesClosedState_WithoutMergedField_MapsToAbandoned()
     {
         var json = """
             {
                 "number": 1,
                 "title": "Closed PR",
                 "state": "closed",
+                "head": { "ref": "fix", "sha": "aaa" },
+                "base": { "ref": "main", "sha": "bbb" }
+            }
+            """;
+
+        var result = _parser.Parse(json);
+
+        Assert.Equal("abandoned", result.Status);
+    }
+
+    [Fact]
+    public void Parse_HandlesClosedState_WithMergedTrue_MapsToCompleted()
+    {
+        var json = """
+            {
+                "number": 1,
+                "title": "Merged PR",
+                "state": "closed",
+                "merged": true,
                 "head": { "ref": "fix", "sha": "aaa" },
                 "base": { "ref": "main", "sha": "bbb" }
             }
@@ -118,20 +137,69 @@ public class GitHubPullRequestParserTests
     }
 
     [Fact]
-    public void MapState_MapsOpenToActive()
+    public void ParseWithCommits_ExtractsMetadataAndCommitShas()
     {
-        Assert.Equal("active", GitHubPullRequestParser.MapState("open"));
+        var (metadata, baseCommit, headCommit) = _parser.ParseWithCommits(FullPrJson);
+
+        Assert.Equal("Add feature X", metadata.Title);
+        Assert.Equal("active", metadata.Status);
+        Assert.Equal("feature/x", metadata.SourceBranch);
+        Assert.Equal("main", metadata.TargetBranch);
+        Assert.Equal("789ghi012jkl", baseCommit);
+        Assert.Equal("abc123def456", headCommit);
     }
 
     [Fact]
-    public void MapState_MapsClosedToCompleted()
+    public void ParseWithCommits_HandlesInvalidJson_ReturnsFallbacks()
     {
-        Assert.Equal("completed", GitHubPullRequestParser.MapState("closed"));
+        var (metadata, baseCommit, headCommit) = _parser.ParseWithCommits("invalid json{{{");
+
+        Assert.Equal("Unknown", metadata.Title);
+        Assert.Equal("Unknown", metadata.Status);
+        Assert.Equal(string.Empty, baseCommit);
+        Assert.Equal(string.Empty, headCommit);
+    }
+
+    [Fact]
+    public void ParseWithCommits_MergedPr_ReturnsCompleted()
+    {
+        var json = """
+            {
+                "number": 5,
+                "title": "Merged PR",
+                "state": "closed",
+                "merged": true,
+                "head": { "ref": "feature", "sha": "head123" },
+                "base": { "ref": "main", "sha": "base456" }
+            }
+            """;
+
+        var (metadata, _, _) = _parser.ParseWithCommits(json);
+
+        Assert.Equal("completed", metadata.Status);
+    }
+
+    [Fact]
+    public void MapState_MapsOpenToActive()
+    {
+        Assert.Equal("active", GitHubPullRequestParser.MapState("open", merged: false));
+    }
+
+    [Fact]
+    public void MapState_MapsClosedWithMergedToCompleted()
+    {
+        Assert.Equal("completed", GitHubPullRequestParser.MapState("closed", merged: true));
+    }
+
+    [Fact]
+    public void MapState_MapsClosedWithoutMergedToAbandoned()
+    {
+        Assert.Equal("abandoned", GitHubPullRequestParser.MapState("closed", merged: false));
     }
 
     [Fact]
     public void MapState_PreservesUnknownState()
     {
-        Assert.Equal("merged", GitHubPullRequestParser.MapState("merged"));
+        Assert.Equal("merged", GitHubPullRequestParser.MapState("merged", merged: false));
     }
 }

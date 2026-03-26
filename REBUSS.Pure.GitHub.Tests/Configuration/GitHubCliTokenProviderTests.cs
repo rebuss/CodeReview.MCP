@@ -11,7 +11,8 @@ public class GitHubCliTokenProviderTests
 
         Assert.NotNull(result);
         Assert.Equal("ghp_abc123XYZ789", result.AccessToken);
-        Assert.True(result.ExpiresOn > DateTime.UtcNow.AddDays(360));
+        Assert.True(result.ExpiresOn > DateTime.UtcNow.AddHours(23));
+        Assert.True(result.ExpiresOn < DateTime.UtcNow.AddHours(25));
     }
 
     [Fact]
@@ -48,8 +49,8 @@ public class GitHubCliTokenProviderTests
     }
 
     [Fact]
-    public void DefaultTokenLifetime_Is365Days()
+    public void DefaultTokenLifetime_Is24Hours()
     {
-        Assert.Equal(TimeSpan.FromDays(365), GitHubCliTokenProvider.DefaultTokenLifetime);
+        Assert.Equal(TimeSpan.FromHours(24), GitHubCliTokenProvider.DefaultTokenLifetime);
     }
 }
