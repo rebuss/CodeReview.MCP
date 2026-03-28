@@ -1,5 +1,6 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
@@ -92,11 +93,8 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = CreateArgs(42);
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42);
 
-        Assert.False(result.IsError);
-        var text = result.Content[0].Text;
         var doc = JsonDocument.Parse(text);
         Assert.Equal(42, doc.RootElement.GetProperty("prNumber").GetInt32());
         Assert.True(doc.RootElement.TryGetProperty("files", out var files));
@@ -121,110 +119,60 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = CreateArgs(42);
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.False(doc.RootElement.TryGetProperty("title", out _));
     }
 
     // --- Validation errors ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenArgumentsNull()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberMissing()
     {
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("Missing required parameter", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberMissing()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberZero()
     {
-        var result = await _handler.ExecuteAsync(new Dictionary<string, object>());
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 0));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNotInteger()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberNegative()
     {
-        var args = new Dictionary<string, object> { ["prNumber"] = "not-a-number" };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: -5));
 
-        Assert.True(result.IsError);
-        Assert.Contains("must be an integer", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberZero()
-    {
-        var args = CreateArgs(0);
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNegative()
-    {
-        var args = CreateArgs(-5);
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    // --- JsonElement input (real MCP scenario) ---
-
-    [Fact]
-    public async Task ExecuteAsync_HandlesPrNumberAsJsonElement()
-    {
-        _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
-
-        // Simulate what happens when MCP JSON-RPC deserializes arguments
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            """{"prNumber": 42}""")!;
-        var result = await _handler.ExecuteAsync(json);
-
-        Assert.False(result.IsError);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     // --- Provider exceptions ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPullRequestNotFound()
+    public async Task ExecuteAsync_ThrowsError_WhenPullRequestNotFound()
     {
         _diffProvider.GetDiffAsync(999, Arg.Any<CancellationToken>())
             .ThrowsAsync(new PullRequestNotFoundException("PR #999 not found"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(999));
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 999));
 
-        Assert.True(result.IsError);
-        Assert.Contains("not found", result.Content[0].Text);
+        Assert.Contains("not found", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsError_OnUnexpectedException()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Something broke"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 42));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Something broke", result.Content[0].Text);
-    }
-
-    // --- Helpers ---
-
-    private static Dictionary<string, object> CreateArgs(int prNumber)
-    {
-        return new Dictionary<string, object> { ["prNumber"] = prNumber };
+        Assert.Contains("Something broke", ex.Message);
     }
 
     // --- Packing integration ---
@@ -234,10 +182,9 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
+        var text = await _handler.ExecuteAsync(prNumber: 42);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.True(doc.RootElement.TryGetProperty("manifest", out var manifest));
         Assert.True(manifest.TryGetProperty("items", out var items));
         Assert.Equal(1, items.GetArrayLength());
@@ -251,14 +198,9 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["modelName"] = "Claude Sonnet"
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, modelName: "Claude Sonnet");
 
-        Assert.False(result.IsError);
+        Assert.NotNull(text);
         _budgetResolver.Received(1).Resolve(Arg.Any<int?>(), "Claude Sonnet");
     }
 
@@ -267,14 +209,9 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 50000
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, maxTokens: 50000);
 
-        Assert.False(result.IsError);
+        Assert.NotNull(text);
         _budgetResolver.Received(1).Resolve(50000, Arg.Any<string?>());
     }
 
@@ -285,10 +222,9 @@ public class GetPullRequestDiffToolHandlerTests
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
+        var text = await _handler.ExecuteAsync(prNumber: 42);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.False(doc.RootElement.TryGetProperty("pagination", out _));
     }
 
@@ -311,15 +247,9 @@ public class GetPullRequestDiffToolHandlerTests
             JsonDocument.Parse("{\"prNumber\":42}").RootElement, 140000, 1, "sha123");
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.True(doc.RootElement.TryGetProperty("pagination", out var pagination));
         Assert.Equal(1, pagination.GetProperty("currentPage").GetInt32());
         Assert.Equal(1, pagination.GetProperty("totalPages").GetInt32());
@@ -346,32 +276,24 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         var pagination = doc.RootElement.GetProperty("pagination");
         Assert.True(pagination.GetProperty("hasMore").GetBoolean());
         Assert.True(pagination.TryGetProperty("nextPageReference", out _));
     }
 
     [Fact]
-    public async Task ExecuteAsync_NeitherPrNumberNorPageReference_ReturnsError()
+    public async Task ExecuteAsync_NeitherPrNumberNorPageReference_ThrowsError()
     {
-        var args = new Dictionary<string, object>();
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("Missing required parameter", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_BudgetTooSmallForPagination_ReturnsError()
+    public async Task ExecuteAsync_BudgetTooSmallForPagination_ThrowsError()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
         _budgetResolver.Resolve(Arg.Any<int?>(), Arg.Any<string?>())
@@ -380,15 +302,10 @@ public class GetPullRequestDiffToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Throws(new InvalidOperationException("Token budget (100) is too small for pagination."));
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(prNumber: 42, maxTokens: 200));
 
-        Assert.True(result.IsError);
-        Assert.Contains("too small", result.Content[0].Text);
+        Assert.Contains("too small", ex.Message);
     }
 
     [Fact]
@@ -410,15 +327,9 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.True(doc.RootElement.TryGetProperty("pagination", out var pagination));
         Assert.Equal(1, pagination.GetProperty("totalPages").GetInt32());
         Assert.False(pagination.GetProperty("hasMore").GetBoolean());
@@ -427,18 +338,12 @@ public class GetPullRequestDiffToolHandlerTests
     // --- Feature 004: Mutual exclusion ---
 
     [Fact]
-    public async Task ExecuteAsync_BothPageReferenceAndPageNumber_ReturnsError()
+    public async Task ExecuteAsync_BothPageReferenceAndPageNumber_ThrowsError()
     {
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["pageReference"] = "some_ref",
-            ["pageNumber"] = 2
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(prNumber: 42, pageReference: "some_ref", pageNumber: 2));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Cannot specify both", result.Content[0].Text);
+        Assert.Contains("Cannot specify both", ex.Message);
     }
 
     // --- Feature 004: Page reference resume (Phase 4) ---
@@ -466,28 +371,26 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object> { ["pageReference"] = "valid_ref" };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(pageReference: "valid_ref");
 
-        Assert.False(result.IsError);
+        Assert.NotNull(text);
     }
 
     [Fact]
-    public async Task ExecuteAsync_InvalidPageReference_ReturnsGenericError()
+    public async Task ExecuteAsync_InvalidPageReference_ThrowsGenericError()
     {
         _pageReferenceCodec.TryDecode("bad_ref").Returns((PageReferenceData?)null);
 
-        var args = new Dictionary<string, object> { ["pageReference"] = "bad_ref" };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(pageReference: "bad_ref"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Invalid page reference", result.Content[0].Text);
+        Assert.Contains("Invalid page reference", ex.Message);
         // Q23: must not expose decoded internals
-        Assert.DoesNotContain("field", result.Content[0].Text.ToLower());
+        Assert.DoesNotContain("field", ex.Message.ToLower());
     }
 
     [Fact]
-    public async Task ExecuteAsync_BudgetMismatch_ReturnsError()
+    public async Task ExecuteAsync_BudgetMismatch_ThrowsError()
     {
         var requestParams = JsonDocument.Parse("{\"prNumber\":42}").RootElement;
         _pageReferenceCodec.TryDecode("ref")
@@ -496,19 +399,14 @@ public class GetPullRequestDiffToolHandlerTests
         _budgetResolver.Resolve(Arg.Any<int?>(), Arg.Any<string?>())
             .Returns(new BudgetResolutionResult(100000, 64000, BudgetSource.Explicit, Array.Empty<string>()));
 
-        var args = new Dictionary<string, object>
-        {
-            ["pageReference"] = "ref",
-            ["maxTokens"] = 100000
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(pageReference: "ref", maxTokens: 100000));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Budget mismatch", result.Content[0].Text);
+        Assert.Contains("Budget mismatch", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ParameterMismatch_ReturnsError()
+    public async Task ExecuteAsync_ParameterMismatch_ThrowsError()
     {
         var requestParams = JsonDocument.Parse("{\"prNumber\":42}").RootElement;
         _pageReferenceCodec.TryDecode("ref")
@@ -516,15 +414,10 @@ public class GetPullRequestDiffToolHandlerTests
 
         _diffProvider.GetDiffAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
-        var args = new Dictionary<string, object>
-        {
-            ["pageReference"] = "ref",
-            ["prNumber"] = 99 // Mismatch with reference prNumber 42
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(pageReference: "ref", prNumber: 99));
 
-        Assert.True(result.IsError);
-        Assert.Contains("mismatch", result.Content[0].Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mismatch", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // --- Feature 004: Staleness detection (Phase 5) ---
@@ -548,11 +441,9 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object> { ["pageReference"] = "ref" };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(pageReference: "ref");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.True(doc.RootElement.TryGetProperty("stalenessWarning", out var warning));
         Assert.Equal("old_sha", warning.GetProperty("originalFingerprint").GetString());
         Assert.Equal("new_sha", warning.GetProperty("currentFingerprint").GetString());
@@ -577,11 +468,9 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object> { ["pageReference"] = "ref" };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(pageReference: "ref");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.False(doc.RootElement.TryGetProperty("stalenessWarning", out _));
     }
 
@@ -603,21 +492,14 @@ public class GetPullRequestDiffToolHandlerTests
             .Returns(allocation);
         _pageReferenceCodec.Encode(Arg.Any<PageReferenceData>()).Returns("encoded_ref");
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000,
-            ["pageNumber"] = 2
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var text = await _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000, pageNumber: 2);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.Equal(2, doc.RootElement.GetProperty("pagination").GetProperty("currentPage").GetInt32());
     }
 
     [Fact]
-    public async Task ExecuteAsync_PageNumberOutOfRange_ReturnsError()
+    public async Task ExecuteAsync_PageNumberOutOfRange_ThrowsError()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
@@ -628,20 +510,14 @@ public class GetPullRequestDiffToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Returns(allocation);
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000,
-            ["pageNumber"] = 5
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000, pageNumber: 5));
 
-        Assert.True(result.IsError);
-        Assert.Contains("out of range", result.Content[0].Text);
+        Assert.Contains("out of range", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_PageNumberZero_ReturnsError()
+    public async Task ExecuteAsync_PageNumberZero_ThrowsError()
     {
         _diffProvider.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
 
@@ -652,15 +528,9 @@ public class GetPullRequestDiffToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Returns(allocation);
 
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = 42,
-            ["maxTokens"] = 200000,
-            ["pageNumber"] = 0
-        };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(prNumber: 42, maxTokens: 200000, pageNumber: 0));
 
-        Assert.True(result.IsError);
-        Assert.Contains("out of range", result.Content[0].Text);
+        Assert.Contains("out of range", ex.Message);
     }
 }

@@ -1,16 +1,17 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Core.Shared;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Models;
 using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Models;
-using System.Text.Json;
 
 namespace REBUSS.Pure.Tools
 {
@@ -20,7 +21,8 @@ namespace REBUSS.Pure.Tools
     /// decide which files to inspect in detail.
     /// Integrates with response packing (F003) and deterministic pagination (F004).
     /// </summary>
-    public class GetLocalChangesFilesToolHandler : IMcpToolHandler
+    [McpServerToolType]
+    public class GetLocalChangesFilesToolHandler
     {
         private readonly ILocalReviewProvider _reviewProvider;
         private readonly IResponsePacker _packer;
@@ -37,8 +39,6 @@ namespace REBUSS.Pure.Tools
             WriteIndented = true,
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
-
-        public string ToolName => "get_local_files";
 
         public GetLocalChangesFilesToolHandler(
             ILocalReviewProvider reviewProvider,
@@ -60,71 +60,26 @@ namespace REBUSS.Pure.Tools
             _logger = logger;
         }
 
-        public McpTool GetToolDefinition() => new()
-        {
-            Name = ToolName,
-            Description =
-                "Lists all locally changed files in the git repository with classification metadata " +
-                "(status, extension, binary/generated/test flags, review priority) and a summary by category. " +
-                "Use this as the first step of a self-review to discover what changed before inspecting diffs. " +
-                "Supported scopes: 'working-tree' (default, staged + unstaged vs HEAD), " +
-                "'staged' (index vs HEAD only), or any branch/ref name to diff the current branch against it.",
-            InputSchema = new ToolInputSchema
-            {
-                Type = "object",
-                Properties = new Dictionary<string, ToolProperty>
-                {
-                    ["scope"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description =
-                            "The change scope to review. " +
-                            "'working-tree' (default): all uncommitted changes vs HEAD. " +
-                            "'staged': only staged (indexed) changes vs HEAD. " +
-                            "Any other value is treated as a base branch/ref (e.g. 'main', 'origin/main') " +
-                            "and returns all commits on the current branch not yet merged into that base."
-                    },
-                    ["modelName"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description = "Optional model name (e.g. 'Claude Sonnet') to resolve context window size"
-                    },
-                    ["maxTokens"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "Optional explicit context window size in tokens"
-                    },
-                    ["pageReference"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description = "Opaque page reference from a previous response. Encodes all context needed to re-derive the page."
-                    },
-                    ["pageNumber"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "Page number for direct access (requires original params + budget)"
-                    }
-                },
-                Required = new List<string>() // scope optional per Q22 when pageReference used
-            }
-        };
-
-        public async Task<ToolResult> ExecuteAsync(
-            Dictionary<string, object>? arguments,
+        [McpServerTool(Name = "get_local_files"), Description(
+            "Lists all locally changed files in the git repository with classification metadata " +
+            "(status, extension, binary/generated/test flags, review priority) and a summary by category. " +
+            "Use this as the first step of a self-review to discover what changed before inspecting diffs. " +
+            "Supported scopes: 'working-tree' (default, staged + unstaged vs HEAD), " +
+            "'staged' (index vs HEAD only), or any branch/ref name to diff the current branch against it.")]
+        public async Task<string> ExecuteAsync(
+            [Description("The change scope to review. 'working-tree' (default): all uncommitted changes vs HEAD. 'staged': only staged (indexed) changes vs HEAD. Any other value is treated as a base branch/ref.")] string? scope = null,
+            [Description("Optional model name (e.g. 'Claude Sonnet') to resolve context window size")] string? modelName = null,
+            [Description("Optional explicit context window size in tokens")] int? maxTokens = null,
+            [Description("Opaque page reference from a previous response. Encodes all context needed to re-derive the page.")] string? pageReference = null,
+            [Description("Page number for direct access (requires original params + budget)")] int? pageNumber = null,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var pageReference = ExtractOptionalString(arguments, "pageReference");
-                var pageNumber = ExtractOptionalInt(arguments, "pageNumber");
-
                 var mutualExclError = PaginationOrchestrator.ValidateInputs(pageReference, pageNumber);
                 if (mutualExclError != null)
-                    return CreateErrorResult(mutualExclError);
+                    throw new McpException(mutualExclError);
 
-                var scopeStr = ExtractScope(arguments);
-                var modelName = ExtractOptionalString(arguments, "modelName");
-                var maxTokens = ExtractOptionalInt(arguments, "maxTokens");
                 var hasExplicitBudget = modelName != null || maxTokens != null;
 
                 var budget = _budgetResolver.Resolve(maxTokens, modelName);
@@ -133,35 +88,32 @@ namespace REBUSS.Pure.Tools
                     pageReference, pageNumber, _pageReferenceCodec, budget.SafeBudgetTokens, hasExplicitBudget);
 
                 if (!resolution.IsSuccess)
-                    return CreateErrorResult(resolution.ErrorMessage!);
+                    throw new McpException(resolution.ErrorMessage!);
 
                 // Extract scope from page reference if provided
-                var effectiveScope = scopeStr;
+                var effectiveScope = scope;
                 if (resolution.DecodedParams != null)
                 {
                     if (resolution.DecodedParams.Value.TryGetProperty("scope", out var decodedScope))
                         effectiveScope = decodedScope.GetString();
 
-                    // Validate scope match if agent also provided scope (FR-016/Q19)
-                    if (scopeStr != null && effectiveScope != null)
+                    if (scope != null && effectiveScope != null)
                     {
-                        var scopeJson = JsonDocument.Parse($"\"{scopeStr}\"").RootElement;
+                        var scopeJson = JsonDocument.Parse($"\"{scope}\"").RootElement;
                         var paramError = PaginationOrchestrator.ValidateParameterMatch(
                             resolution.DecodedParams, "scope", scopeJson);
                         if (paramError != null)
-                            return CreateErrorResult(paramError);
+                            throw new McpException(paramError);
                     }
                 }
 
-                // Validate: either scope or pageReference must be present (scope has default though)
-                var scope = LocalReviewScope.Parse(effectiveScope);
-
+                var parsedScope = LocalReviewScope.Parse(effectiveScope);
                 var effectiveBudget = resolution.ResolvedBudget;
 
-                _logger.LogInformation("[{ToolName}] Entry: scope={Scope}", ToolName, scope);
+                _logger.LogInformation("[get_local_files] Entry: scope={Scope}", parsedScope);
                 var sw = Stopwatch.StartNew();
 
-                var reviewFiles = await _reviewProvider.GetFilesAsync(scope, cancellationToken);
+                var reviewFiles = await _reviewProvider.GetFilesAsync(parsedScope, cancellationToken);
 
                 if (!hasExplicitBudget && pageReference == null)
                 {
@@ -190,9 +142,9 @@ namespace REBUSS.Pure.Tools
 
                     var json003 = JsonSerializer.Serialize(result003, JsonOptions);
                     sw.Stop();
-                    _logger.LogInformation("[{ToolName}] Completed (F003): scope={Scope}, {FileCount} files, {ElapsedMs}ms",
-                        ToolName, scope, reviewFiles.Files.Count, sw.ElapsedMilliseconds);
-                    return CreateSuccessResult(json003);
+                    _logger.LogInformation("[get_local_files] Completed (F003): scope={Scope}, {FileCount} files, {ElapsedMs}ms",
+                        parsedScope, reviewFiles.Files.Count, sw.ElapsedMilliseconds);
+                    return json003;
                 }
 
                 // Feature 004 path
@@ -207,24 +159,22 @@ namespace REBUSS.Pure.Tools
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("too small"))
                 {
-                    return CreateErrorResult(ex.Message);
+                    throw new McpException(ex.Message);
                 }
 
                 var requestedPage = resolution.PageNumber;
                 if (requestedPage < 1 || requestedPage > allocation.TotalPages)
-                    return CreateErrorResult($"Page number {requestedPage} is out of range. Valid range: 1 to {allocation.TotalPages}.");
+                    throw new McpException($"Page number {requestedPage} is out of range. Valid range: 1 to {allocation.TotalPages}.");
 
                 var pageSlice = allocation.Pages[requestedPage - 1];
                 var packedFiles = ExtractPageFiles(fileItems, sortedCandidates, pageSlice);
 
-                // Build request params for page reference (scope)
                 var scopeForRef = effectiveScope ?? "working-tree";
                 var requestParams = JsonDocument.Parse($"{{\"scope\":\"{scopeForRef}\"}}").RootElement;
 
-                // No staleness for local tools — fingerprint is null
                 var paginationMeta = PaginationOrchestrator.BuildPaginationMetadata(
                     allocation, requestedPage, _pageReferenceCodec,
-                    ToolName, requestParams, effectiveBudget, null);
+                    "get_local_files", requestParams, effectiveBudget, null);
 
                 var manifestResult = BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
 
@@ -243,25 +193,26 @@ namespace REBUSS.Pure.Tools
                 var json = JsonSerializer.Serialize(result, JsonOptions);
                 sw.Stop();
                 _logger.LogInformation(
-                    "[{ToolName}] Completed (F004): scope={Scope}, page {Page}/{TotalPages}, {ElapsedMs}ms",
-                    ToolName, scope, requestedPage, allocation.TotalPages, sw.ElapsedMilliseconds);
+                    "[get_local_files] Completed (F004): scope={Scope}, page {Page}/{TotalPages}, {ElapsedMs}ms",
+                    parsedScope, requestedPage, allocation.TotalPages, sw.ElapsedMilliseconds);
 
-                return CreateSuccessResult(json);
+                return json;
             }
             catch (LocalRepositoryNotFoundException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Repository not found", ToolName);
-                return CreateErrorResult($"Repository not found: {ex.Message}");
+                _logger.LogWarning(ex, "[get_local_files] Repository not found");
+                throw new McpException($"Repository not found: {ex.Message}");
             }
             catch (GitCommandException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Git command failed", ToolName);
-                return CreateErrorResult($"Git command failed: {ex.Message}");
+                _logger.LogWarning(ex, "[get_local_files] Git command failed");
+                throw new McpException($"Git command failed: {ex.Message}");
             }
+            catch (McpException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{ToolName}] Error", ToolName);
-                return CreateErrorResult($"Error retrieving local files: {ex.Message}");
+                _logger.LogError(ex, "[get_local_files] Error");
+                throw new McpException($"Error retrieving local files: {ex.Message}");
             }
         }
 
@@ -389,48 +340,5 @@ namespace REBUSS.Pure.Tools
                 }
             };
         }
-
-        // --- Input extraction ---
-
-        private static string? ExtractScope(Dictionary<string, object>? arguments)
-        {
-            if (arguments == null || !arguments.TryGetValue("scope", out var scopeObj))
-                return null;
-
-            return scopeObj is JsonElement jsonElement
-                ? jsonElement.GetString()
-                : scopeObj?.ToString();
-        }
-
-        private static string? ExtractOptionalString(Dictionary<string, object>? arguments, string key)
-        {
-            if (arguments == null || !arguments.TryGetValue(key, out var value)) return null;
-            return value is JsonElement jsonElement ? jsonElement.GetString() : value?.ToString();
-        }
-
-        private static int? ExtractOptionalInt(Dictionary<string, object>? arguments, string key)
-        {
-            if (arguments == null || !arguments.TryGetValue(key, out var value)) return null;
-            try
-            {
-                return value is JsonElement jsonElement ? jsonElement.GetInt32() : Convert.ToInt32(value);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static ToolResult CreateSuccessResult(string text) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = text } },
-            IsError = false
-        };
-
-        private static ToolResult CreateErrorResult(string errorMessage) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = $"Error: {errorMessage}" } },
-            IsError = true
-        };
     }
 }

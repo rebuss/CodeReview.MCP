@@ -1,17 +1,18 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Core.Shared;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Models;
 using REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Models;
-using System.Text.Json;
 
 namespace REBUSS.Pure.Tools
 {
@@ -21,7 +22,8 @@ namespace REBUSS.Pure.Tools
     /// and formats the result as a structured JSON response.
     /// Integrates with response packing (F003) and deterministic pagination (F004).
     /// </summary>
-    public class GetPullRequestFilesToolHandler : IMcpToolHandler
+    [McpServerToolType]
+    public class GetPullRequestFilesToolHandler
     {
         private readonly IPullRequestDataProvider _filesProvider;
         private readonly IResponsePacker _packer;
@@ -38,8 +40,6 @@ namespace REBUSS.Pure.Tools
             WriteIndented = true,
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
-
-        public string ToolName => "get_pr_files";
 
         public GetPullRequestFilesToolHandler(
             IPullRequestDataProvider filesProvider,
@@ -61,83 +61,33 @@ namespace REBUSS.Pure.Tools
             _logger = logger;
         }
 
-        public McpTool GetToolDefinition() => new()
-        {
-            Name = ToolName,
-            Description = "Retrieves structured information about all files changed in a specific Pull Request. " +
-                          "Returns per-file metadata (status, additions, deletions, extension, " +
-                          "binary/generated/test flags, review priority) and an aggregated summary by category.",
-            InputSchema = new ToolInputSchema
-            {
-                Type = "object",
-                Properties = new Dictionary<string, ToolProperty>
-                {
-                    ["prNumber"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "The Pull Request number/ID to retrieve the file list for"
-                    },
-                    ["modelName"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description = "Optional model name (e.g. 'Claude Sonnet') to resolve context window size"
-                    },
-                    ["maxTokens"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "Optional explicit context window size in tokens"
-                    },
-                    ["pageReference"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description = "Opaque page reference from a previous response. Encodes all context needed to re-derive the page."
-                    },
-                    ["pageNumber"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "Page number for direct access (requires original params + budget)"
-                    }
-                },
-                Required = new List<string>() // prNumber optional per Q17/Q22 when pageReference used
-            }
-        };
-
-        public async Task<ToolResult> ExecuteAsync(
-            Dictionary<string, object>? arguments,
+        [McpServerTool(Name = "get_pr_files"), Description(
+            "Retrieves structured information about all files changed in a specific Pull Request. " +
+            "Returns per-file metadata (status, additions, deletions, extension, " +
+            "binary/generated/test flags, review priority) and an aggregated summary by category.")]
+        public async Task<string> ExecuteAsync(
+            [Description("The Pull Request number/ID to retrieve the file list for")] int? prNumber = null,
+            [Description("Optional model name (e.g. 'Claude Sonnet') to resolve context window size")] string? modelName = null,
+            [Description("Optional explicit context window size in tokens")] int? maxTokens = null,
+            [Description("Opaque page reference from a previous response. Encodes all context needed to re-derive the page.")] string? pageReference = null,
+            [Description("Page number for direct access (requires original params + budget)")] int? pageNumber = null,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var pageReference = ExtractOptionalString(arguments, "pageReference");
-                var pageNumber = ExtractOptionalInt(arguments, "pageNumber");
-
                 var mutualExclError = PaginationOrchestrator.ValidateInputs(pageReference, pageNumber);
                 if (mutualExclError != null)
-                    return CreateErrorResult(mutualExclError);
+                    throw new McpException(mutualExclError);
 
-                int? prNumber = null;
-                if (arguments != null && arguments.TryGetValue("prNumber", out var prNumberObj))
-                {
-                    try
-                    {
-                        prNumber = prNumberObj is JsonElement jsonEl ? jsonEl.GetInt32() : Convert.ToInt32(prNumberObj);
-                        if (prNumber <= 0)
-                            return CreateErrorResult("prNumber must be greater than 0");
-                    }
-                    catch
-                    {
-                        return CreateErrorResult("Invalid prNumber parameter: must be an integer");
-                    }
-                }
+                if (prNumber != null && prNumber <= 0)
+                    throw new McpException("prNumber must be greater than 0");
 
                 if (prNumber == null && pageReference == null)
-                    return CreateErrorResult("Missing required parameter: prNumber");
+                    throw new McpException("Missing required parameter: prNumber");
 
-                var modelName = ExtractOptionalString(arguments, "modelName");
-                var maxTokens = ExtractOptionalInt(arguments, "maxTokens");
                 var hasExplicitBudget = modelName != null || maxTokens != null;
 
-                _logger.LogInformation("[{ToolName}] Entry: PR #{PrNumber}", ToolName, prNumber);
+                _logger.LogInformation("[get_pr_files] Entry: PR #{PrNumber}", prNumber);
                 var sw = Stopwatch.StartNew();
 
                 var budget = _budgetResolver.Resolve(maxTokens, modelName);
@@ -146,7 +96,7 @@ namespace REBUSS.Pure.Tools
                     pageReference, pageNumber, _pageReferenceCodec, budget.SafeBudgetTokens, hasExplicitBudget);
 
                 if (!resolution.IsSuccess)
-                    return CreateErrorResult(resolution.ErrorMessage!);
+                    throw new McpException(resolution.ErrorMessage!);
 
                 var effectivePrNumber = prNumber;
                 if (resolution.DecodedParams != null)
@@ -160,12 +110,12 @@ namespace REBUSS.Pure.Tools
                         var paramError = PaginationOrchestrator.ValidateParameterMatch(
                             resolution.DecodedParams, "prNumber", prJsonElement);
                         if (paramError != null)
-                            return CreateErrorResult(paramError);
+                            throw new McpException(paramError);
                     }
                 }
 
                 if (effectivePrNumber == null || effectivePrNumber <= 0)
-                    return CreateErrorResult("Missing required parameter: prNumber");
+                    throw new McpException("Missing required parameter: prNumber");
 
                 var effectiveBudget = resolution.ResolvedBudget;
 
@@ -181,9 +131,9 @@ namespace REBUSS.Pure.Tools
                     var result = BuildPackedResult(effectivePrNumber.Value, prFiles, budget.SafeBudgetTokens);
                     var json = JsonSerializer.Serialize(result, JsonOptions);
                     sw.Stop();
-                    _logger.LogInformation("[{ToolName}] Completed (F003): PR #{PrNumber}, {FileCount} files, {ElapsedMs}ms",
-                        ToolName, effectivePrNumber, prFiles.Files.Count, sw.ElapsedMilliseconds);
-                    return CreateSuccessResult(json);
+                    _logger.LogInformation("[get_pr_files] Completed (F003): PR #{PrNumber}, {FileCount} files, {ElapsedMs}ms",
+                        effectivePrNumber, prFiles.Files.Count, sw.ElapsedMilliseconds);
+                    return json;
                 }
 
                 // Feature 004 path
@@ -198,12 +148,12 @@ namespace REBUSS.Pure.Tools
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("too small"))
                 {
-                    return CreateErrorResult(ex.Message);
+                    throw new McpException(ex.Message);
                 }
 
                 var requestedPage = resolution.PageNumber;
                 if (requestedPage < 1 || requestedPage > allocation.TotalPages)
-                    return CreateErrorResult($"Page number {requestedPage} is out of range. Valid range: 1 to {allocation.TotalPages}.");
+                    throw new McpException($"Page number {requestedPage} is out of range. Valid range: 1 to {allocation.TotalPages}.");
 
                 var pageSlice = allocation.Pages[requestedPage - 1];
 
@@ -227,7 +177,7 @@ namespace REBUSS.Pure.Tools
                     }
                     catch
                     {
-                        _logger.LogDebug("[{ToolName}] Could not fetch metadata for fingerprint", ToolName);
+                        _logger.LogDebug("[get_pr_files] Could not fetch metadata for fingerprint");
                     }
                 }
 
@@ -235,7 +185,7 @@ namespace REBUSS.Pure.Tools
 
                 var paginationMeta = PaginationOrchestrator.BuildPaginationMetadata(
                     allocation, requestedPage, _pageReferenceCodec,
-                    ToolName, requestParams, effectiveBudget, currentFingerprint);
+                    "get_pr_files", requestParams, effectiveBudget, currentFingerprint);
 
                 var manifestResult = BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
 
@@ -262,20 +212,21 @@ namespace REBUSS.Pure.Tools
                 var jsonResult = JsonSerializer.Serialize(paginatedResult, JsonOptions);
                 sw.Stop();
                 _logger.LogInformation(
-                    "[{ToolName}] Completed (F004): PR #{PrNumber}, page {Page}/{TotalPages}, {ElapsedMs}ms",
-                    ToolName, effectivePrNumber, requestedPage, allocation.TotalPages, sw.ElapsedMilliseconds);
+                    "[get_pr_files] Completed (F004): PR #{PrNumber}, page {Page}/{TotalPages}, {ElapsedMs}ms",
+                    effectivePrNumber, requestedPage, allocation.TotalPages, sw.ElapsedMilliseconds);
 
-                return CreateSuccessResult(jsonResult);
+                return jsonResult;
             }
             catch (PullRequestNotFoundException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Pull request not found", ToolName);
-                return CreateErrorResult($"Pull Request not found: {ex.Message}");
+                _logger.LogWarning(ex, "[get_pr_files] Pull request not found");
+                throw new McpException($"Pull Request not found: {ex.Message}");
             }
+            catch (McpException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{ToolName}] Error", ToolName);
-                return CreateErrorResult($"Error retrieving PR files: {ex.Message}");
+                _logger.LogError(ex, "[get_pr_files] Error");
+                throw new McpException($"Error retrieving PR files: {ex.Message}");
             }
         }
 
@@ -423,40 +374,5 @@ namespace REBUSS.Pure.Tools
                 }
             };
         }
-
-        // --- Input extraction ---
-
-        private static string? ExtractOptionalString(Dictionary<string, object>? arguments, string key)
-        {
-            if (arguments == null || !arguments.TryGetValue(key, out var value)) return null;
-            return value is JsonElement jsonElement ? jsonElement.GetString() : value?.ToString();
-        }
-
-        private static int? ExtractOptionalInt(Dictionary<string, object>? arguments, string key)
-        {
-            if (arguments == null || !arguments.TryGetValue(key, out var value)) return null;
-            try
-            {
-                return value is JsonElement jsonElement ? jsonElement.GetInt32() : Convert.ToInt32(value);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        // --- Result helpers ---
-
-        private static ToolResult CreateSuccessResult(string text) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = text } },
-            IsError = false
-        };
-
-        private static ToolResult CreateErrorResult(string errorMessage) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = $"Error: {errorMessage}" } },
-            IsError = true
-        };
     }
 }
