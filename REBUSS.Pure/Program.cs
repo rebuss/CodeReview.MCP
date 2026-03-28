@@ -42,7 +42,8 @@ namespace REBUSS.Pure
                     Environment.CurrentDirectory,
                     GetExecutablePath(),
                     parseResult.Pat,
-                    parseResult.IsGlobal),
+                    parseResult.IsGlobal,
+                    parseResult.Ide),
                 _ => throw new InvalidOperationException($"Unknown command: {parseResult.CommandName}")
             };
 

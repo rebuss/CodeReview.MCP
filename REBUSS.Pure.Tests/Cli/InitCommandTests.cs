@@ -17,10 +17,10 @@ public class InitCommandTests
     private static InitCommand CreateCommand(
         TextWriter output, string workingDirectory, string executablePath, string? pat = null,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
-        TextReader? input = null, string? detectedProvider = null, bool isGlobal = false)
+        TextReader? input = null, string? detectedProvider = null, bool isGlobal = false, string? ide = null)
     {
         return new InitCommand(output, input ?? new StringReader("n"), workingDirectory, executablePath, pat,
-            isGlobal, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled);
+            isGlobal, ide, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled);
     }
     // -------------------------------------------------------------------------
     // Error cases
@@ -1631,6 +1631,184 @@ public class InitCommandTests
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".vs", "mcp.json"));
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".vscode", "mcp.json"));
+    }
+
+    // -------------------------------------------------------------------------
+    // --ide option: explicit IDE targeting
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ResolveConfigTargets_ReturnsVsCodeOnly_WhenIdeIsVscode()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vscode");
+
+            Assert.Single(targets);
+            Assert.Equal("VS Code", targets[0].IdeName);
+            Assert.Contains(".vscode", targets[0].Directory);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_ReturnsVsOnly_WhenIdeIsVs()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vs");
+
+            Assert.Single(targets);
+            Assert.Equal("Visual Studio", targets[0].IdeName);
+            Assert.Contains(".vs", targets[0].Directory);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_IsCaseInsensitive_ForIdeValue()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var vscodeTargets = InitCommand.ResolveConfigTargets(tempDir, "VSCODE");
+            Assert.Single(vscodeTargets);
+            Assert.Equal("VS Code", vscodeTargets[0].IdeName);
+
+            var vsTargets = InitCommand.ResolveConfigTargets(tempDir, "VS");
+            Assert.Single(vsTargets);
+            Assert.Equal("Visual Studio", vsTargets[0].IdeName);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_FallsBackToAutoDetect_WhenIdeIsNull()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, null);
+
+            Assert.Equal(2, targets.Count);
+            Assert.Contains(targets, t => t.IdeName == "VS Code");
+            Assert.Contains(targets, t => t.IdeName == "Visual Studio");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_IgnoresIdeMarkers_WhenIdeIsExplicit()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vs"));
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vscode"));
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vscode");
+
+            Assert.Single(targets);
+            Assert.Equal("VS Code", targets[0].IdeName);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CreatesOnlyVsCodeConfig_WhenIdeIsVscode()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", ide: "vscode");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+            Assert.Contains("VS Code", output.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CreatesOnlyVsConfig_WhenIdeIsVs()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", ide: "vs");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.Contains("Visual Studio", output.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UsesAutoDetection_WhenIdeIsNotSpecified()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vscode"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 }
 

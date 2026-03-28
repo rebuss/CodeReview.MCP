@@ -14,9 +14,10 @@ namespace REBUSS.Pure.Cli;
 /// will use it automatically at runtime.
 /// </para>
 /// <para>
-/// The target location is determined by IDE auto-detection:
-/// VS Code ? <c>.vscode/mcp.json</c>;
-/// Visual Studio ? <c>.vs/mcp.json</c>;
+/// The target location can be forced with <c>--ide vscode</c> or <c>--ide vs</c>.
+/// When <c>--ide</c> is not specified, the target is determined by IDE auto-detection:
+/// VS Code → <c>.vscode/mcp.json</c>;
+/// Visual Studio → <c>.vs/mcp.json</c>;
 /// both written when both IDEs are detected.
 /// Falls back to VS Code when no IDE markers are found.
 /// </para>
@@ -40,18 +41,19 @@ public class InitCommand : ICliCommand
     private readonly string _executablePath;
     private readonly string? _pat;
     private readonly bool _isGlobal;
+    private readonly string? _ide;
     private readonly string? _detectedProvider;
     private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
 
     public string Name => "init";
 
-    public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false)
-        : this(output, Console.In, workingDirectory, executablePath, pat, isGlobal, detectedProvider: null, processRunner: null)
+    public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null)
+        : this(output, Console.In, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider: null, processRunner: null)
     {
     }
 
-    public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? detectedProvider = null)
-        : this(output, input, workingDirectory, executablePath, pat, isGlobal, detectedProvider, processRunner: null)
+    public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null, string? detectedProvider = null)
+        : this(output, input, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider, processRunner: null)
     {
     }
 
@@ -65,6 +67,7 @@ public class InitCommand : ICliCommand
         string executablePath,
         string? pat,
         bool isGlobal,
+        string? ide,
         string? detectedProvider,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner)
     {
@@ -74,6 +77,7 @@ public class InitCommand : ICliCommand
         _executablePath = executablePath;
         _pat = pat;
         _isGlobal = isGlobal;
+        _ide = ide;
         _detectedProvider = detectedProvider;
         _processRunner = processRunner;
     }
@@ -92,7 +96,7 @@ public class InitCommand : ICliCommand
         // even if the user cancels during az install or az login.
         var targets = _isGlobal
             ? ResolveGlobalConfigTargets()
-            : ResolveConfigTargets(gitRoot);
+            : ResolveConfigTargets(gitRoot, _ide);
 
         var normalizedExePath = _executablePath.Replace("\\", "\\\\");
         var normalizedRepoPath = gitRoot.Replace("\\", "\\\\");
@@ -264,12 +268,35 @@ public class InitCommand : ICliCommand
 
     /// <summary>
     /// Detects which IDE(s) are in use and returns the list of config file targets to write.
-    /// Selection is based on which IDE folders physically exist:
-    /// only <c>.vscode</c> ? VS Code only; only <c>.vs</c> ? Visual Studio only;
-    /// both or neither ? both targets.
+    /// When <paramref name="ide"/> is provided (<c>"vscode"</c> or <c>"vs"</c>), only that
+    /// IDE's target is returned — no auto-detection is performed.
+    /// Otherwise, selection is based on which IDE folders physically exist:
+    /// only <c>.vscode</c> → VS Code only; only <c>.vs</c> → Visual Studio only;
+    /// both or neither → both targets.
     /// </summary>
-    internal static List<McpConfigTarget> ResolveConfigTargets(string gitRoot)
+    internal static List<McpConfigTarget> ResolveConfigTargets(string gitRoot, string? ide = null)
     {
+        if (!string.IsNullOrWhiteSpace(ide))
+        {
+            if (string.Equals(ide, "vscode", StringComparison.OrdinalIgnoreCase))
+                return
+                [
+                    new McpConfigTarget(
+                        "VS Code",
+                        Path.Combine(gitRoot, VsCodeDir),
+                        Path.Combine(gitRoot, VsCodeDir, McpConfigFileName))
+                ];
+
+            if (string.Equals(ide, "vs", StringComparison.OrdinalIgnoreCase))
+                return
+                [
+                    new McpConfigTarget(
+                        "Visual Studio",
+                        Path.Combine(gitRoot, VisualStudioDir),
+                        Path.Combine(gitRoot, VisualStudioDir, McpConfigFileName))
+                ];
+        }
+
         var targets = new List<McpConfigTarget>();
 
         bool hasVsCode = DetectsVsCode(gitRoot);

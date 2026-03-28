@@ -22,6 +22,7 @@ public class CliArgumentParser
         {
             string? initPat = null;
             bool isGlobal = false;
+            string? ide = null;
             for (int i = 1; i < args.Length; i++)
             {
                 if (string.Equals(args[i], "--pat", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -34,8 +35,13 @@ public class CliArgumentParser
                 {
                     isGlobal = true;
                 }
+                else if (string.Equals(args[i], "--ide", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    ide = args[i + 1];
+                    i++;
+                }
             }
-            return CliParseResult.CliMode("init", initPat, isGlobal);
+            return CliParseResult.CliMode("init", initPat, isGlobal, ide);
         }
 
         string? repoPath = null;
@@ -166,12 +172,19 @@ public sealed class CliParseResult
     /// </summary>
     public bool IsGlobal { get; private init; }
 
-    public static CliParseResult CliMode(string commandName, string? pat = null, bool isGlobal = false) => new()
+    /// <summary>
+    /// The IDE target provided via <c>--ide</c> (e.g. "vscode", "vs").
+    /// <c>null</c> when not specified — auto-detection is used instead.
+    /// </summary>
+    public string? Ide { get; private init; }
+
+    public static CliParseResult CliMode(string commandName, string? pat = null, bool isGlobal = false, string? ide = null) => new()
     {
         IsServerMode = false,
         CommandName = commandName,
         Pat = pat,
         RepoPath = null,
-        IsGlobal = isGlobal
+        IsGlobal = isGlobal,
+        Ide = ide
     };
 }
