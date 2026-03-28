@@ -49,7 +49,7 @@ public class PageAllocatorTests
 
         Assert.Equal(2, allocation.TotalPages);
         Assert.Equal(3, allocation.TotalItems);
-        Assert.Equal(1, allocation.Pages[0].Items.Count);
+        Assert.Single(allocation.Pages[0].Items);
         Assert.Equal(2, allocation.Pages[1].Items.Count);
     }
 
