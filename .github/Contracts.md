@@ -6,53 +6,155 @@
 
 ## 1. Serialization Pipeline
 
-Tool output goes through **two serialization layers**:
+Since the migration to the official **ModelContextProtocol SDK v1.2.0**, tool output goes through **two serialization layers**:
 
-1. **Tool handler** serializes DTO → JSON string (`camelCase`, `WriteIndented = true`, `WhenWritingNull` ignore)
-2. String placed in `ToolResult.Content[0].Text`
-3. **MCP transport** (`SystemTextJsonSerializer`) serializes `JsonRpcResponse` (`camelCase`, `WriteIndented = false`, `WhenWritingNull` ignore)
+1. **Tool handler** serializes DTO → JSON string (`camelCase`, `WriteIndented = true`, `WhenWritingNull` ignore) using per-handler `JsonSerializerOptions`
+2. Handler returns the JSON string as `Task<string>`. The **SDK** wraps it in a `TextContent` message automatically
+3. **SDK transport** serializes the JSON-RPC envelope (outer framing is fully SDK-managed)
 
-Result: compact JSON-RPC envelope wrapping a pretty-printed payload string:
+Each tool handler defines its own `JsonSerializerOptions`:
+
+```csharp
+private static readonly JsonSerializerOptions JsonOptions = new()
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+};
+```
+
+Result: compact JSON-RPC envelope wrapping a pretty-printed payload string (same wire format as before):
 
 ```json
 {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"prNumber\": 42,\n  \"files\": [...]\n}"}]}}
 ```
+
+> **Migration note:** The outer JSON-RPC serialization is now owned by the SDK. The inner tool-response serialization (the pretty-printed JSON inside the `text` field) is still controlled by each handler's `JsonSerializerOptions`. The wire format is identical to the pre-SDK implementation.
 
 ## 2. Error Contracts
 
 ### Tool-level errors (business logic)
 
 Returned when: validation failure, PR not found, file not found, git command failure.
-`ToolResult.isError = true`, message is human-readable, not structured.
+
+Since the SDK migration, errors are thrown as **`McpException`** from tool handlers. The SDK catches these and produces the standard MCP error response with `isError: true`:
 
 ```json
-{"content":[{"type":"text","text":"Error: Pull Request not found: PR #999 does not exist"}],"isError":true}
+{"content":[{"type":"text","text":"Pull Request not found: PR #999 does not exist"}],"isError":true}
 ```
 
-Error prefixes by tool:
-- `get_pr_diff` / `get_pr_files` / `get_pr_metadata`: `"Error: Pull Request not found: ..."`, `"Error: Error retrieving PR ..."`
-- `get_file_diff`: `"Error: File not found in Pull Request: ..."`, `"Error: Pull Request not found: ..."`
-- `get_file_content_at_ref`: `"Error: File not found: ..."`, `"Error: Error retrieving file content: ..."`
-- `get_local_files`: `"Error: Repository not found: ..."`, `"Error: Git command failed: ..."`
-- `get_local_file_diff`: `"Error: File not found in local changes: ..."`, `"Error: Repository not found: ..."`, `"Error: Git command failed: ..."`
+Error handling pattern in each handler:
+
+```csharp
+catch (PullRequestNotFoundException ex)
+{
+    throw new McpException($"Pull Request not found: {ex.Message}");
+}
+catch (McpException) { throw; }
+catch (Exception ex)
+{
+    throw new McpException($"Error retrieving PR files: {ex.Message}");
+}
+```
+
+> **Migration note:** Previously, errors were returned as `ToolResult { isError = true, content = [...] }` with an `"Error: "` prefix in the message text. Now errors are thrown as `McpException` and the SDK produces the `isError` response. The message text **no longer** carries the `"Error: "` prefix — the `McpException` message is used directly.
+
+Error messages by tool:
+- `get_pr_diff` / `get_pr_files` / `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR ..."`
+- `get_file_diff`: `"File not found in Pull Request: ..."`, `"Pull Request not found: ..."`
+- `get_file_content_at_ref`: `"File not found: ..."`, `"Error retrieving file content: ..."`
+- `get_local_files`: `"Repository not found: ..."`, `"Git command failed: ..."`
+- `get_local_file_diff`: `"File not found in local changes: ..."`, `"Repository not found: ..."`, `"Git command failed: ..."`
 
 ### JSON-RPC errors (protocol level)
 
-Returned when: unknown method, malformed request. Uses standard JSON-RPC error codes.
+Returned when: unknown method, malformed request, protocol version negotiation failure. Uses standard JSON-RPC error codes. These are now fully handled by the SDK.
 
 ```json
-{"jsonrpc":"2.0","id":"err-1","error":{"code":-32601,"message":"Method not found: nonexistent/method"}}
+{"jsonrpc":"2.0","id":"err-1","error":{"code":-32601,"message":"Method not found","data":"Method not found: nonexistent/method"}}
 ```
 
-## 3. Tool Contracts
+### Protocol version negotiation
 
-### 3.1 `get_pr_metadata`
+Protocol version negotiation is **fully handled by the SDK**. The server advertises the latest protocol version it supports, and the SDK performs the negotiation automatically during the `initialize` handshake.
+
+### Initialize response
+
+The `initialize` response is **auto-generated by the SDK**. It includes:
+
+- **`serverInfo`** — name and version, configured via `AddMcpServer(options => { options.ServerInfo = new() { Name = "REBUSS.Pure", Version = "1.0.0" }; })`
+- **`capabilities`** — auto-populated based on registered tool types and transport
+- **`protocolVersion`** — negotiated automatically by the SDK
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": { "tools": { "listChanged": false } },
+    "serverInfo": { "name": "REBUSS.Pure", "version": "1.0.0" }
+  }
+}
+```
+
+> **Migration note:** Previously, the server had custom `initialize` handling with explicit protocol version negotiation across multiple supported versions. Now the SDK manages the full handshake. The exact `protocolVersion` and `capabilities` shape may vary with SDK version updates.
+
+## 3. Tool Input Schema Generation
+
+Since the migration to the **ModelContextProtocol SDK v1.2.0**, tool input schemas are **auto-generated by the SDK** from the C# method signatures of `[McpServerTool]`-decorated methods. Hand-crafted `GetToolDefinition()` methods are no longer used.
+
+### Schema generation rules
+
+| C# signature pattern | JSON Schema result | Example |
+|---|---|---|
+| Non-nullable value type (`int prNumber`) | Required parameter | `"prNumber": { "type": "integer" }` in `required` array |
+| Non-nullable reference type (`string path`) | Required parameter | `"path": { "type": "string" }` in `required` array |
+| Nullable with default (`int? prNumber = null`) | Optional parameter | `"prNumber": { "type": "integer" }` — **not** in `required` |
+| Nullable with default (`string? scope = null`) | Optional parameter | `"scope": { "type": "string" }` — **not** in `required` |
+| `[Description("...")]` on parameter | `"description"` field | `"prNumber": { "type": "integer", "description": "The PR number/ID" }` |
+| `CancellationToken` parameter | **Not exposed** | Auto-injected by SDK, invisible in schema |
+| `@ref` (C# keyword escape) | `"ref"` in JSON | C# `string @ref` → schema property `"ref"` |
+
+### Example: auto-generated schema for `get_file_content_at_ref`
+
+C# signature:
+```csharp
+[McpServerTool(Name = "get_file_content_at_ref")]
+public async Task<string> ExecuteAsync(
+    [Description("The repository-relative path of the file")] string path,
+    [Description("The Git ref to fetch the file at: a commit SHA, branch, or tag")] string @ref,
+    CancellationToken cancellationToken = default)
+```
+
+Auto-generated JSON Schema:
+```json
+{
+  "name": "get_file_content_at_ref",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "The repository-relative path of the file" },
+      "ref": { "type": "string", "description": "The Git ref to fetch the file at: a commit SHA, branch, or tag" }
+    },
+    "required": ["path", "ref"]
+  }
+}
+```
+
+> **Migration note:** Previously, each tool handler implemented a `GetToolDefinition()` method that returned a hand-crafted `Tool` object with the schema. Now the SDK infers the schema from the method signature. The contract is equivalent, but the source of truth is the C# method signature rather than a manual JSON definition.
+
+## 4. Tool Contracts
+
+### 4.1 `get_pr_metadata`
 
 #### Input
 
-| Parameter | Type | Required | Description |
+Auto-generated from `GetPullRequestMetadataToolHandler.ExecuteAsync` signature.
+
+| Parameter | C# Type | Required | Description |
 |---|---|---|---|
-| `prNumber` | integer | ✅ | PR number/ID |
+| `prNumber` | `int` | ✅ | The Pull Request number/ID to retrieve metadata for |
 
 #### Output — `PullRequestMetadataResult`
 
@@ -86,17 +188,19 @@ Returned when: unknown method, malformed request. Uses standard JSON-RPC error c
 
 ---
 
-### 3.2 `get_pr_files`
+### 4.2 `get_pr_files`
 
 #### Input
 
-| Parameter | Type | Required | Description |
+Auto-generated from `GetPullRequestFilesToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
+
+| Parameter | C# Type | Required | Description |
 |---|---|---|---|
-| `prNumber` | integer | ✅ | PR number/ID |
-| `modelName` | string | ❌ | Optional model name to resolve context window size |
-| `maxTokens` | integer | ❌ | Optional explicit context window size in tokens |
-| `pageReference` | string | ❌ | Opaque page reference from a previous response (Feature 004). When provided, `prNumber` becomes optional. Mutually exclusive with `pageNumber`. |
-| `pageNumber` | integer | ❌ | Page number for direct access (Feature 004). Mutually exclusive with `pageReference`. |
+| `prNumber` | `int?` | ❌ | The Pull Request number/ID to retrieve the file list for |
+| `modelName` | `string?` | ❌ | Optional model name (e.g. 'Claude Sonnet') to resolve context window size |
+| `maxTokens` | `int?` | ❌ | Optional explicit context window size in tokens |
+| `pageReference` | `string?` | ❌ | Opaque page reference from a previous response. Encodes all context needed to re-derive the page. |
+| `pageNumber` | `int?` | ❌ | Page number for direct access (requires original params + budget) |
 
 > **Feature 004 note:** `prNumber` is **optional** when `pageReference` is provided (the page reference encodes the original request parameters). `pageReference` and `pageNumber` are mutually exclusive.
 
@@ -166,17 +270,19 @@ When paginated (Feature 004), the response includes additional top-level fields:
 
 ---
 
-### 3.3 `get_pr_diff`
+### 4.3 `get_pr_diff`
 
 #### Input
 
-| Parameter | Type | Required | Description |
+Auto-generated from `GetPullRequestDiffToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
+
+| Parameter | C# Type | Required | Description |
 |---|---|---|---|
-| `prNumber` | integer | ✅ | PR number/ID |
-| `modelName` | string | ❌ | Optional model name to resolve context window size |
-| `maxTokens` | integer | ❌ | Optional explicit context window size in tokens |
-| `pageReference` | string | ❌ | Opaque page reference from a previous response (Feature 004). When provided, `prNumber` becomes optional. Mutually exclusive with `pageNumber`. |
-| `pageNumber` | integer | ❌ | Page number for direct access (Feature 004). Mutually exclusive with `pageReference`. |
+| `prNumber` | `int?` | ❌ | The Pull Request number/ID to retrieve the diff for |
+| `modelName` | `string?` | ❌ | Optional model name (e.g. 'Claude Sonnet') to resolve context window size |
+| `maxTokens` | `int?` | ❌ | Optional explicit context window size in tokens |
+| `pageReference` | `string?` | ❌ | Opaque page reference from a previous response. Encodes all context needed to re-derive the page. |
+| `pageNumber` | `int?` | ❌ | Page number for direct access (requires original params + budget) |
 
 > **Feature 004 note:** `prNumber` is **optional** when `pageReference` is provided (the page reference encodes the original request parameters). `pageReference` and `pageNumber` are mutually exclusive.
 
@@ -250,14 +356,16 @@ When paginated (Feature 004), the response includes additional top-level fields:
 
 ---
 
-### 3.4 `get_file_diff`
+### 4.4 `get_file_diff`
 
 #### Input
 
-| Parameter | Type | Required | Description |
+Auto-generated from `GetFileDiffToolHandler.ExecuteAsync` signature. Both parameters are non-nullable, making them required.
+
+| Parameter | C# Type | Required | Description |
 |---|---|---|---|
-| `prNumber` | integer | ✅ | PR number/ID |
-| `path` | string | ✅ | Repository-relative file path |
+| `prNumber` | `int` | ✅ | The Pull Request number/ID |
+| `path` | `string` | ✅ | Repository-relative file path |
 
 #### Output
 
@@ -265,14 +373,16 @@ Same `StructuredDiffResult` shape. `files` array contains **exactly 1 element** 
 
 ---
 
-### 3.5 `get_file_content_at_ref`
+### 4.5 `get_file_content_at_ref`
 
 #### Input
 
-| Parameter | Type | Required | Description |
+Auto-generated from `GetFileContentAtRefToolHandler.ExecuteAsync` signature. Both parameters are non-nullable, making them required. Note: `@ref` (C# keyword escape) maps to `ref` in the JSON schema.
+
+| Parameter | C# Type | Required | Description |
 |---|---|---|---|
-| `path` | string | ✅ | Repository-relative file path |
-| `ref` | string | ✅ | Commit SHA, branch name, or tag |
+| `path` | `string` | ✅ | The repository-relative path of the file |
+| `ref` | `string` | ✅ | The Git ref to fetch the file at: a commit SHA, branch name, or tag |
 
 #### Output — `FileContentAtRefResult`
 
@@ -295,17 +405,19 @@ Same `StructuredDiffResult` shape. `files` array contains **exactly 1 element** 
 
 ---
 
-### 3.6 `get_local_files`
+### 4.6 `get_local_files`
 
 #### Input
 
-| Parameter | Type | Required | Default | Description |
+Auto-generated from `GetLocalChangesFilesToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
+
+| Parameter | C# Type | Required | Default | Description |
 |---|---|---|---|---|
-| `scope` | string | no | `"working-tree"` | `"working-tree"`, `"staged"`, or any branch/ref name |
-| `modelName` | string | no | — | Optional model name to resolve context window size |
-| `maxTokens` | integer | no | — | Optional explicit context window size in tokens |
-| `pageReference` | string | no | — | Opaque page reference from a previous response (Feature 004). Mutually exclusive with `pageNumber`. |
-| `pageNumber` | integer | no | — | Page number for direct access (Feature 004). Mutually exclusive with `pageReference`. |
+| `scope` | `string?` | ❌ | `null` (resolved to `"working-tree"`) | Scope of local changes: `"working-tree"`, `"staged"`, or any branch/ref name |
+| `modelName` | `string?` | ❌ | `null` | Optional model name to resolve context window size |
+| `maxTokens` | `int?` | ❌ | `null` | Optional explicit context window size in tokens |
+| `pageReference` | `string?` | ❌ | `null` | Opaque page reference from a previous response. Mutually exclusive with `pageNumber`. |
+| `pageNumber` | `int?` | ❌ | `null` | Page number for direct access. Mutually exclusive with `pageReference`. |
 
 #### Output — `LocalReviewFilesResult`
 
@@ -360,16 +472,18 @@ When paginated (Feature 004), the response includes an additional top-level fiel
 
 ---
 
-### 3.7 `get_local_file_diff`
+### 4.7 `get_local_file_diff`
 
 #### Input
 
-| Parameter | Type | Required | Default | Description |
+Auto-generated from `GetLocalFileDiffToolHandler.ExecuteAsync` signature.
+
+| Parameter | C# Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | string | ✅ | — | Repository-relative file path |
-| `scope` | string | no | `"working-tree"` | Same scope values as `get_local_files` |
-| `modelName` | string | no | — | Optional model name to resolve context window size |
-| `maxTokens` | integer | no | — | Optional explicit context window size in tokens |
+| `path` | `string` | ✅ | — | Repository-relative file path |
+| `scope` | `string?` | ❌ | `null` (resolved to `"working-tree"`) | Same scope values as `get_local_files` |
+| `modelName` | `string?` | ❌ | `null` | Optional model name to resolve context window size |
+| `maxTokens` | `int?` | ❌ | `null` | Optional explicit context window size in tokens |
 
 #### Output
 
@@ -377,7 +491,7 @@ Same `StructuredDiffResult` shape with `manifest`. `prNumber` is `null` (omitted
 
 ---
 
-## 4. Shared DTO Reference
+## 5. Shared DTO Reference
 
 | DTO | Used by | Fields |
 |---|---|---|
@@ -399,7 +513,7 @@ Same `StructuredDiffResult` shape with `manifest`. `prNumber` is `null` (omitted
 | **PaginationMetadataResult** | `get_pr_diff`, `get_pr_files`, `get_local_files` (Feature 004) | `currentPage` (int), `totalPages` (int), `hasMore` (bool), `currentPageReference` (string), `nextPageReference`? (string) |
 | **StalenessWarningResult** | `get_pr_diff`, `get_pr_files` (Feature 004) | `message` (string), `originalFingerprint` (string), `currentFingerprint` (string) |
 
-## 5. Enum & Constant Values
+## 6. Enum & Constant Values
 
 | Value set | Values | Source |
 |---|---|---|

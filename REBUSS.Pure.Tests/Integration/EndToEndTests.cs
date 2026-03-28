@@ -1,22 +1,21 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
 using NSubstitute;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
-using REBUSS.Pure.Mcp;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools;
-using Services = REBUSS.Pure.Services;
-using System.Text;
 using System.Text.Json;
 using REBUSS.Pure.Services.Pagination;
 
 namespace REBUSS.Pure.Tests.Integration;
 
 /// <summary>
-/// End-to-end tests: JSON-RPC request → McpServer → real handler → mocked diff provider → JSON-RPC response.
+/// Integration tests: real handler → mocked diff provider → structured JSON result.
+/// Validates the full handler pipeline including DI construction, serialization, and error handling.
 /// </summary>
 public class EndToEndTests
 {
@@ -35,7 +34,7 @@ public class EndToEndTests
             .Returns(new FileClassification { Category = FileCategory.Source, Extension = ".cs", IsBinary = false, IsGenerated = false, IsTestFile = false, ReviewPriority = "high" });
     }
 
-    private McpServer BuildServer(Stream input, Stream output)
+    private GetPullRequestDiffToolHandler BuildHandler()
     {
         var services = new ServiceCollection();
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.None));
@@ -46,27 +45,9 @@ public class EndToEndTests
         services.AddSingleton(_fileClassifier);
         services.AddSingleton<IPageAllocator, PageAllocator>();
         services.AddSingleton<IPageReferenceCodec, PageReferenceCodec>();
-        services.AddSingleton<IMcpToolHandler, GetPullRequestDiffToolHandler>();
-        services.AddSingleton(sp =>
-            new McpServer(
-                sp.GetRequiredService<ILogger<McpServer>>(),
-                sp.GetRequiredService<IEnumerable<IMcpToolHandler>>(),
-                input,
-                output));
+        services.AddSingleton<GetPullRequestDiffToolHandler>();
 
-        return services.BuildServiceProvider().GetRequiredService<McpServer>();
-    }
-
-    private async Task<JsonDocument> SendAsync(string requestJson)
-    {
-        using var input = new MemoryStream(Encoding.UTF8.GetBytes(requestJson + "\n"));
-        using var output = new MemoryStream();
-
-        var server = BuildServer(input, output);
-        await server.RunAsync(CancellationToken.None);
-
-        output.Position = 0;
-        return JsonDocument.Parse(new StreamReader(output).ReadToEnd().Trim());
+        return services.BuildServiceProvider().GetRequiredService<GetPullRequestDiffToolHandler>();
     }
 
     [Fact]
@@ -104,21 +85,10 @@ public class EndToEndTests
                 }
             });
 
-        var request = JsonSerializer.Serialize(new
-        {
-            jsonrpc = "2.0",
-            id = "e2e-1",
-            method = "tools/call",
-            @params = new { name = "get_pr_diff", arguments = new { prNumber = 42 } }
-        });
+        var handler = BuildHandler();
+        var json = await handler.ExecuteAsync(prNumber: 42);
 
-        var doc = await SendAsync(request);
-        var result = doc.RootElement.GetProperty("result");
-
-        Assert.False(result.GetProperty("isError").GetBoolean());
-
-        var innerJson = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        var structured = JsonDocument.Parse(innerJson).RootElement;
+        var structured = JsonDocument.Parse(json).RootElement;
 
         Assert.Equal(42, structured.GetProperty("prNumber").GetInt32());
         Assert.True(structured.TryGetProperty("files", out var files));
@@ -130,53 +100,17 @@ public class EndToEndTests
     }
 
     [Fact]
-    public async Task FullPipeline_PrNotFound_ReturnsToolError()
+    public async Task FullPipeline_PrNotFound_ThrowsMcpException()
     {
         _diffProvider
             .GetDiffAsync(999, Arg.Any<CancellationToken>())
             .Returns<PullRequestDiff>(x => throw new PullRequestNotFoundException("PR 999 not found"));
 
-        var request = JsonSerializer.Serialize(new
-        {
-            jsonrpc = "2.0",
-            id = "e2e-3",
-            method = "tools/call",
-            @params = new { name = "get_pr_diff", arguments = new { prNumber = 999 } }
-        });
+        var handler = BuildHandler();
 
-        var doc = await SendAsync(request);
-        var result = doc.RootElement.GetProperty("result");
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            handler.ExecuteAsync(prNumber: 999));
 
-        Assert.True(result.GetProperty("isError").GetBoolean());
-        Assert.Contains("not found", result.GetProperty("content")[0].GetProperty("text").GetString());
-    }
-
-    [Fact]
-    public async Task FullPipeline_InitializeThenToolsList_ReturnsToolWithSchema()
-    {
-        var requests =
-            JsonSerializer.Serialize(new { jsonrpc = "2.0", id = "1", method = "initialize", @params = new { } }) + "\n" +
-            JsonSerializer.Serialize(new { jsonrpc = "2.0", id = "2", method = "tools/list" }) + "\n";
-
-        using var input = new MemoryStream(Encoding.UTF8.GetBytes(requests));
-        using var output = new MemoryStream();
-
-        var server = BuildServer(input, output);
-        await server.RunAsync(CancellationToken.None);
-
-        output.Position = 0;
-        var lines = new StreamReader(output).ReadToEnd()
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
-        Assert.Equal(2, lines.Length);
-
-        // Verify tools/list response has schema from the real handler
-        var toolsDoc = JsonDocument.Parse(lines[1]);
-        var tool = toolsDoc.RootElement.GetProperty("result").GetProperty("tools")[0];
-        Assert.Equal("get_pr_diff", tool.GetProperty("name").GetString());
-
-        var props = tool.GetProperty("inputSchema").GetProperty("properties");
-        Assert.True(props.TryGetProperty("prNumber", out _));
-        Assert.False(props.TryGetProperty("format", out _));
+        Assert.Contains("not found", ex.Message);
     }
 }

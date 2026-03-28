@@ -1,5 +1,6 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
@@ -67,10 +68,9 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles(2));
 
-        var result = await _handler.ExecuteAsync(null);
+        var text = await _handler.ExecuteAsync();
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.Equal("/repo", doc.RootElement.GetProperty("repositoryRoot").GetString());
         Assert.Equal("working-tree", doc.RootElement.GetProperty("scope").GetString());
         Assert.Equal("feature/x", doc.RootElement.GetProperty("currentBranch").GetString());
@@ -84,7 +84,7 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles());
 
-        await _handler.ExecuteAsync(null);
+        await _handler.ExecuteAsync();
 
         await _reviewProvider.Received(1).GetFilesAsync(
             Arg.Is<LocalReviewScope>(s => s.Kind == LocalReviewScopeKind.WorkingTree),
@@ -97,8 +97,7 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles());
 
-        var args = new Dictionary<string, object> { ["scope"] = "staged" };
-        await _handler.ExecuteAsync(args);
+        await _handler.ExecuteAsync(scope: "staged");
 
         await _reviewProvider.Received(1).GetFilesAsync(
             Arg.Is<LocalReviewScope>(s => s.Kind == LocalReviewScopeKind.Staged),
@@ -111,25 +110,10 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles());
 
-        var args = new Dictionary<string, object> { ["scope"] = "main" };
-        await _handler.ExecuteAsync(args);
+        await _handler.ExecuteAsync(scope: "main");
 
         await _reviewProvider.Received(1).GetFilesAsync(
             Arg.Is<LocalReviewScope>(s => s.Kind == LocalReviewScopeKind.BranchDiff && s.BaseBranch == "main"),
-            Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_HandlesScopeAsJsonElement()
-    {
-        _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(SampleFiles());
-
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>("""{"scope":"staged"}""")!;
-        await _handler.ExecuteAsync(json);
-
-        await _reviewProvider.Received(1).GetFilesAsync(
-            Arg.Is<LocalReviewScope>(s => s.Kind == LocalReviewScopeKind.Staged),
             Arg.Any<CancellationToken>());
     }
 
@@ -139,9 +123,9 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles(3));
 
-        var result = await _handler.ExecuteAsync(null);
+        var text = await _handler.ExecuteAsync();
 
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         var summary = doc.RootElement.GetProperty("summary");
         Assert.Equal(3, summary.GetProperty("sourceFiles").GetInt32());
     }
@@ -149,69 +133,36 @@ public class GetLocalChangesFilesToolHandlerTests
     // --- Error cases ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenRepositoryNotFound()
+    public async Task ExecuteAsync_ThrowsError_WhenRepositoryNotFound()
     {
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new LocalRepositoryNotFoundException("No repo found"));
 
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("Repository not found", result.Content[0].Text);
+        Assert.Contains("Repository not found", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsError_OnUnexpectedException()
     {
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("boom"));
 
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("boom", result.Content[0].Text);
+        Assert.Contains("boom", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenGitCommandFails()
+    public async Task ExecuteAsync_ThrowsError_WhenGitCommandFails()
     {
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new GitCommandException(128, "fatal: not a git repository"));
 
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("Git command failed", result.Content[0].Text);
-    }
-
-    // --- Tool definition ---
-
-    [Fact]
-    public void GetToolDefinition_HasCorrectName()
-    {
-        Assert.Equal("get_local_files", _handler.ToolName);
-    }
-
-    [Fact]
-    public void GetToolDefinition_HasScopeProperty()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.True(def.InputSchema.Properties.ContainsKey("scope"));
-    }
-
-    [Fact]
-    public void GetToolDefinition_ScopeIsNotRequired()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.DoesNotContain("scope", def.InputSchema.Required!);
-    }
-
-    [Fact]
-    public void GetToolDefinition_HasPackingParameters()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.True(def.InputSchema.Properties.ContainsKey("modelName"));
-        Assert.True(def.InputSchema.Properties.ContainsKey("maxTokens"));
+        Assert.Contains("Git command failed", ex.Message);
     }
 
     // --- Packing integration ---
@@ -222,10 +173,9 @@ public class GetLocalChangesFilesToolHandlerTests
         _reviewProvider.GetFilesAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleFiles(2));
 
-        var result = await _handler.ExecuteAsync(null);
+        var text = await _handler.ExecuteAsync();
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         Assert.True(doc.RootElement.TryGetProperty("manifest", out var manifest));
         Assert.True(manifest.TryGetProperty("summary", out var summary));
         Assert.Equal(2, summary.GetProperty("totalItems").GetInt32());

@@ -13,9 +13,13 @@ a **validation checklist**, and **common pitfalls**. Templates use `{Name}` plac
 
 ## 1. Add a New MCP Tool
 
+> Uses the **ModelContextProtocol SDK v1.2.0** attribute-based tool pattern.
+> The old `IMcpToolHandler` interface has been removed.
+
 ### Reference implementations
-- **Complex (PR provider):** `GetPullRequestDiffToolHandler.cs` — required int param, domain mapping, custom exception handling
-- **Simple (local provider):** `GetLocalChangesFilesToolHandler.cs` — optional string param with default
+- **Complex (PR provider, pagination):** `GetPullRequestDiffToolHandler.cs` — required/optional params, domain exception mapping, pagination support
+- **Simple (single file):** `GetFileDiffToolHandler.cs` — required typed params (`int`, `string`), minimal dependencies
+- **Local provider:** `GetLocalChangesFilesToolHandler.cs` — optional string param with default, local git operations
 
 ### Step 1: Output model — `REBUSS.Pure/Tools/Models/{Name}Result.cs`
 
@@ -35,7 +39,15 @@ public class {Name}Result
 Key structural elements (study reference for full pattern):
 
 ```csharp
-public class {Name}ToolHandler : IMcpToolHandler
+using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
+
+[McpServerToolType]
+public class {Name}ToolHandler
 {
     private readonly I{Provider} _{provider};
     private readonly ILogger<{Name}ToolHandler> _logger;
@@ -47,78 +59,142 @@ public class {Name}ToolHandler : IMcpToolHandler
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public string ToolName => "get_{snake_name}";
-
-    public McpTool GetToolDefinition() => new()
+    public {Name}ToolHandler(I{Provider} {provider}, ILogger<{Name}ToolHandler> logger)
     {
-        Name = ToolName,
-        Description = "...",
-        InputSchema = new ToolInputSchema
-        {
-            Type = "object",
-            Properties = new Dictionary<string, ToolProperty>
-            {
-                ["paramName"] = new() { Type = "integer", Description = "..." }
-            },
-            Required = new List<string> { "paramName" }
-        }
-    };
+        _{provider} = {provider};
+        _logger = logger;
+    }
 
-    // ExecuteAsync: try/catch -> validate -> call provider -> map -> serialize -> ToolResult
-    // Catch domain exceptions (PullRequestNotFoundException etc.) -> CreateErrorResult
-    // Catch generic Exception -> CreateErrorResult
+    [McpServerTool(Name = "get_{snake_name}"), Description("Tool description here")]
+    public async Task<string> ExecuteAsync(
+        [Description("Required param description")] int requiredParam,
+        [Description("Optional param description")] string? optionalParam = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Validation
+            if (requiredParam <= 0)
+                throw new McpException("requiredParam must be greater than 0");
+
+            // Business logic
+            var result = await _{provider}.GetDataAsync(requiredParam, cancellationToken);
+
+            // Map to output DTO and serialize
+            var output = new {Name}Result { /* mapping */ };
+            return JsonSerializer.Serialize(output, JsonOptions);
+        }
+        catch ({DomainException} ex)
+        {
+            _logger.LogWarning(ex, "[get_{snake_name}] Domain error");
+            throw new McpException($"Domain error: {ex.Message}");
+        }
+        catch (McpException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[get_{snake_name}] Unexpected error");
+            throw new McpException($"Error in get_{snake_name}: {ex.Message}");
+        }
+    }
 }
 ```
 
-**Critical: integer input extraction** (MCP sends `JsonElement`, not CLR types):
+**Key SDK conventions:**
+- `[McpServerToolType]` on the class — marks it for auto-discovery
+- `[McpServerTool(Name = "...")]` on the method — defines the tool name
+- `[Description("...")]` on the method — becomes the tool description in `tools/list`
+- `[Description("...")]` on each parameter — populates `inputSchema` descriptions
+- **Non-nullable** parameters → `required` in the generated `inputSchema`
+- **Nullable** parameters with defaults → optional in `inputSchema`
+- Return `Task<string>` — SDK wraps the string as `TextContent` in the response
+- `throw new McpException("message")` — SDK sets `isError=true` on the response
+- For C# keywords as parameter names (e.g., `ref`), use `@ref` in C#
+
+### Step 3: DI — auto-discovered (no manual registration needed)
+
+`WithToolsFromAssembly()` in `Program.cs` discovers all `[McpServerToolType]` classes
+automatically at startup. **No DI registration line is needed for tool handlers.**
+
+Register any new business services the handler depends on in `Program.ConfigureBusinessServices()`:
 
 ```csharp
-prNumber = obj is JsonElement je ? je.GetInt32() : Convert.ToInt32(obj);
-```
-
-**String input extraction:**
-
-```csharp
-return obj is JsonElement je ? je.GetString() : obj?.ToString();
-```
-
-### Step 3: DI — `Program.ConfigureServices`
-
-```csharp
-services.AddSingleton<IMcpToolHandler, {Name}ToolHandler>();
+services.AddSingleton<I{NewService}, {NewService}>();
 ```
 
 ### Step 4: Tests — `REBUSS.Pure.Tests/Tools/{Name}ToolHandlerTests.cs`
 
-Pattern (see `GetPullRequestDiffToolHandlerTests.cs` for full example):
+Pattern (see `GetLocalChangesFilesToolHandlerTests.cs` for full example):
 
 ```csharp
+using ModelContextProtocol;
+using NSubstitute;
+using NSubstitute.ExceptionExtensions;
+
 private readonly I{Provider} _provider = Substitute.For<I{Provider}>();
 private readonly {Name}ToolHandler _handler;
 
-public {Name}ToolHandlerTests() =>
-    _handler = new(_{provider}, NullLogger<{Name}ToolHandler>.Instance);
+public {Name}ToolHandlerTests()
+{
+    _handler = new {Name}ToolHandler(
+        _provider,
+        NullLogger<{Name}ToolHandler>.Instance);
+}
 
-// Required tests: happy path (JSON structure), null args, missing param,
-// invalid param type, JsonElement input, domain exception, generic exception
+// Required tests:
+// - Happy path: call ExecuteAsync with valid args, parse returned JSON, assert structure
+// - Parameter defaults: verify default behavior when optional params omitted
+// - Validation: invalid param values throw McpException
+// - Domain exceptions: provider throws domain exception → McpException with message
+// - Unexpected exceptions: provider throws generic Exception → McpException
+```
+
+**Test assertions use direct method calls** (no `Dictionary<string, object>` arguments):
+
+```csharp
+[Fact]
+public async Task ExecuteAsync_ReturnsStructuredJson()
+{
+    _provider.GetDataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        .Returns(sampleData);
+
+    var text = await _handler.ExecuteAsync(requiredParam: 42);
+
+    var doc = JsonDocument.Parse(text);
+    Assert.Equal("expected", doc.RootElement.GetProperty("fieldName").GetString());
+}
+
+[Fact]
+public async Task ExecuteAsync_ThrowsMcpException_OnDomainError()
+{
+    _provider.GetDataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        .ThrowsAsync(new {DomainException}("not found"));
+
+    var ex = await Assert.ThrowsAsync<McpException>(
+        () => _handler.ExecuteAsync(requiredParam: 1));
+    Assert.Contains("not found", ex.Message);
+}
 ```
 
 ### Step 5: Smoke test — add to `ExpectedTools` in `McpServerSmokeTests.cs`
 
 ### Validation checklist
 - [ ] Builds, all tests pass
+- [ ] `[McpServerToolType]` on handler class
+- [ ] `[McpServerTool(Name = "...")]` and `[Description]` on `ExecuteAsync` method
+- [ ] `[Description]` on every parameter
 - [ ] `[JsonPropertyName]` on every DTO property
-- [ ] `JsonElement` handling in all `TryExtract*` methods
-- [ ] `CancellationToken` propagated to all provider calls
+- [ ] `CancellationToken` propagated to all async calls
+- [ ] Error handling: domain exceptions → `McpException`, re-throw `McpException`, catch-all → `McpException`
 - [ ] Tool appears in `tools/list` (smoke test)
 - [ ] `CodebaseUnderstanding.md` updated
 
 ### Common pitfalls
-- **`JsonElement` cast:** `(int)arguments["prNumber"]` throws. Use `je.GetInt32()`.
+- **Missing `[McpServerToolType]`:** class compiles but is never discovered — tool won't appear in `tools/list`.
 - **Missing `[JsonPropertyName]`:** serializes as PascalCase, breaking consumers.
 - **`Console.Out` usage:** breaks MCP stdio transport. Use `ILogger` (routes to stderr).
-- **Forgot DI registration:** handler compiles but never appears in `tools/list`.
 - **Stale smoke test:** `ExpectedTools` array not updated causes failure.
+- **Returning error JSON instead of throwing:** use `throw new McpException(...)` — SDK handles `isError=true`.
+- **Non-nullable param without validation:** SDK enforces `required` in schema, but validate domain constraints (e.g., `> 0`) in the method body.
 
 ---
 
@@ -293,15 +369,13 @@ services.AddSingleton<IFileContentDataProvider>(sp => sp.GetRequiredService<{Pro
 
 ---
 
-## 9. Add a New MCP Method Handler
+## 9. MCP Method Handling (SDK-managed)
 
-### Reference: `InitializeMethodHandler.cs`, `ToolsCallMethodHandler.cs`
-
-### Steps
-1. Implement `IMcpMethodHandler`: `MethodName` string, `HandleAsync(JsonElement?, CancellationToken)`
-2. Register: `services.AddSingleton<IMcpMethodHandler, {Name}MethodHandler>()`
-3. `McpServer` auto-discovers via `IEnumerable<IMcpMethodHandler>`
-
-### Common pitfalls
-- **Duplicate `MethodName`:** `McpServer` builds dictionary at startup — duplicates throw.
-- **Wrong return type:** return value becomes `result` field of JSON-RPC response. Must match MCP spec.
+> **Note:** With SDK v1.2.0, MCP method dispatch (`initialize`, `tools/list`,
+> `tools/call`, etc.) is handled internally by the `ModelContextProtocol` SDK.
+> The old `IMcpMethodHandler` interface and custom `McpServer` dispatcher have
+> been removed. There is no need to implement custom method handlers for
+> standard MCP protocol methods.
+>
+> If you need to customize server behavior, use the SDK's configuration options
+> in `Program.cs` (e.g., `AddMcpServer(options => { ... })`).

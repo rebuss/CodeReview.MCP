@@ -233,13 +233,13 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure\Tools\GetPullRequestDiffToolHandler.cs` | `get_pr_diff` — returns structured JSON with per-file hunks; F004 integration: dual F003/F004 paths, pageReference resume, staleness detection, pageNumber access; prNumber now optional when pageReference is provided | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `StructuredDiffResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
-| `REBUSS.Pure\Tools\GetFileDiffToolHandler.cs` | `get_file_diff` � returns structured JSON for a single file | `IPullRequestDataProvider`, `StructuredDiffResult` models |
-| `REBUSS.Pure\Tools\GetPullRequestMetadataToolHandler.cs` | `get_pr_metadata` � returns PR metadata JSON | `IPullRequestDataProvider`, `PullRequestMetadataResult` models |
-| `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `get_pr_files` — returns classified file list JSON; F004 integration: same pagination pattern as get_pr_diff; prNumber now optional when pageReference is provided | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `PullRequestFilesResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
-| `REBUSS.Pure\Tools\GetFileContentAtRefToolHandler.cs` | `get_file_content_at_ref` � returns file content JSON | `IFileContentDataProvider`, `FileContentAtRefResult` model |
-| `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `get_local_files` — lists locally changed files with classification; F004 integration: pagination support but no staleness (null fingerprint) | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `LocalReviewFilesResult` model, `PaginationMetadataResult` |
-| `REBUSS.Pure\Tools\GetLocalFileDiffToolHandler.cs` | `get_local_file_diff` � returns structured diff for a single local file | `ILocalReviewProvider`, `StructuredDiffResult` models |
+| `REBUSS.Pure\Tools\GetPullRequestDiffToolHandler.cs` | `[McpServerToolType]` `get_pr_diff` — returns structured JSON with per-file hunks; F004 integration: dual F003/F004 paths, pageReference resume, staleness detection, pageNumber access; prNumber now optional when pageReference is provided; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `StructuredDiffResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
+| `REBUSS.Pure\Tools\GetFileDiffToolHandler.cs` | `[McpServerToolType]` `get_file_diff` — returns structured JSON for a single file; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IPullRequestDataProvider`, `StructuredDiffResult` models |
+| `REBUSS.Pure\Tools\GetPullRequestMetadataToolHandler.cs` | `[McpServerToolType]` `get_pr_metadata` — returns PR metadata JSON; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IPullRequestDataProvider`, `PullRequestMetadataResult` models |
+| `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `[McpServerToolType]` `get_pr_files` — returns classified file list JSON; F004 integration: same pagination pattern as get_pr_diff; prNumber now optional when pageReference is provided; SDK attribute-based registration, throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `PullRequestFilesResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
+| `REBUSS.Pure\Tools\GetFileContentAtRefToolHandler.cs` | `[McpServerToolType]` `get_file_content_at_ref` — returns file content JSON; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IFileContentDataProvider`, `FileContentAtRefResult` model |
+| `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — lists locally changed files with classification; F004 integration: pagination support but no staleness (null fingerprint); SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `LocalReviewFilesResult` model, `PaginationMetadataResult` |
+| `REBUSS.Pure\Tools\GetLocalFileDiffToolHandler.cs` | `[McpServerToolType]` `get_local_file_diff` — returns structured diff for a single local file; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `ILocalReviewProvider`, `IResponsePacker`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `StructuredDiffResult` models |
 
 ### Tool output models (REBUSS.Pure\Tools\Models)
 
@@ -265,7 +265,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure\Mcp\IMcpMethodHandler.cs` | Interface: handles one JSON-RPC method |
 | `REBUSS.Pure\Mcp\IMcpToolHandler.cs` | Interface: MCP tool (definition + execution) |
 | `REBUSS.Pure\Mcp\McpWorkspaceRootProvider.cs` | Implementation of `IWorkspaceRootProvider` (from Core): resolves repo root from CLI `--repo` (highest priority), MCP roots, or `localRepoPath` config; guards against unexpanded variables; reads `LocalRepoPath` directly from `IConfiguration` to avoid circular dependency with `IPostConfigureOptions<AzureDevOpsOptions>` |
-| `REBUSS.Pure\Mcp\Handlers\InitializeMethodHandler.cs` | `initialize` method handler � extracts MCP roots, stores via `IWorkspaceRootProvider` |
+| `REBUSS.Pure\Mcp\Handlers\InitializeMethodHandler.cs` | `initialize` method handler — negotiates protocol version via `IMcpProtocolVersionNegotiator`, extracts MCP roots, stores via `IWorkspaceRootProvider` |
 | `REBUSS.Pure\Mcp\Handlers\ToolsListMethodHandler.cs` | `tools/list` method handler |
 | `REBUSS.Pure\Mcp\Handlers\ToolsCallMethodHandler.cs` | `tools/call` method handler � resolves tool by name, delegates |
 | `REBUSS.Pure\Mcp\IJsonRpcSerializer.cs` | Interface: JSON-RPC serialization |
@@ -273,6 +273,9 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure\Mcp\IJsonRpcTransport.cs` | Interface: read/write JSON-RPC messages |
 | `REBUSS.Pure\Mcp\StreamJsonRpcTransport.cs` | Newline-delimited stream transport |
 | `REBUSS.Pure\Mcp\McpMethodNotFoundException.cs` | Method not found exception |
+| `REBUSS.Pure\Mcp\McpProtocolVersionException.cs` | Protocol version negotiation failure exception |
+| `REBUSS.Pure\Mcp\IMcpProtocolVersionNegotiator.cs` | Interface: negotiates MCP protocol version between client and server |
+| `REBUSS.Pure\Mcp\McpProtocolVersionNegotiator.cs` | Default implementation: maintains supported version list, selects highest compatible version |
 
 ### MCP models (REBUSS.Pure\Mcp\Models)
 
@@ -289,7 +292,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure\Mcp\Models\ToolResult.cs` | Tool result: content items, isError |
 | `REBUSS.Pure\Mcp\Models\ContentItem.cs` | Content item: type, text |
 | `REBUSS.Pure\Mcp\Models\InitializeResult.cs` | Initialize result: protocol version, capabilities, server info |
-| `REBUSS.Pure\Mcp\Models\InitializeParams.cs` | Initialize params: roots list from MCP client |
+| `REBUSS.Pure\Mcp\Models\InitializeParams.cs` | Initialize params: protocol version and roots list from MCP client |
 | `REBUSS.Pure\Mcp\Models\McpRoot.cs` | MCP root: uri, name |
 | `REBUSS.Pure\Mcp\Models\ServerCapabilities.cs` | Server capabilities |
 | `REBUSS.Pure\Mcp\Models\ServerInfo.cs` | Server info: name, version |
@@ -375,12 +378,12 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubChainedAuthenticationProviderTests.cs` | `GitHubChainedAuthenticationProvider` — PAT precedence, cached tokens, GitHub CLI token acquisition and caching, expired token fallback, null expiry used as valid, `InvalidateCachedToken`, `BuildAuthRequiredMessage` |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliTokenProviderTests.cs` | `GitHubCliTokenProvider.ParseTokenResponse` — valid plain text, whitespace trimming, empty/null/whitespace returns null, `DefaultTokenLifetime` constant (24 hours) |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliProcessHelperTests.cs` | `GitHubCliProcessHelper.GetProcessStartArgs` — Windows `cmd.exe /c gh` wrapping, Linux direct `gh` invocation, custom `ghPath`; `TryFindGhCliOnWindows` |
-| `REBUSS.Pure.Tests\Tools\GetPullRequestDiffToolHandlerTests.cs` | `GetPullRequestDiffToolHandler` — structured JSON output, validation, exceptions; +15 F004 pagination tests (updated constructor with IPageAllocator, IPageReferenceCodec deps) |
-| `REBUSS.Pure.Tests\Tools\GetFileDiffToolHandlerTests.cs` | `GetFileDiffToolHandler` — structured JSON output, validation, schema, exceptions |
-| `REBUSS.Pure.Tests\Tools\GetPullRequestFilesToolHandlerTests.cs` | `GetPullRequestFilesToolHandler` (updated constructor with IPageAllocator, IPageReferenceCodec deps) |
-| `REBUSS.Pure.Tests\Tools\GetFileContentAtRefToolHandlerTests.cs` | `GetFileContentAtRefToolHandler` |
-| `REBUSS.Pure.Tests\Tools\GetLocalChangesFilesToolHandlerTests.cs` | `GetLocalChangesFilesToolHandler` — scope parsing, JSON output, error handling (updated constructor with IPageAllocator, IPageReferenceCodec deps) |
-| `REBUSS.Pure.Tests\Tools\GetLocalFileDiffToolHandlerTests.cs` | `GetLocalFileDiffToolHandler` — validation, scope routing, error handling, tool definition |
+| `REBUSS.Pure.Tests\Tools\GetPullRequestDiffToolHandlerTests.cs` | `GetPullRequestDiffToolHandler` — structured JSON output, validation (McpException), provider exceptions; +F004 pagination tests (pageReference, staleness, pageNumber, mutual exclusion) |
+| `REBUSS.Pure.Tests\Tools\GetFileDiffToolHandlerTests.cs` | `GetFileDiffToolHandler` — structured JSON output, validation (ArgumentException), provider exceptions (McpException) |
+| `REBUSS.Pure.Tests\Tools\GetPullRequestFilesToolHandlerTests.cs` | `GetPullRequestFilesToolHandler` — structured JSON output, validation (McpException), provider exceptions, packing manifest |
+| `REBUSS.Pure.Tests\Tools\GetFileContentAtRefToolHandlerTests.cs` | `GetFileContentAtRefToolHandler` — structured JSON output, validation (ArgumentException), provider exceptions (McpException) |
+| `REBUSS.Pure.Tests\Tools\GetLocalChangesFilesToolHandlerTests.cs` | `GetLocalChangesFilesToolHandler` — scope parsing, JSON output, error handling (McpException), packing manifest |
+| `REBUSS.Pure.Tests\Tools\GetLocalFileDiffToolHandlerTests.cs` | `GetLocalFileDiffToolHandler` — structured JSON output, validation (ArgumentException), scope routing, error handling (McpException), packing manifest |
 | `REBUSS.Pure.Tests\Services\LocalReview\LocalReviewScopeTests.cs` | `LocalReviewScope.Parse` — all scope kinds, ToString |
 | `REBUSS.Pure.Tests\Services\LocalReview\LocalGitClientParseTests.cs` | `LocalGitClient` porcelain/name-status parsing — via reflection on internal static methods |
 | `REBUSS.Pure.Tests\Services\LocalReview\LocalReviewProviderTests.cs` | `LocalReviewProvider` — files listing, status mapping, classification, file diff, skip reasons, exception cases |
@@ -393,9 +396,10 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Tests\Services\PageReferenceCodecTests.cs` | `PageReferenceCodec` (Feature 004) — 11 tests: round-trip encoding, null fingerprint, malformed input, safety |
 | `REBUSS.Pure.Tests\Services\PaginationOrchestratorTests.cs` | `PaginationOrchestrator` (Feature 004) — 18 tests: validation, page resolution, param matching, staleness detection, metadata building |
 | `REBUSS.Pure.Tests\Logging\FileLoggerProviderTests.cs` | `FileLoggerProvider` — daily rotation, file naming, write content, timestamp, retention/deletion, roll-over, non-log file safety |
-| `REBUSS.Pure.Tests\Integration\EndToEndTests.cs` | Full JSON-RPC pipeline: request → McpServer → handler → response |
+| `REBUSS.Pure.Tests\Integration\EndToEndTests.cs` | Integration: DI-constructed handler → mocked provider → structured JSON result; tests happy path and PR-not-found error |
 | `REBUSS.Pure.Tests\Mcp\McpServerTests.cs` | `McpServer` — initialize, tools/list, tools/call, unknown method, invalid JSON, empty lines, notifications |
-| `REBUSS.Pure.Tests\Mcp\InitializeMethodHandlerTests.cs` | `InitializeMethodHandler` — roots extraction, storage, edge cases |
+| `REBUSS.Pure.Tests\Mcp\InitializeMethodHandlerTests.cs` | `InitializeMethodHandler` — protocol version negotiation, roots extraction, storage, edge cases |
+| `REBUSS.Pure.Tests\Mcp\McpProtocolVersionNegotiatorTests.cs` | `McpProtocolVersionNegotiator` — exact match, downward negotiation, future/past versions, null/empty input |
 | `REBUSS.Pure.Tests\Mcp\McpWorkspaceRootProviderTests.cs` | `McpWorkspaceRootProvider` — URI conversion, repo root resolution, MCP roots, localRepoPath fallback, CLI `--repo` precedence |
 | `REBUSS.Pure.Tests\Cli\CliArgumentParserTests.cs` | `CliArgumentParser` — server mode, `--repo`, `--pat`, `--org`, `--project`, `--repository`, `init` command, combined args, edge cases |
 | `REBUSS.Pure.Tests\Cli\InitCommandTests.cs` | `InitCommand` — generates `mcp.json`, copies prompt and instruction files (always overwrites), error cases, subdirectory support, Azure DevOps CLI login, GitHub CLI login, PAT carry-over |
@@ -538,10 +542,14 @@ CliParseResult (+ Pat, Organization, Project, Repository)
   ? Program.RunCliCommandAsync [Pure]              (consumes: reads CommandName, dispatches to ICliCommand)
 
 McpRoot / InitializeParams
-  ? InitializeMethodHandler [Pure]                 (consumes: extracts roots from initialize request)
-  ? IWorkspaceRootProvider [Core]                  (stores: root URIs from MCP client)
-  ? McpWorkspaceRootProvider [Pure]                (resolves: repo root from CLI --repo, MCP roots, or localRepoPath)
-  ? ConfigurationResolver [AzureDevOps]            (consumes: workspace root for git detection)
+  → InitializeMethodHandler [Pure]                 (consumes: extracts protocolVersion + roots from initialize request)
+  → IWorkspaceRootProvider [Core]                  (stores: root URIs from MCP client)
+  → McpWorkspaceRootProvider [Pure]                (resolves: repo root from CLI --repo, MCP roots, or localRepoPath)
+  → ConfigurationResolver [AzureDevOps]            (consumes: workspace root for git detection)
+
+IMcpProtocolVersionNegotiator [Pure interface]
+  → McpProtocolVersionNegotiator [Pure]            (implements: maintains supported version list, selects highest compatible)
+  → InitializeMethodHandler [Pure]                 (consumes: negotiates version during initialize handshake)
 
 DetectedGitInfo
   ? GitRemoteDetector [AzureDevOps]                (produces via synchronous Detect())
@@ -717,24 +725,22 @@ switch (provider)
 }
 
 // MCP tool handlers
-services.AddSingleton<IMcpToolHandler, GetPullRequestDiffToolHandler>();
-services.AddSingleton<IMcpToolHandler, GetFileDiffToolHandler>();
-services.AddSingleton<IMcpToolHandler, GetPullRequestMetadataToolHandler>();
-services.AddSingleton<IMcpToolHandler, GetPullRequestFilesToolHandler>();
-services.AddSingleton<IMcpToolHandler, GetFileContentAtRefToolHandler>();
+// SDK-migrated handlers (registered via [McpServerToolType] attribute discovery):
+// GetPullRequestDiffToolHandler, GetPullRequestFilesToolHandler, GetLocalChangesFilesToolHandler,
+// GetFileDiffToolHandler, GetPullRequestMetadataToolHandler, GetFileContentAtRefToolHandler,
+// GetLocalFileDiffToolHandler
 
 // Local self-review pipeline
 services.AddSingleton<ILocalGitClient, LocalGitClient>();
 services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
-services.AddSingleton<IMcpToolHandler, GetLocalChangesFilesToolHandler>();
-services.AddSingleton<IMcpToolHandler, GetLocalFileDiffToolHandler>();
 
 // JSON-RPC infrastructure
 services.AddSingleton<IJsonRpcSerializer, SystemTextJsonSerializer>();
 services.AddSingleton<IJsonRpcTransport>(_ =>
     new StreamJsonRpcTransport(Console.OpenStandardInput(), Console.OpenStandardOutput()));
+services.AddSingleton<IMcpProtocolVersionNegotiator, McpProtocolVersionNegotiator>();
 
-// Method handlers � each handles one JSON-RPC method (OCP: add new methods without changing McpServer)
+// Method handlers
 services.AddSingleton<IMcpMethodHandler, InitializeMethodHandler>();
 services.AddSingleton<IMcpMethodHandler, ToolsListMethodHandler>();
 services.AddSingleton<IMcpMethodHandler, ToolsCallMethodHandler>();
