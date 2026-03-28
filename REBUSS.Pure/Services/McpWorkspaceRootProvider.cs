@@ -1,33 +1,40 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 
-namespace REBUSS.Pure.Mcp
+namespace REBUSS.Pure.Services
 {
     /// <summary>
     /// Resolves the workspace repository root path using (in priority order):
     /// <list type="number">
     ///   <item>CLI <c>--repo</c> argument (highest priority).</item>
-    ///   <item>MCP roots sent by the client during initialization.</item>
+    ///   <item>MCP roots fetched lazily from the SDK's <see cref="IMcpServer"/> via <c>RequestRootsAsync</c>.</item>
     ///   <item><c>LocalRepoPath</c> configuration fallback.</item>
     /// </list>
-    /// Resolution is lazy — it only happens when <see cref="ResolveRepositoryRoot"/> is called.
+    /// Resolution is lazy â€” it only happens when <see cref="ResolveRepositoryRoot"/> is called.
+    /// MCP roots are fetched once on first access and cached for subsequent calls.
     /// Reads <c>LocalRepoPath</c> directly from <see cref="IConfiguration"/> to avoid a
     /// circular dependency with <c>IPostConfigureOptions&lt;AzureDevOpsOptions&gt;</c>.
     /// </summary>
     public class McpWorkspaceRootProvider : IWorkspaceRootProvider
     {
         private readonly IConfiguration _configuration;
+        private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<McpWorkspaceRootProvider> _logger;
         private List<string> _rootUris = new();
         private string? _cliRepositoryPath;
+        private bool _rootsFetched;
         private readonly object _lock = new();
 
         public McpWorkspaceRootProvider(
             IConfiguration configuration,
+            IServiceProvider serviceProvider,
             ILogger<McpWorkspaceRootProvider> logger)
         {
             _configuration = configuration;
+            _serviceProvider = serviceProvider;
             _logger = logger;
         }
 
@@ -37,7 +44,7 @@ namespace REBUSS.Pure.Mcp
             {
                 _logger.LogWarning(
                     "CLI --repo value '{Path}' looks like an unexpanded variable (e.g. from VS Code on a non-VS Code client). " +
-                    "Ignoring it — MCP roots or localRepoPath will be used instead.", path);
+                    "Ignoring it â€” MCP roots or localRepoPath will be used instead.", path);
                 return;
             }
 
@@ -63,6 +70,7 @@ namespace REBUSS.Pure.Mcp
             lock (_lock)
             {
                 _rootUris = rootUris.ToList();
+                _rootsFetched = true;
             }
 
             _logger.LogDebug("MCP roots received: {RootCount} root(s)", rootUris.Count);
@@ -74,6 +82,8 @@ namespace REBUSS.Pure.Mcp
 
         public IReadOnlyList<string> GetRootUris()
         {
+            EnsureRootsFetched();
+
             lock (_lock)
             {
                 return _rootUris.AsReadOnly();
@@ -108,8 +118,15 @@ namespace REBUSS.Pure.Mcp
                 }
             }
 
-            // 2. Try MCP roots
-            var rootUris = GetRootUris();
+            // 2. Try MCP roots (lazily fetched from SDK on first access)
+            EnsureRootsFetched();
+
+            List<string> rootUris;
+            lock (_lock)
+            {
+                rootUris = _rootUris.ToList();
+            }
+
             foreach (var uri in rootUris)
             {
                 var localPath = ConvertUriToLocalPath(uri);
@@ -157,6 +174,55 @@ namespace REBUSS.Pure.Mcp
 
             _logger.LogDebug("Repository root resolution failed: no CLI --repo, MCP roots, or localRepoPath available");
             return null;
+        }
+
+        /// <summary>
+        /// Lazily fetches MCP roots from the SDK's <see cref="IMcpServer"/> on first access.
+        /// In CLI mode (no MCP server), this is a no-op.
+        /// </summary>
+        private void EnsureRootsFetched()
+        {
+            lock (_lock)
+            {
+                if (_rootsFetched)
+                    return;
+                _rootsFetched = true;
+            }
+
+            try
+            {
+                var mcpServer = _serviceProvider.GetService<McpServer>();
+                if (mcpServer is null)
+                {
+                    _logger.LogDebug("No IMcpServer available (CLI mode) â€” skipping MCP root resolution");
+                    return;
+                }
+
+                // RequestRootsAsync asks the client for its workspace roots.
+                // We block here because ResolveRepositoryRoot is synchronous and called
+                // from IPostConfigureOptions which is also synchronous. Console apps have
+                // no SynchronizationContext, so this is safe from deadlocks.
+                var result = Task.Run(async () => await mcpServer.RequestRootsAsync(new ModelContextProtocol.Protocol.ListRootsRequestParams())).GetAwaiter().GetResult();
+
+                var uris = result.Roots
+                    .Select(r => r.Uri.ToString())
+                    .ToList();
+
+                lock (_lock)
+                {
+                    _rootUris = uris;
+                }
+
+                _logger.LogDebug("MCP roots fetched via SDK: {RootCount} root(s)", uris.Count);
+                foreach (var uri in uris)
+                {
+                    _logger.LogDebug("  Root: {RootUri}", uri);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not fetch MCP roots from SDK (client may not support roots/list)");
+            }
         }
 
         internal static string? ConvertUriToLocalPath(string uri)

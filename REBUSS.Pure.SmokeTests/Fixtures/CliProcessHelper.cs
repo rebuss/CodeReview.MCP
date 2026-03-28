@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Runtime.Versioning;
 
 namespace REBUSS.Pure.SmokeTests.Fixtures;
 
@@ -167,6 +168,7 @@ public static class CliProcessHelper
         };
     }
 
+    [UnsupportedOSPlatform("windows")]
     private static Dictionary<string, string> BuildRestrictedPathEnvUnix()
     {
         var shadowBin = Path.Combine(

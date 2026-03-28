@@ -20,3 +20,4 @@ REBUSS.Pure.SmokeTests/obj/
 .github/agents/
 speckit*.md
 .specify/
+specs/

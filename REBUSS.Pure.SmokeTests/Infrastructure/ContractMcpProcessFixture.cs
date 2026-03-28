@@ -19,6 +19,7 @@ public sealed class ContractMcpProcessFixture : IAsyncLifetime
     private Task? _stderrDrainTask;
     private bool _initialized;
     private int _requestId;
+    private JsonDocument? _initializeResponse;
 
     private ContractMcpProcessFixture(string cliArgs)
     {
@@ -93,11 +94,21 @@ public sealed class ContractMcpProcessFixture : IAsyncLifetime
             catch { /* process exited */ }
         });
 
-        // Perform MCP handshake
-        var initResponse = await SendRawRequestAsync("initialize", new { });
+        // Perform MCP handshake (SDK requires proper initialize params + notifications/initialized)
+        var initResponse = await SendRawRequestAsync("initialize", new
+        {
+            protocolVersion = "2025-03-26",
+            capabilities = new { roots = new { listChanged = true } },
+            clientInfo = new { name = "REBUSS.Pure.SmokeTests", version = "1.0.0" }
+        });
         var result = initResponse.RootElement.GetProperty("result");
         if (!result.TryGetProperty("serverInfo", out _))
             throw new InvalidOperationException("MCP initialize handshake failed.");
+
+        _initializeResponse = initResponse;
+
+        // Send notifications/initialized (required by SDK before tools/list or tools/call)
+        await SendNotificationAsync("notifications/initialized");
 
         _initialized = true;
     }
@@ -161,17 +172,30 @@ public sealed class ContractMcpProcessFixture : IAsyncLifetime
 
     /// <summary>
     /// Returns the initialize response captured during <see cref="InitializeAsync"/>.
-    /// Re-sends the request (safe — MCP allows it).
     /// </summary>
-    public async Task<JsonDocument> SendInitializeAsync(TimeSpan? timeout = null)
+    public Task<JsonDocument> SendInitializeAsync(TimeSpan? timeout = null)
     {
-        return await SendRawRequestAsync("initialize", new { }, timeout);
+        if (_initializeResponse is null)
+            throw new InvalidOperationException("Fixture not yet initialized. Call InitializeAsync first.");
+        return Task.FromResult(_initializeResponse);
     }
 
     public string GetStdErr()
     {
         if (_stderrBuffer is null) return string.Empty;
         lock (_stderrBuffer) return _stderrBuffer.ToString();
+    }
+
+    private async Task SendNotificationAsync(string method, object? @params = null)
+    {
+        var notification = @params is not null
+            ? new { jsonrpc = "2.0", method, @params }
+            : (object)new { jsonrpc = "2.0", method };
+
+        var json = JsonSerializer.Serialize(notification);
+
+        await _process!.StandardInput.WriteLineAsync(json);
+        await _process.StandardInput.FlushAsync();
     }
 
     private async Task<JsonDocument> SendRawRequestAsync(

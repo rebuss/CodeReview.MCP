@@ -59,6 +59,7 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 | **Errors** | Custom exceptions (`PullRequestNotFoundException`, etc.) caught in tool handlers → `ToolResult { IsError = true }` |
 | **Logging** | `Microsoft.Extensions.Logging`; stderr via console provider; file via `FileLoggerProvider` (daily rotation, 3-day retention) |
 | **CLI output** | All user output to `Console.Error` — stdout is **reserved** for MCP JSON-RPC stdio transport |
+| **Child processes** | Must set `RedirectStandardInput = true` + `process.StandardInput.Close()` after `Start()` to prevent stdin handle inheritance deadlocks with SDK's stdio transport |
 
 ## 4. Testing Conventions
 

@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
 using REBUSS.Pure.AzureDevOps;
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.Cli;
@@ -9,13 +11,11 @@ using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Logging;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Handlers;
+using REBUSS.Pure.Services;
 using REBUSS.Pure.Services.ContextWindow;
 using REBUSS.Pure.Services.LocalReview;
 using ResponsePacking = REBUSS.Pure.Services.ResponsePacking;
 using Pagination = REBUSS.Pure.Services.Pagination;
-using REBUSS.Pure.Tools;
 
 namespace REBUSS.Pure
 {
@@ -80,27 +80,49 @@ namespace REBUSS.Pure
                     .AddInMemoryCollection(cliOverrides)
                     .Build();
 
-                var services = new ServiceCollection();
-                ConfigureServices(services, configuration);
-                await using var serviceProvider = services.BuildServiceProvider();
+                var builder = Host.CreateApplicationBuilder();
 
-                // Apply CLI --repo argument if provided
-                if (!string.IsNullOrWhiteSpace(parseResult.RepoPath))
+                // Replace the host's default configuration with our pre-built one
+                builder.Services.AddSingleton<IConfiguration>(configuration);
+
+                // Configure logging: all output to stderr (Constitution Principle II)
+                builder.Logging.ClearProviders();
+                builder.Logging.AddConsole(options =>
                 {
-                    var workspaceRootProvider = serviceProvider.GetRequiredService<IWorkspaceRootProvider>();
-                    workspaceRootProvider.SetCliRepositoryPath(parseResult.RepoPath);
-                }
+                    options.LogToStandardErrorThreshold = LogLevel.Trace;
+                });
+                builder.Logging.AddProvider(new FileLoggerProvider(GetLogDirectory()));
+                builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
-                var server = serviceProvider.GetRequiredService<McpServer>();
+                // Register business services (providers, algorithms, shared services)
+                ConfigureBusinessServices(builder.Services, configuration);
+
+                // Add MCP server with stdio transport and tool discovery
+                builder.Services
+                    .AddMcpServer(options =>
+                    {
+                        options.ServerInfo = new() { Name = "REBUSS.Pure", Version = "1.0.0" };
+                    })
+                    .WithStdioServerTransport()
+                    .WithToolsFromAssembly();
+
                 using var cts = new CancellationTokenSource();
-
                 Console.CancelKeyPress += (_, e) =>
                 {
                     e.Cancel = true;
                     cts.Cancel();
                 };
 
-                await server.RunAsync(cts.Token);
+                var app = builder.Build();
+
+                // Apply CLI --repo argument if provided
+                if (!string.IsNullOrWhiteSpace(parseResult.RepoPath))
+                {
+                    var workspaceRootProvider = app.Services.GetRequiredService<IWorkspaceRootProvider>();
+                    workspaceRootProvider.SetCliRepositoryPath(parseResult.RepoPath);
+                }
+
+                await app.RunAsync(cts.Token);
             }
             catch (Exception ex)
             {
@@ -110,6 +132,46 @@ namespace REBUSS.Pure
                 await Console.Error.WriteLineAsync(ex.StackTrace ?? string.Empty);
                 Environment.Exit(1);
             }
+        }
+
+        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration)
+        {
+            // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
+            services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
+
+            // Shared services (provider-agnostic)
+            services.AddSingleton<IDiffAlgorithm, LcsDiffAlgorithm>();
+            services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
+            services.AddSingleton<IFileClassifier, FileClassifier>();
+
+            // Context Window Awareness
+            services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
+            services.AddSingleton<IContextBudgetResolver, ContextBudgetResolver>();
+            services.AddSingleton<ITokenEstimator, TokenEstimator>();
+
+            // Response Packing
+            services.AddSingleton<IResponsePacker, ResponsePacking.ResponsePacker>();
+
+            // Deterministic Pagination (Feature 004)
+            services.AddSingleton<IPageAllocator, Pagination.PageAllocator>();
+            services.AddSingleton<IPageReferenceCodec, Pagination.PageReferenceCodec>();
+
+            // Provider selection: explicit config > auto-detection from git remote
+            var provider = DetectProvider(configuration);
+            switch (provider)
+            {
+                case "GitHub":
+                    services.AddGitHubProvider(configuration);
+                    break;
+                case "AzureDevOps":
+                default:
+                    services.AddAzureDevOpsProvider(configuration);
+                    break;
+            }
+
+            // Local self-review pipeline
+            services.AddSingleton<ILocalGitClient, LocalGitClient>();
+            services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
         }
 
         private static Dictionary<string, string?> BuildCliConfigOverrides(CliParseResult parseResult)
@@ -167,83 +229,6 @@ namespace REBUSS.Pure
             return null;
         }
 
-        private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
-        {
-            // Register IConfiguration so it can be injected directly (e.g. by McpWorkspaceRootProvider)
-            services.AddSingleton<IConfiguration>(configuration);
-
-            services.AddLogging(builder =>
-            {
-                builder.AddConsole(options =>
-                {
-                    options.LogToStandardErrorThreshold = LogLevel.Trace;
-                });
-                builder.AddProvider(new FileLoggerProvider(GetLogDirectory()));
-                builder.SetMinimumLevel(LogLevel.Debug);
-            });
-
-            // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
-            services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
-
-            // Shared services (provider-agnostic)
-            services.AddSingleton<IDiffAlgorithm, LcsDiffAlgorithm>();
-            services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
-            services.AddSingleton<IFileClassifier, FileClassifier>();
-
-            // Context Window Awareness
-            services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
-            services.AddSingleton<IContextBudgetResolver, ContextBudgetResolver>();
-            services.AddSingleton<ITokenEstimator, TokenEstimator>();
-
-            // Response Packing
-            services.AddSingleton<IResponsePacker, ResponsePacking.ResponsePacker>();
-
-            // Deterministic Pagination (Feature 004)
-            services.AddSingleton<IPageAllocator, Pagination.PageAllocator>();
-            services.AddSingleton<IPageReferenceCodec, Pagination.PageReferenceCodec>();
-
-            // Provider selection: explicit config > auto-detection from git remote
-            var provider = DetectProvider(configuration);
-            switch (provider)
-            {
-                case "GitHub":
-                    services.AddGitHubProvider(configuration);
-                    break;
-                case "AzureDevOps":
-                default:
-                    services.AddAzureDevOpsProvider(configuration);
-                    break;
-            }
-
-            services.AddSingleton<IMcpToolHandler, GetPullRequestDiffToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetFileDiffToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetPullRequestMetadataToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetPullRequestFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetFileContentAtRefToolHandler>();
-
-            // Local self-review pipeline
-            services.AddSingleton<ILocalGitClient, LocalGitClient>();
-            services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
-            services.AddSingleton<IMcpToolHandler, GetLocalChangesFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetLocalFileDiffToolHandler>();
-
-            // JSON-RPC infrastructure
-            services.AddSingleton<IJsonRpcSerializer, SystemTextJsonSerializer>();
-            services.AddSingleton<IJsonRpcTransport>(_ =>
-                new StreamJsonRpcTransport(Console.OpenStandardInput(), Console.OpenStandardOutput()));
-
-            // Method handlers — each handles one JSON-RPC method (OCP: add new methods without changing McpServer)
-            services.AddSingleton<IMcpMethodHandler, InitializeMethodHandler>();
-            services.AddSingleton<IMcpMethodHandler, ToolsListMethodHandler>();
-            services.AddSingleton<IMcpMethodHandler, ToolsCallMethodHandler>();
-
-            services.AddSingleton<McpServer>(sp => new McpServer(
-                sp.GetRequiredService<ILogger<McpServer>>(),
-                sp.GetRequiredService<IEnumerable<IMcpMethodHandler>>(),
-                sp.GetRequiredService<IJsonRpcTransport>(),
-                sp.GetRequiredService<IJsonRpcSerializer>()));
-        }
-
         /// <summary>
         /// Determines the SCM provider to use based on configuration, then git remote auto-detection.
         /// Priority: explicit "Provider" key > GitHub config section populated > AzureDevOps config section populated > git remote URL > default (AzureDevOps).
@@ -296,6 +281,7 @@ namespace REBUSS.Pure
                     {
                         FileName = "git",
                         Arguments = "remote get-url origin",
+                        RedirectStandardInput = true,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
                         UseShellExecute = false,
@@ -304,6 +290,7 @@ namespace REBUSS.Pure
                 };
 
                 process.Start();
+                process.StandardInput.Close();
                 var output = process.StandardOutput.ReadToEnd();
                 process.WaitForExit(TimeSpan.FromSeconds(5));
 
@@ -314,5 +301,6 @@ namespace REBUSS.Pure
                 return null;
             }
         }
+
     }
 }

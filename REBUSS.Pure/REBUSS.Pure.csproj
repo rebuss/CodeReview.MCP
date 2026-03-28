@@ -12,7 +12,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>rebuss-pure</ToolCommandName>
     <PackageId>CodeReview.MCP</PackageId>
-    <Version>0.4.0</Version>
+    <Version>0.6.0</Version>
     <Authors>Michał Korbecki</Authors>
     <Description>Lightweight MCP server for AI-assisted pull request analysis. Supports Azure DevOps and GitHub.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -39,8 +39,10 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.5" />
+    <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>

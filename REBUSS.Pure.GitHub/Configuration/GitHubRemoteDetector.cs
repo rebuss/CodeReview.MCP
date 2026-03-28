@@ -103,6 +103,7 @@ public partial class GitHubRemoteDetector : IGitHubRemoteDetector
             {
                 FileName = "git",
                 Arguments = "remote get-url origin",
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -112,6 +113,7 @@ public partial class GitHubRemoteDetector : IGitHubRemoteDetector
         };
 
         process.Start();
+        process.StandardInput.Close();
 
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit(TimeSpan.FromSeconds(5));

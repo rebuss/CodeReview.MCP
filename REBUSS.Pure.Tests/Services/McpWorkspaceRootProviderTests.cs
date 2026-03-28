@@ -1,8 +1,9 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using REBUSS.Pure.Mcp;
+using REBUSS.Pure.Services;
 
-namespace REBUSS.Pure.Tests.Mcp;
+namespace REBUSS.Pure.Tests.Services;
 
 public class McpWorkspaceRootProviderTests
 {
@@ -16,8 +17,11 @@ public class McpWorkspaceRootProviderTests
             .AddInMemoryCollection(configValues)
             .Build();
 
+        var services = new ServiceCollection().BuildServiceProvider();
+
         return new McpWorkspaceRootProvider(
             configuration,
+            services,
             NullLogger<McpWorkspaceRootProvider>.Instance);
     }
 
@@ -289,3 +293,4 @@ public class McpWorkspaceRootProviderTests
         Assert.Equal(expected, McpWorkspaceRootProvider.IsUnexpandedVariable(path));
     }
 }
+

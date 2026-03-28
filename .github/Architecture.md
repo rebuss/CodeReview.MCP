@@ -7,54 +7,101 @@
 
 ## 1. MCP Protocol Layer
 
-### JSON-RPC Server Loop
+### SDK-Based Server Setup (ModelContextProtocol v1.2.0)
 
-`McpServer.RunAsync` reads messages in a loop via `IJsonRpcTransport.ReadMessageAsync`
-(newline-delimited JSON on stdin). Each message is processed through a pipeline:
+The project uses the official `ModelContextProtocol` NuGet package (v1.2.0) instead of
+hand-rolled MCP infrastructure. `Program.cs` wires the server with the SDK's fluent
+builder pattern on `Host.CreateApplicationBuilder()`:
 
-1. **Deserialize** — `IJsonRpcSerializer.Deserialize<JsonRpcRequest>`. Parse failures
-   return JSON-RPC error `-32700` (parse error).
-2. **Validate** — `IsNotification` checks whether the `id` field is absent or null.
-   Notifications are **silently discarded** (logged, no response) because MCP does not
-   define any server-consumed notifications. This is intentional: returning an error
-   for a notification would violate JSON-RPC 2.0 spec.
-3. **Dispatch** — `DispatchAsync` resolves the handler from a `Dictionary<string, IMcpMethodHandler>`
-   keyed by `MethodName`. Unknown methods return `-32601` (method not found). Missing
-   `method` field returns `-32600` (invalid request).
-4. **Error wrapping** — unhandled exceptions during handler execution are caught and
-   returned as `-32603` (internal error) with the exception message in `error.message`.
+```
+AddMcpServer(options => { ServerInfo = ... })
+  → WithStdioServerTransport()
+  → WithToolsFromAssembly()
+```
 
-**OCP pattern:** new JSON-RPC methods are added by registering a new `IMcpMethodHandler`
-in DI. `McpServer` discovers all handlers via `IEnumerable<IMcpMethodHandler>` and builds
-the dispatch dictionary in its constructor. No switch statement, no code changes to
-`McpServer` needed.
+1. **`AddMcpServer()`** — registers the SDK's `McpServer` as a DI service. Accepts a
+   callback to set `ServerInfo` (name = `"REBUSS.Pure"`, version = `"1.0.0"`).
+2. **`WithStdioServerTransport()`** — binds stdin/stdout as the JSON-RPC transport.
+   The SDK manages message framing, serialization, and response writing automatically.
+3. **`WithToolsFromAssembly()`** — reflectively scans the assembly for classes decorated
+   with `[McpServerToolType]` and registers their `[McpServerTool]`-annotated methods
+   as MCP tools. No manual tool registration is required.
 
-### Message Flow: initialize → tools/list → tools/call
+The application runs via `builder.Build().RunAsync(cts.Token)` using the .NET Generic
+Host lifecycle. `CancellationTokenSource` handles Ctrl+C / `SIGTERM` for clean shutdown.
 
-| Phase | Handler | Key Actions |
-|---|---|---|
-| **Handshake** | `InitializeMethodHandler` | Extracts `roots` array from `params` (MCP workspace roots); stores them in `IWorkspaceRootProvider` for later config resolution. Returns server `capabilities` (tools support) and protocol version `2024-11-05`. |
-| **Discovery** | `ToolsListMethodHandler` | Iterates all `IMcpToolHandler` implementations, calls `GetToolDefinition()` on each, returns the aggregated `tools` array. |
-| **Execution** | `ToolsCallMethodHandler` | Resolves handler by `params.name` from a `Dictionary<string, IMcpToolHandler>` (keyed by `ToolName`). Passes `params.arguments` to `ExecuteAsync`. Wraps result in JSON-RPC response. Logs timing via `Stopwatch`. |
+### What the SDK Handles Automatically
 
-The session is stateful only in the `IWorkspaceRootProvider` — roots set during
-`initialize` influence config resolution for all subsequent tool calls.
+The SDK owns the entire JSON-RPC protocol layer. The project contains **no** custom
+protocol infrastructure — no server loop, no method handlers, no serializer, no
+transport, no protocol negotiation:
 
-### Transport & Serialization
+| Concern | SDK Responsibility |
+|---|---|
+| **JSON-RPC framing** | Reads/writes newline-delimited JSON on stdin/stdout |
+| **initialize / initialized** | Handshake, protocol version negotiation, capability exchange |
+| **tools/list** | Enumerates `[McpServerTool]` methods, auto-generates `inputSchema` from method signatures and `[Description]` attributes |
+| **tools/call** | Dispatches by tool name to the matching method, deserializes arguments, returns result |
+| **Error codes** | Parse errors (`-32700`), method not found (`-32601`), invalid request (`-32600`), internal error (`-32603`) |
+| **Notifications** | Handled per MCP spec (silently consumed or dispatched as appropriate) |
 
-**`StreamJsonRpcTransport`:** wraps stdin/stdout streams. Messages are newline-delimited
-UTF-8 JSON (`ReadLineAsync` / `WriteLineAsync`). `leaveOpen: true` in `StreamReader`/
-`StreamWriter` to avoid closing stdin/stdout prematurely. Implements `IAsyncDisposable`
-for clean shutdown.
+### Tool Handler Pattern (Attribute-Based)
 
-**`SystemTextJsonSerializer`:** `camelCase` property naming, `WriteIndented = false`
-(compact protocol), `DefaultIgnoreCondition = WhenWritingNull` (omit null fields).
-This differs from tool handler serialization which uses `WriteIndented = true` for
-human-readable output.
+Tool handlers are plain C# classes — no interfaces to implement:
 
-**stdout reservation:** all non-protocol output (logging, errors, user messages) must
-go to stderr. stdout is exclusively used by `StreamJsonRpcTransport` for JSON-RPC
-responses. Violation breaks the MCP transport.
+```
+[McpServerToolType]                      ← marks class as containing MCP tools
+public class SomeToolHandler
+{
+    public SomeToolHandler(IDep dep) … ← standard constructor injection
+
+    [McpServerTool(Name = "tool_name")]  ← tool name visible to MCP clients
+    [Description("Tool description")]    ← used by SDK for tool metadata
+    public async Task<string> ExecuteAsync(
+        [Description("param help")] int param,  ← parameter descriptions become inputSchema
+        CancellationToken ct = default)
+    { … }
+}
+```
+
+**Key characteristics:**
+- **`[McpServerToolType]`** on the class — discovered by `WithToolsFromAssembly()`.
+- **`[McpServerTool(Name = "...")]`** on the method — defines the MCP tool name.
+- **`[Description]`** on method and each parameter — the SDK uses these to generate
+  the `inputSchema` JSON automatically. No manual schema definition needed.
+- **Constructor injection** — the SDK resolves dependencies from the DI container when
+  instantiating tool handler classes. All existing business service registrations work
+  unchanged.
+- **Return type** — `async Task<string>`. Tool handlers serialize their response to
+  JSON (`camelCase`, `WriteIndented = true`) and return the string.
+- **Optional parameters** — nullable types with defaults (`int? prNumber = null`,
+  `string? scope = null`) map to optional fields in the generated `inputSchema`.
+
+### Transport & stdout Reservation
+
+The SDK's stdio transport owns stdout exclusively for JSON-RPC messages. All
+non-protocol output (logging, diagnostics, user messages) **must** go to stderr.
+`Program.cs` configures this via `LogToStandardErrorThreshold = LogLevel.Trace` and
+the custom `FileLoggerProvider`. Violating the stdout reservation breaks the MCP
+transport.
+
+### Child Process stdin Isolation
+
+Because the SDK's stdio transport owns stdin, all child processes spawned by the
+server **must** set `RedirectStandardInput = true` and immediately call
+`process.StandardInput.Close()` after `process.Start()`. Without this, child
+processes (e.g., `git`) inherit the parent's stdin handle, causing a deadlock where
+the SDK cannot read from stdin while the child holds the handle. This applies to:
+- `LocalGitClient.RunGitAsync` (local review tools)
+- `GitRemoteDetector` / `GitHubRemoteDetector` (provider configuration)
+- `GetGitRemoteUrl()` in `Program.cs` (startup detection)
+
+### SDK Limitation: No `IMcpServer` Interface
+
+SDK v1.2.0 exposes only the concrete `McpServer` class — there is no `IMcpServer`
+abstraction. Components that need `McpServer` (such as `McpWorkspaceRootProvider`)
+must resolve it from `IServiceProvider` at runtime. This is a conscious trade-off
+documented in §4 (Workspace Root Resolution).
 
 ## 2. Provider Architecture
 
@@ -66,7 +113,7 @@ Each SCM provider follows a layered architecture:
 IScmClient (facade)
   ├── DiffProvider      → API client → Parser → StructuredDiffBuilder → FileChange[]
   ├── MetadataProvider  → API client → Parser → FullPullRequestMetadata
-  ├── FilesProvider     → API client → Parser → PullRequestFiles
+  ├── FilesProvider     → API client → Parser → FileClassifier → PullRequestFiles  (no diff fetching)
   └── FileContentProvider → API client → FileContent
 ```
 
@@ -74,8 +121,9 @@ IScmClient (facade)
 - **SRP** — each provider handles one concern (diff, metadata, files, content).
 - **Testability** — providers can be tested with real parsers and mocked API client,
   without instantiating the full facade.
-- **Data sharing** — `FilesProvider` can reuse file list data already fetched by
-  `DiffProvider` (both call the same API client methods, cached by HTTP client).
+- **Performance** — `FilesProvider` calls lightweight file-list APIs directly (e.g.,
+  GitHub PR files endpoint, Azure DevOps iteration-changes endpoint), avoiding the
+  expensive per-file content fetches that `DiffProvider` performs for structured diffs.
 
 The facade (`AzureDevOpsScmClient` / `GitHubScmClient`) is a pure delegation layer:
 it forwards calls to the appropriate provider and enriches metadata with
@@ -221,15 +269,45 @@ store for future runs.
 
 ### Workspace Root Resolution
 
-`McpWorkspaceRootProvider` resolves the git repository root with this priority:
+`McpWorkspaceRootProvider` (in `Services/`) resolves the git repository root with
+this priority:
 
 1. **CLI `--repo`** — explicitly set via `SetCliRepositoryPath()`. Highest priority
    because the user intentionally specified it.
-2. **MCP roots** — extracted from `initialize` handshake `roots[].uri`. Converted
-   from `file:///` URI to local path. Represents the IDE's workspace folder.
+2. **MCP roots** — lazily fetched from the SDK on first access via
+   `McpServer.RequestRootsAsync()`. Converted from `file:///` URI to local path.
+   Represents the IDE's workspace folder.
 3. **`localRepoPath` config** — read directly from `IConfiguration` (not from
    `IOptions<T>`) to **avoid circular dependency** with `IPostConfigureOptions`
    (which itself needs the workspace root).
+
+**Lazy `McpServer` resolution via `IServiceProvider`:** `McpWorkspaceRootProvider`
+cannot take `McpServer` as a constructor dependency because `McpServer` is registered
+by `AddMcpServer()` and depends (transitively) on services that depend on workspace
+root resolution — creating a circular dependency. Instead, `McpWorkspaceRootProvider`
+injects `IServiceProvider` and resolves `McpServer` at runtime in
+`EnsureRootsFetched()`:
+
+```csharp
+var mcpServer = _serviceProvider.GetService<McpServer>();
+// null in CLI mode (no MCP server registered)
+var result = Task.Run(async () =>
+    await mcpServer.RequestRootsAsync(...)
+).GetAwaiter().GetResult();
+```
+
+This is a justified service-locator pattern — the alternative (constructor injection)
+would create an unresolvable DI cycle. The `Task.Run` + `GetResult()` blocking call
+is safe because console apps have no `SynchronizationContext`.
+
+**Thread safety:** all shared state (`_rootUris`, `_cliRepositoryPath`, `_rootsFetched`)
+is guarded by a `lock` object. `EnsureRootsFetched()` runs at most once per process
+lifetime.
+
+**Note:** SDK v1.2.0 provides only the concrete `McpServer` class — no `IMcpServer`
+interface. `GetService<McpServer>()` returns `null` in CLI mode (where `AddMcpServer()`
+is not called), which `EnsureRootsFetched()` handles gracefully by skipping MCP root
+resolution.
 
 All candidate paths are validated:
 - **Unexpanded variable guard:** `IsUnexpandedVariable` checks for `${` or `$(`
@@ -353,6 +431,16 @@ produces `DiffHunk[]` using `LcsDiffAlgorithm` (LCS-based line diff).
   transient because `IHttpClientFactory` manages their lifetime and pools them.
   The auth provider they depend on is singleton — thread-safe by design.
 
-- **`ToolsCallMethodHandler` uses `Dictionary<string, IMcpToolHandler>`:** O(1)
-  tool resolution by name. The dictionary is built once from
-  `IEnumerable<IMcpToolHandler>` in the constructor, keyed by `ToolName`.
+- **Service-locator for `McpServer` in `McpWorkspaceRootProvider`:** `McpServer` is
+  resolved from `IServiceProvider` at runtime instead of constructor injection. This
+  breaks the normal DI pattern but is necessary to avoid a circular dependency:
+  `McpServer` → tool handlers → options → `IPostConfigureOptions` →
+  `IWorkspaceRootProvider` → `McpServer`. The service-locator use is isolated to a
+  single call site (`EnsureRootsFetched`) and returns `null` gracefully in CLI mode.
+
+- **Attribute-based tool discovery over interface-based:** the SDK's
+  `[McpServerToolType]` / `[McpServerTool]` pattern replaces the previous
+  `IMcpToolHandler` interface. New tools are added by creating a class with the
+  correct attributes — no DI registration, no handler dictionary, no changes to any
+  existing code. The SDK generates `inputSchema` from method signatures and
+  `[Description]` attributes, eliminating manual schema maintenance.

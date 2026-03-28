@@ -57,7 +57,7 @@ public class GitHubScmClientTests
             NullLogger<GitHubMetadataProvider>.Instance);
 
         var filesProvider = new GitHubFilesProvider(
-            diffProvider, fileClassifier,
+            _apiClient, changesParser, fileClassifier,
             NullLogger<GitHubFilesProvider>.Instance);
 
         var contentProvider = new GitHubFileContentProvider(

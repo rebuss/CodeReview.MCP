@@ -85,6 +85,44 @@ public sealed class McpProcessFixture : IAsyncDisposable
     }
 
     /// <summary>
+    /// Sends a JSON-RPC notification (no id, no response expected).
+    /// </summary>
+    public async Task SendNotificationAsync(object notification)
+    {
+        var json = JsonSerializer.Serialize(notification);
+        await _process.StandardInput.WriteLineAsync(json);
+        await _process.StandardInput.FlushAsync();
+    }
+
+    /// <summary>
+    /// Performs the full MCP initialize handshake (initialize + notifications/initialized).
+    /// Returns the initialize response.
+    /// </summary>
+    public async Task<JsonDocument> InitializeHandshakeAsync(string requestId = "init-1", TimeSpan? timeout = null)
+    {
+        var response = await SendAsync(new
+        {
+            jsonrpc = "2.0",
+            id = requestId,
+            method = "initialize",
+            @params = new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { roots = new { listChanged = true } },
+                clientInfo = new { name = "REBUSS.Pure.SmokeTests", version = "1.0.0" }
+            }
+        }, timeout);
+
+        await SendNotificationAsync(new
+        {
+            jsonrpc = "2.0",
+            method = "notifications/initialized"
+        });
+
+        return response;
+    }
+
+    /// <summary>
     /// Sends a raw JSON string and returns the parsed response.
     /// Skips any non-JSON lines (build output, log messages) from stdout.
     /// </summary>
@@ -97,12 +135,24 @@ public sealed class McpProcessFixture : IAsyncDisposable
 
         using var cts = new CancellationTokenSource(effectiveTimeout);
 
-        var line = await ReadJsonLineAsync(_process.StandardOutput, cts.Token);
+        try
+        {
+            var line = await ReadJsonLineAsync(_process.StandardOutput, cts.Token);
 
-        if (line is null)
-            throw new TimeoutException($"No JSON response received within {effectiveTimeout.TotalSeconds}s.");
+            if (line is null)
+                throw new TimeoutException(
+                    $"No JSON response received within {effectiveTimeout.TotalSeconds}s.\nStdErr:\n{GetStdErr()}");
 
-        return JsonDocument.Parse(line);
+            return JsonDocument.Parse(line);
+        }
+        catch (OperationCanceledException)
+        {
+            var hasExited = _process.HasExited;
+            throw new TimeoutException(
+                $"Timeout ({effectiveTimeout.TotalSeconds}s) waiting for response to: {json[..Math.Min(json.Length, 200)]}\n" +
+                $"Process alive: {!hasExited}\n" +
+                $"StdErr:\n{GetStdErr()}");
+        }
     }
 
     /// <summary>

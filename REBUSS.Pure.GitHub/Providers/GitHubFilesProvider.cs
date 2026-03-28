@@ -2,26 +2,31 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
+using REBUSS.Pure.GitHub.Api;
+using REBUSS.Pure.GitHub.Parsers;
 
 namespace REBUSS.Pure.GitHub.Providers;
 
 /// <summary>
 /// Fetches the list of changed files for a pull request, classifies each file,
-/// computes per-file line stats from the diff content, and builds a category summary.
-/// Delegates to <see cref="GitHubDiffProvider"/> for the raw file data and diffs.
+/// and builds a category summary. Calls the GitHub API directly to retrieve
+/// file metadata (including line counts) without fetching individual file contents.
 /// </summary>
 public class GitHubFilesProvider
 {
-    private readonly GitHubDiffProvider _diffProvider;
+    private readonly IGitHubApiClient _apiClient;
+    private readonly IGitHubFileChangesParser _fileChangesParser;
     private readonly IFileClassifier _fileClassifier;
     private readonly ILogger<GitHubFilesProvider> _logger;
 
     public GitHubFilesProvider(
-        GitHubDiffProvider diffProvider,
+        IGitHubApiClient apiClient,
+        IGitHubFileChangesParser fileChangesParser,
         IFileClassifier fileClassifier,
         ILogger<GitHubFilesProvider> logger)
     {
-        _diffProvider = diffProvider;
+        _apiClient = apiClient;
+        _fileChangesParser = fileChangesParser;
         _fileClassifier = fileClassifier;
         _logger = logger;
     }
@@ -31,9 +36,10 @@ public class GitHubFilesProvider
         _logger.LogInformation("Fetching files for PR #{PrNumber}", prNumber);
         var sw = Stopwatch.StartNew();
 
-        var diff = await _diffProvider.GetDiffAsync(prNumber, cancellationToken);
+        var filesJson = await _apiClient.GetPullRequestFilesAsync(prNumber, cancellationToken);
+        var fileChanges = _fileChangesParser.Parse(filesJson);
 
-        var classified = diff.Files
+        var classified = fileChanges
             .Select(f => (fileChange: f, classification: _fileClassifier.Classify(f.Path)))
             .ToList();
 

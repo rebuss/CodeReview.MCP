@@ -27,13 +27,7 @@ public class McpServerSmokeTests
         using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        var response = await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "init-1",
-            method = "initialize",
-            @params = new { }
-        });
+        var response = await server.InitializeHandshakeAsync();
 
         var result = response.RootElement.GetProperty("result");
         Assert.True(result.TryGetProperty("serverInfo", out var serverInfo));
@@ -49,15 +43,16 @@ public class McpServerSmokeTests
         using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        var responses = await server.SendBatchAsync(
-        [
-            new { jsonrpc = "2.0", id = "1", method = "initialize", @params = new { } },
-            new { jsonrpc = "2.0", id = "2", method = "tools/list" }
-        ]);
+        await server.InitializeHandshakeAsync("1");
 
-        Assert.Equal(2, responses.Count);
+        var toolsResponse = await server.SendAsync(new
+        {
+            jsonrpc = "2.0",
+            id = "2",
+            method = "tools/list"
+        });
 
-        var toolsResult = responses[1].RootElement.GetProperty("result");
+        var toolsResult = toolsResponse.RootElement.GetProperty("result");
         var tools = toolsResult.GetProperty("tools");
 
         var toolNames = tools.EnumerateArray()
@@ -78,13 +73,16 @@ public class McpServerSmokeTests
         using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        var responses = await server.SendBatchAsync(
-        [
-            new { jsonrpc = "2.0", id = "1", method = "initialize", @params = new { } },
-            new { jsonrpc = "2.0", id = "2", method = "tools/list" }
-        ]);
+        await server.InitializeHandshakeAsync("1");
 
-        var tools = responses[1].RootElement
+        var toolsResponse = await server.SendAsync(new
+        {
+            jsonrpc = "2.0",
+            id = "2",
+            method = "tools/list"
+        });
+
+        var tools = toolsResponse.RootElement
             .GetProperty("result")
             .GetProperty("tools");
 
@@ -111,14 +109,7 @@ public class McpServerSmokeTests
 
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        // Initialize first
-        await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "1",
-            method = "initialize",
-            @params = new { }
-        });
+        await server.InitializeHandshakeAsync("1");
 
         // Call get_local_files
         var response = await server.SendAsync(new
@@ -130,7 +121,8 @@ public class McpServerSmokeTests
         });
 
         var result = response.RootElement.GetProperty("result");
-        Assert.False(result.GetProperty("isError").GetBoolean(),
+        var isError = result.TryGetProperty("isError", out var errProp) && errProp.GetBoolean();
+        Assert.False(isError,
             $"get_local_files returned error: {result}");
 
         await server.ShutdownAsync();
@@ -149,13 +141,7 @@ public class McpServerSmokeTests
 
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "1",
-            method = "initialize",
-            @params = new { }
-        });
+        await server.InitializeHandshakeAsync("1");
 
         var response = await server.SendAsync(new
         {
@@ -166,7 +152,8 @@ public class McpServerSmokeTests
         });
 
         var result = response.RootElement.GetProperty("result");
-        Assert.False(result.GetProperty("isError").GetBoolean());
+        var isError = result.TryGetProperty("isError", out var errProp) && errProp.GetBoolean();
+        Assert.False(isError);
 
         // Parse the inner content — should list the changed file
         var contentText = result.GetProperty("content")[0].GetProperty("text").GetString()!;
@@ -183,14 +170,7 @@ public class McpServerSmokeTests
         using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        // Initialize first
-        await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "1",
-            method = "initialize",
-            @params = new { }
-        });
+        await server.InitializeHandshakeAsync("1");
 
         var response = await server.SendAsync(new
         {
@@ -212,14 +192,7 @@ public class McpServerSmokeTests
         using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
         await using var server = McpProcessFixture.Start(repo.RootPath);
 
-        // Send initialize so the server is running
-        await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "1",
-            method = "initialize",
-            @params = new { }
-        });
+        await server.InitializeHandshakeAsync("1");
 
         // Close stdin — server should exit gracefully
         var exitCode = await server.ShutdownAsync(timeout: TimeSpan.FromSeconds(10));

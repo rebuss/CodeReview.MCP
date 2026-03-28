@@ -50,7 +50,7 @@ namespace REBUSS.Pure.Services.LocalReview
                 return await File.ReadAllTextAsync(fullPath, cancellationToken);
             }
 
-            // git show <ref>:<path> — works for HEAD, branch names, commit SHAs, and ":0" (index)
+            // git show <ref>:<path> ï¿½ works for HEAD, branch names, commit SHAs, and ":0" (index)
             var args = $"show {gitRef}:{normalizedPath}";
 
             _logger.LogDebug("Running: git {Args} (in {Root})", args, repositoryRoot);
@@ -164,7 +164,7 @@ namespace REBUSS.Pure.Services.LocalReview
                 var parts = line.Split('\t');
                 if (parts.Length < 2) continue;
 
-                // Status field may include a similarity score (e.g. "R95") — take first char
+                // Status field may include a similarity score (e.g. "R95") ï¿½ take first char
                 var statusChar = parts[0].Length > 0 ? parts[0][0] : 'M';
                 var path = parts.Length >= 3 ? parts[2] : parts[1];
                 var originalPath = parts.Length >= 3 ? parts[1] : null;
@@ -188,6 +188,7 @@ namespace REBUSS.Pure.Services.LocalReview
                 {
                     FileName = "git",
                     Arguments = arguments,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -197,6 +198,7 @@ namespace REBUSS.Pure.Services.LocalReview
             };
 
             process.Start();
+            process.StandardInput.Close();
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
