@@ -1,10 +1,11 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Models;
 using REBUSS.Pure.Tools.Models;
 using System.Text.Json;
 
@@ -15,7 +16,8 @@ namespace REBUSS.Pure.Tools
     /// Validates input, delegates to <see cref="IPullRequestMetadataProvider"/>,
     /// and formats the result as a structured JSON response.
     /// </summary>
-    public class GetPullRequestMetadataToolHandler : IMcpToolHandler
+    [McpServerToolType]
+    public class GetPullRequestMetadataToolHandler
     {
         private readonly IPullRequestDataProvider _metadataProvider;
         private readonly ILogger<GetPullRequestMetadataToolHandler> _logger;
@@ -29,8 +31,6 @@ namespace REBUSS.Pure.Tools
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
 
-        public string ToolName => "get_pr_metadata";
-
         public GetPullRequestMetadataToolHandler(
             IPullRequestDataProvider metadataProvider,
             ILogger<GetPullRequestMetadataToolHandler> logger)
@@ -39,40 +39,20 @@ namespace REBUSS.Pure.Tools
             _logger = logger;
         }
 
-        public McpTool GetToolDefinition() => new()
-        {
-            Name = ToolName,
-            Description = "Retrieves metadata for a specific Pull Request. " +
-                          "Returns a JSON object with PR details including title, author, state, " +
-                          "branches, stats, commit SHAs, and description.",
-            InputSchema = new ToolInputSchema
-            {
-                Type = "object",
-                Properties = new Dictionary<string, ToolProperty>
-                {
-                    ["prNumber"] = new ToolProperty
-                    {
-                        Type = "integer",
-                        Description = "The Pull Request number/ID to retrieve metadata for"
-                    }
-                },
-                Required = new List<string> { "prNumber" }
-            }
-        };
-
-        public async Task<ToolResult> ExecuteAsync(
-            Dictionary<string, object>? arguments,
+        [McpServerTool(Name = "get_pr_metadata"), Description(
+            "Retrieves metadata for a specific Pull Request. " +
+            "Returns a JSON object with PR details including title, author, state, " +
+            "branches, stats, commit SHAs, and description.")]
+        public async Task<string> ExecuteAsync(
+            [Description("The Pull Request number/ID to retrieve metadata for")] int prNumber,
             CancellationToken cancellationToken = default)
         {
+            if (prNumber <= 0)
+                throw new ArgumentException("prNumber must be greater than 0", nameof(prNumber));
+
             try
             {
-                if (!TryExtractPrNumber(arguments, out var prNumber, out var error))
-                {
-                    _logger.LogWarning("[{ToolName}] Validation failed: {Error}", ToolName, error);
-                    return CreateErrorResult(error);
-                }
-
-                _logger.LogInformation("[{ToolName}] Entry: PR #{PrNumber}", ToolName, prNumber);
+                _logger.LogInformation("[get_pr_metadata] Entry: PR #{PrNumber}", prNumber);
                 var sw = Stopwatch.StartNew();
 
                 var metadata = await _metadataProvider.GetMetadataAsync(prNumber, cancellationToken);
@@ -81,20 +61,24 @@ namespace REBUSS.Pure.Tools
                 var json = JsonSerializer.Serialize(result, JsonOptions);
                 sw.Stop();
 
-                _logger.LogInformation("[{ToolName}] Completed: PR #{PrNumber}, {ResponseLength} chars, {ElapsedMs}ms",
-                    ToolName, prNumber, json.Length, sw.ElapsedMilliseconds);
+                _logger.LogInformation("[get_pr_metadata] Completed: PR #{PrNumber}, {ResponseLength} chars, {ElapsedMs}ms",
+                    prNumber, json.Length, sw.ElapsedMilliseconds);
 
-                return CreateSuccessResult(json);
+                return json;
             }
             catch (PullRequestNotFoundException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Pull request not found (prNumber={PrNumber})", ToolName, arguments?.GetValueOrDefault("prNumber"));
-                return CreateErrorResult($"Pull Request not found: {ex.Message}");
+                _logger.LogWarning(ex, "[get_pr_metadata] Pull request not found (prNumber={PrNumber})", prNumber);
+                throw new McpException($"Pull Request not found: {ex.Message}");
+            }
+            catch (McpException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{ToolName}] Error (prNumber={PrNumber})", ToolName, arguments?.GetValueOrDefault("prNumber"));
-                return CreateErrorResult($"Error retrieving PR metadata: {ex.Message}");
+                _logger.LogError(ex, "[get_pr_metadata] Error (prNumber={PrNumber})", prNumber);
+                throw new McpException($"Error retrieving PR metadata: {ex.Message}");
             }
         }
 
@@ -160,56 +144,5 @@ namespace REBUSS.Pure.Tools
                 ReturnedLength = text.Length
             };
         }
-
-        // --- Input extraction -----------------------------------------------------
-
-        private static bool TryExtractPrNumber(
-            Dictionary<string, object>? arguments,
-            out int prNumber,
-            out string errorMessage)
-        {
-            prNumber = 0;
-            errorMessage = string.Empty;
-
-            if (arguments == null || !arguments.TryGetValue("prNumber", out var prNumberObj))
-            {
-                errorMessage = "Missing required parameter: prNumber";
-                return false;
-            }
-
-            try
-            {
-                prNumber = prNumberObj is JsonElement jsonElement
-                    ? jsonElement.GetInt32()
-                    : Convert.ToInt32(prNumberObj);
-            }
-            catch
-            {
-                errorMessage = "Invalid prNumber parameter: must be an integer";
-                return false;
-            }
-
-            if (prNumber <= 0)
-            {
-                errorMessage = "prNumber must be greater than 0";
-                return false;
-            }
-
-            return true;
-        }
-
-        // --- Result helpers -------------------------------------------------------
-
-        private static ToolResult CreateSuccessResult(string text) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = text } },
-            IsError = false
-        };
-
-        private static ToolResult CreateErrorResult(string errorMessage) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = $"Error: {errorMessage}" } },
-            IsError = true
-        };
     }
 }

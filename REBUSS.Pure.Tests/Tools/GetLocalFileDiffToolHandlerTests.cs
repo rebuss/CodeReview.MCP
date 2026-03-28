@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
@@ -74,10 +75,9 @@ public class GetLocalFileDiffToolHandlerTests
                 "src/Service.cs", Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleDiff);
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        var json = await _handler.ExecuteAsync("src/Service.cs");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.TryGetProperty("files", out var files));
         Assert.Equal(1, files.GetArrayLength());
 
@@ -102,7 +102,7 @@ public class GetLocalFileDiffToolHandlerTests
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleDiff);
 
-        await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        await _handler.ExecuteAsync("src/Service.cs");
 
         await _reviewProvider.Received(1).GetFileDiffAsync(
             "src/Service.cs",
@@ -117,8 +117,7 @@ public class GetLocalFileDiffToolHandlerTests
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleDiff);
 
-        var args = CreateArgs("src/Service.cs", "staged");
-        await _handler.ExecuteAsync(args);
+        await _handler.ExecuteAsync("src/Service.cs", scope: "staged");
 
         await _reviewProvider.Received(1).GetFileDiffAsync(
             "src/Service.cs",
@@ -126,129 +125,69 @@ public class GetLocalFileDiffToolHandlerTests
             Arg.Any<CancellationToken>());
     }
 
-    [Fact]
-    public async Task ExecuteAsync_HandlesScopeAndPathAsJsonElements()
-    {
-        _reviewProvider.GetFileDiffAsync(
-                Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(SampleDiff);
-
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            """{"path":"src/Service.cs","scope":"staged"}""")!;
-        var result = await _handler.ExecuteAsync(json);
-
-        Assert.False(result.IsError);
-    }
-
     // --- Validation errors ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenArgumentsNull()
+    public async Task ExecuteAsync_ThrowsArgumentException_WhenPathEmpty()
     {
-        var result = await _handler.ExecuteAsync(null);
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
-    }
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => _handler.ExecuteAsync(""));
 
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathMissing()
-    {
-        var result = await _handler.ExecuteAsync(new Dictionary<string, object>());
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathEmpty()
-    {
-        var result = await _handler.ExecuteAsync(new Dictionary<string, object> { ["path"] = "" });
-        Assert.True(result.IsError);
-        Assert.Contains("must not be empty", result.Content[0].Text);
+        Assert.Contains("path parameter must not be empty", ex.Message);
     }
 
     // --- Provider exceptions ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenRepositoryNotFound()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenRepositoryNotFound()
     {
         _reviewProvider.GetFileDiffAsync(
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new LocalRepositoryNotFoundException("No repo"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/Service.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Repository not found", result.Content[0].Text);
+        Assert.Contains("Repository not found", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenFileNotFoundInLocalChanges()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenFileNotFoundInLocalChanges()
     {
         _reviewProvider.GetFileDiffAsync(
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new LocalFileNotFoundException("File not found"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/NotChanged.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/NotChanged.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("File not found in local changes", result.Content[0].Text);
+        Assert.Contains("File not found in local changes", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsMcpException_OnUnexpectedException()
     {
         _reviewProvider.GetFileDiffAsync(
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("boom"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/Service.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("boom", result.Content[0].Text);
+        Assert.Contains("boom", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenGitCommandFails()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenGitCommandFails()
     {
         _reviewProvider.GetFileDiffAsync(
                 Arg.Any<string>(), Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new GitCommandException(128, "fatal: bad revision"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/Service.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Git command failed", result.Content[0].Text);
-    }
-
-    // --- Tool definition ---
-
-    [Fact]
-    public void GetToolDefinition_HasCorrectName()
-    {
-        Assert.Equal("get_local_file_diff", _handler.ToolName);
-    }
-
-    [Fact]
-    public void GetToolDefinition_RequiresPath()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.Contains("path", def.InputSchema.Required!);
-    }
-
-    [Fact]
-    public void GetToolDefinition_ScopeIsOptional()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.DoesNotContain("scope", def.InputSchema.Required!);
-        Assert.True(def.InputSchema.Properties.ContainsKey("scope"));
-    }
-
-    [Fact]
-    public void GetToolDefinition_HasPackingParameters()
-    {
-        var def = _handler.GetToolDefinition();
-        Assert.True(def.InputSchema.Properties.ContainsKey("modelName"));
-        Assert.True(def.InputSchema.Properties.ContainsKey("maxTokens"));
+        Assert.Contains("Git command failed", ex.Message);
     }
 
     // --- Packing integration ---
@@ -260,22 +199,11 @@ public class GetLocalFileDiffToolHandlerTests
                 "src/Service.cs", Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
             .Returns(SampleDiff);
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Service.cs"));
+        var json = await _handler.ExecuteAsync("src/Service.cs");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.TryGetProperty("manifest", out var manifest));
         Assert.True(manifest.TryGetProperty("summary", out var summary));
         Assert.Equal(1, summary.GetProperty("totalItems").GetInt32());
-    }
-
-    // --- Helpers ---
-
-    private static Dictionary<string, object> CreateArgs(string path, string? scope = null)
-    {
-        var args = new Dictionary<string, object> { ["path"] = path };
-        if (scope is not null)
-            args["scope"] = scope;
-        return args;
     }
 }

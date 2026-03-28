@@ -48,13 +48,24 @@ public class GitHubFileChangesParser : IGitHubFileChangesParser
             return null;
 
         var status = GetString(item, "status", "modified");
-        return new FileChange { Path = filename, ChangeType = MapStatus(status) };
+        return new FileChange
+        {
+            Path = filename,
+            ChangeType = MapStatus(status),
+            Additions = GetInt(item, "additions"),
+            Deletions = GetInt(item, "deletions")
+        };
     }
 
     private static string GetString(JsonElement element, string property, string fallback) =>
         element.TryGetProperty(property, out var p) && p.ValueKind == JsonValueKind.String
             ? p.GetString() ?? fallback
             : fallback;
+
+    private static int GetInt(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var p) && p.ValueKind == JsonValueKind.Number
+            ? p.GetInt32()
+            : 0;
 
     /// <summary>
     /// Maps GitHub file status to the normalized change type used in domain models.
