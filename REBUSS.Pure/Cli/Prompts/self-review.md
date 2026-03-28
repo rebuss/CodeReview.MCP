@@ -1,151 +1,117 @@
-# Self-Review (MCP-Only)
+# Self-Review (MCP-Only, paginated with confirmation)
 
-Perform a professional self-review of **local git changes**, using **exclusively** the MCP server `REBUSS.Pure`.
+Perform a professional self-review of **local git changes** using **only** MCP tools from the `REBUSS.Pure` server.
 
-This review MUST:
-- use only MCP tools from `REBUSS.Pure`
-- NEVER inspect files or project state directly from the editor or local workspace
-- NEVER reason about local changes without calling MCP tools
-- rely on `get_local_content` as the primary review tool
-- abort if MCP tools are unavailable
+Hard requirements:
+- Use exclusively MCP tools from `REBUSS.Pure`.
+- NEVER read files or project state directly from the editor or local workspace.
+- NEVER reason about local changes without MCP responses.
+- Rely on `get_local_content` as the primary review tool.
+- Abort if required MCP tools are unavailable.
 
 If any required MCP tool is missing, respond with:
 **"Cannot proceed: required MCP tools not available."**
 
 ---
 
-# Scope Handling
+## Scope
 
-Unless the user explicitly specifies a scope (e.g. `working-tree`, `main`, `origin/main`), use:
+If the user does not explicitly specify a scope (e.g. `working-tree`, `main`, `origin/main`), use:
 
 **`staged`**
 
-This ensures only intentionally staged changes are reviewed.
-No other input is needed to determine the scope.
+Do not infer scope from anywhere else.
 
 ---
 
-# Allowed MCP Tools (Strict)
+## Allowed MCP Tool
 
 ### `get_local_content(pageNumber, [scope], [modelName], [maxTokens])`
 
-**Primary review tool.** Use this to iterate through pages of local change content.
+Primary tool for reviewing local changes.
 
-Purpose:
-- retrieve structured diffs for all files on a specific page
-- each page is pre-sized to fit within the context budget
-- the response includes `repositoryRoot`, `currentBranch`, `scope`, page info, and per-file diffs
-
-The first page response tells you the `totalPages` - loop through all pages.
-
-Start with page 1:
-```
-response = get_local_content(pageNumber: 1, scope: "staged")
-```
-
-The response includes:
-- `repositoryRoot` - absolute path to the git repository
-- `currentBranch` - current branch name (null if detached HEAD)
-- `scope` - the scope used
-- `pageNumber` / `totalPages` - pagination info
-- `files` - array of structured diffs per file
+It returns:
+- `repositoryRoot`
+- `currentBranch`
+- `scope`
+- `pageNumber`, `totalPages`
+- `files` – structured diffs for this page
 - `summary.filesOnPage`, `summary.totalFiles`, `summary.hasMorePages`, `summary.categories`
 
----
+Start with page 1 and the chosen scope (default: `"staged"`).
 
-### Legacy tools (available but not recommended)
-
-These tools remain available for specific use cases:
-
-- `get_local_files([scope])` - list changed files with stats (no diffs)
-- `get_local_file_diff(path, [scope])` - single-file diff
-
-Prefer `get_local_content` - it provides server-managed pagination and reduces tool calls.
-
----
-
-# Mandatory Workflow
-
-## Step 1 - Retrieve first page of content
-
-Call:
-
+Example:
 `get_local_content(pageNumber: 1, scope: "staged")`
 
-From the response:
-- note `repositoryRoot` and `currentBranch`
-- note `totalPages` to plan iteration
-- review each file in the `files` array
-- check `summary.categories` for change distribution
+---
+
+## Mandatory Workflow
+
+### Step 1 – First page
+
+1. Determine the scope (user-provided or default `"staged"`).
+2. Call:
+   `get_local_content(pageNumber: 1, scope: <scope>)`
+3. From the response:
+   - note `repositoryRoot`, `currentBranch`, `scope`
+   - note `totalPages` and `summary` info
+   - review each file in `files`
+   - for each file:
+     - analyze diff hunks
+     - if `skipReason` is present, do not analyze content, just note the skip
+
+After finishing page 1, ask the user:
+**“Page 1 of N reviewed. Continue to page 2?”**
+
+Do NOT load page 2 before the user confirms.
 
 ---
 
-## Step 2 - Iterate remaining pages
+### Step 2 – Subsequent pages (with user confirmation)
 
-If `summary.hasMorePages` is true, continue:
+For each next page (2, 3, … up to `totalPages`):
 
-```
-for pageNumber in 2..totalPages:
-    response = get_local_content(pageNumber, scope: "staged")
-    review each file in response.files
-```
+1. Only if the user confirms, call:
+   `get_local_content(pageNumber: X, scope: <scope>)`
+2. Review files on that page as above.
+3. After finishing the page:
+   - if `pageNumber < totalPages`, ask:
+     **“Page X of N reviewed. Continue to page X+1?”**
+   - if this was the last page, finish the review.
 
-For each file:
-- analyze the diff hunks for issues
-- note files with `skipReason` - do not analyze their content
-
----
-
-# Review Priorities
-
-Order:
-1. High-priority source files
-2. Other source files
-3. Configuration files
-4. Test files
-5. Documentation
+Never pre-fetch future pages without explicit user confirmation.
 
 ---
 
-# What to Look For
+## Review Focus
 
-Check diffs for:
-- correctness issues
-- potential bugs or regressions
-- null safety problems
-- concurrency hazards
-- async/await correctness
-- missing validation or error-handling
+When inspecting diffs, look for:
+- correctness and potential regressions
+- null safety issues
+- concurrency / async/await problems
+- missing validation or error handling
 - unintended behavior changes
 - performance regressions
-- duplicated or fragile logic
+- fragile / duplicated logic
 - missing or insufficient tests
 
 For test changes:
-- ensure coverage matches modified logic
-- confirm assertions are meaningful
+- check coverage of new/modified logic
+- ensure assertions are meaningful
 
 ---
 
-# Skipped Diffs
+## Output Format
 
-Files may have their diff skipped with a `skipReason` field (e.g. `"binary file"`, `"generated file"`, `"file deleted"`). Do not analyze their content - acknowledge the skip in review notes.
-
----
-
-# Output Format
-
-## Verdict
+### Verdict
 Short summary including:
 - repository root
 - current branch
 - scope used
 - number of files reviewed
-- number of pages processed
+- number of pages reviewed
 
----
-
-## Critical Issues
+### Critical Issues
 For each:
 - file path
 - severity
@@ -153,35 +119,30 @@ For each:
 - why it matters
 - recommended fix
 
----
-
-## Important Improvements
+### Important Improvements
 For each:
 - file path
 - what to improve
 - reason
-- suggested correction
+- suggested change
 
----
+### Minor Suggestions
+Optional improvements.
 
-## Minor Suggestions
-
----
-
-## Review Notes
+### Review Notes
 Include:
 - scope used
 - which pages were reviewed
 - which files were reviewed
 - which files were skipped and why
-- limitations due to large change sets (if applicable)
+- any limitations due to large change sets
 
 ---
 
-# Behavioral Requirements
+## Behavioral Rules
 
-- Never infer file contents.
-- Never analyze files outside MCP responses.
+- Never infer file contents outside MCP responses.
+- Never analyze files or project state outside MCP responses.
 - Avoid unnecessary tool calls.
-- Prefer fewer, higher-value insights.
-- If something is uncertain, mark it as a potential risk.
+- Prefer fewer, higher-value findings over many trivial comments.
+- If something is uncertain, label it as a potential risk.
