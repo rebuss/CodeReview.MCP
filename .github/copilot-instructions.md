@@ -84,9 +84,20 @@ pattern changes, a new type of extensible component is introduced, or test
 scaffolding conventions change. Do **not** update when merely implementing a feature 
 using an existing recipe.
 
-### Update README
-After applying changes to the project, update the `README.md` and `DeveloperGuide.md` files **only if** the modifications provide meaningful value to the documentation.  
+### Update README and DeveloperGuide
+After applying changes to the project, update `README.md` and `DeveloperGuide.md` **only if** the modifications provide meaningful value to the documentation.  
 Skip the update if the changes are too minor, overly detailed, or not relevant for end-users.
+
+**`DeveloperGuide.md` must be updated when any of the following change:**
+
+- A new MCP tool is added or an existing tool's parameters change (update the MCP Tools Reference tables, including primary vs. legacy classification)
+- The recommended review workflow changes (update the Review Workflows section)
+- A new CLI flag or server argument is added to `CliArgumentParser` (update the CLI Commands section)
+- Authentication or configuration handling changes for any provider — Azure DevOps or GitHub (update Authentication and Configuration sections)
+- A new SCM provider is introduced (add corresponding auth, config, and troubleshooting sub-sections)
+- A new troubleshooting scenario is identified (add to the Troubleshooting section)
+
+Do **not** update `DeveloperGuide.md` for internal refactoring, test changes, or implementation details that have no end-user impact.
 
 ### Code Quality and Testing Requirements
 After modifying or generating code:

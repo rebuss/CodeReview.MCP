@@ -1502,8 +1502,9 @@ public class InitCommandTests
             Assert.Equal(0, exitCode);
 
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var globalVsConfig = Path.Combine(userHome, ".vs", "mcp.json");
-            var globalVsCodeConfig = Path.Combine(userHome, ".vscode", "mcp.json");
+            var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var globalVsConfig = Path.Combine(userHome, "mcp.json");
+            var globalVsCodeConfig = Path.Combine(appData, "Code", "User", "mcp.json");
 
             Assert.True(File.Exists(globalVsConfig), $"Expected global VS config at {globalVsConfig}");
             Assert.True(File.Exists(globalVsCodeConfig), $"Expected global VS Code config at {globalVsCodeConfig}");
@@ -1575,9 +1576,7 @@ public class InitCommandTests
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var globalVsDir = Path.Combine(userHome, ".vs");
-        var globalVsConfig = Path.Combine(globalVsDir, "mcp.json");
-        Directory.CreateDirectory(globalVsDir);
+        var globalVsConfig = Path.Combine(userHome, "mcp.json");
 
         string? existingContent = null;
         bool configExisted = File.Exists(globalVsConfig);
@@ -1629,8 +1628,9 @@ public class InitCommandTests
         Assert.Contains(targets, t => t.IdeName == "VS Code (global)");
 
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".vs", "mcp.json"));
-        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".vscode", "mcp.json"));
+        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, "mcp.json"));
+        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(appData, "Code", "User", "mcp.json"));
     }
 
     // -------------------------------------------------------------------------

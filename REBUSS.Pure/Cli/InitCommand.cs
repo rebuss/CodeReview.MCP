@@ -325,24 +325,27 @@ public class InitCommand : ICliCommand
 
     /// <summary>
     /// Returns global (user-level) MCP configuration targets.
-    /// Writes to <c>~/.vs/mcp.json</c> (Visual Studio) and <c>~/.vscode/mcp.json</c> (VS Code)
-    /// in the user's home directory so every workspace picks up the configuration.
+    /// Visual Studio reads <c>~/mcp.json</c> directly from the user's home directory.
+    /// VS Code reads <c>%APPDATA%/Code/User/mcp.json</c> on Windows
+    /// (<c>~/.config/Code/User/mcp.json</c> on Linux).
+    /// Writing to both ensures every workspace picks up the configuration.
     /// </summary>
     internal static List<McpConfigTarget> ResolveGlobalConfigTargets()
     {
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
         return
         [
             new McpConfigTarget(
                 "Visual Studio (global)",
-                Path.Combine(userHome, VisualStudioDir),
-                Path.Combine(userHome, VisualStudioDir, McpConfigFileName)),
+                userHome,
+                Path.Combine(userHome, McpConfigFileName)),
 
             new McpConfigTarget(
                 "VS Code (global)",
-                Path.Combine(userHome, VsCodeDir),
-                Path.Combine(userHome, VsCodeDir, McpConfigFileName))
+                Path.Combine(appData, "Code", "User"),
+                Path.Combine(appData, "Code", "User", McpConfigFileName))
         ];
     }
 
