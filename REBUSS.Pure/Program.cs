@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.AzureDevOps;
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.Cli;
@@ -45,7 +46,11 @@ namespace REBUSS.Pure
                     GetExecutablePath(),
                     parseResult.Pat,
                     parseResult.IsGlobal,
-                    parseResult.Ide),
+                    parseResult.Ide,
+                    detectedProvider: null,
+                    processRunner: null,
+                    localConfigStore: new AzureDevOps.Configuration.LocalConfigStore(NullLogger<AzureDevOps.Configuration.LocalConfigStore>.Instance),
+                    gitHubConfigStore: new GitHub.Configuration.GitHubConfigStore(NullLogger<GitHub.Configuration.GitHubConfigStore>.Instance)),
                 _ => throw new InvalidOperationException(string.Format(Resources.ErrorUnknownCommand, parseResult.CommandName))
             };
 
@@ -99,7 +104,7 @@ namespace REBUSS.Pure
                 builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
                 // Register business services (providers, algorithms, shared services)
-                ConfigureBusinessServices(builder.Services, configuration);
+                ConfigureBusinessServices(builder.Services, configuration, parseResult.RepoPath);
 
                 // Add MCP server with stdio transport and tool discovery
                 builder.Services
@@ -138,7 +143,7 @@ namespace REBUSS.Pure
             }
         }
 
-        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration)
+        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration, string? repoPath = null)
         {
             // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
             services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
@@ -161,7 +166,7 @@ namespace REBUSS.Pure
             services.AddSingleton<IPageReferenceCodec, Pagination.PageReferenceCodec>();
 
             // Provider selection: explicit config > auto-detection from git remote
-            var provider = DetectProvider(configuration);
+            var provider = DetectProvider(configuration, repoPath);
             switch (provider)
             {
                 case GitHubNames.Provider:
@@ -237,7 +242,7 @@ namespace REBUSS.Pure
         /// Determines the SCM provider to use based on configuration, then git remote auto-detection.
         /// Priority: explicit "Provider" key > GitHub config section populated > AzureDevOps config section populated > git remote URL > default (AzureDevOps).
         /// </summary>
-        internal static string DetectProvider(IConfiguration configuration)
+        internal static string DetectProvider(IConfiguration configuration, string? repoPath = null)
         {
             // 1. Explicit provider setting (normalized to canonical casing)
             var explicitProvider = configuration.GetValue<string>(Resources.ConfigKeyProvider);
@@ -260,7 +265,7 @@ namespace REBUSS.Pure
                 return AzureDevOpsNames.Provider;
 
             // 4. Auto-detect from git remote URL
-            var remoteUrl = GetGitRemoteUrl();
+            var remoteUrl = GetGitRemoteUrl(repoPath);
             if (remoteUrl is not null)
             {
                 if (remoteUrl.Contains(GitHubNames.Domain, StringComparison.OrdinalIgnoreCase))
@@ -275,7 +280,7 @@ namespace REBUSS.Pure
             return AzureDevOpsNames.Provider;
         }
 
-        private static string? GetGitRemoteUrl()
+        private static string? GetGitRemoteUrl(string? workingDirectory = null)
         {
             try
             {
@@ -285,6 +290,7 @@ namespace REBUSS.Pure
                     {
                         FileName = Resources.GitExecutable,
                         Arguments = Resources.GitRemoteGetUrlArgs,
+                        WorkingDirectory = workingDirectory ?? string.Empty,
                         RedirectStandardInput = true,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,

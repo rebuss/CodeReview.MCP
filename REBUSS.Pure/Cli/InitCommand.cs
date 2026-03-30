@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
+using REBUSS.Pure.AzureDevOps.Configuration;
+using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Properties;
 using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
 using GitHubNames = REBUSS.Pure.GitHub.Names;
@@ -30,6 +32,7 @@ public class InitCommand : ICliCommand
     private const string VsCodeDir = ".vscode";
     private const string VisualStudioDir = ".vs";
     private const string McpConfigFileName = "mcp.json";
+    private const string VsGlobalMcpConfigFileName = ".mcp.json";
     private const string ResourcePrefix = AppConstants.ServerName + ".Cli.Prompts.";
 
     private static readonly string[] PromptFileNames =
@@ -47,16 +50,18 @@ public class InitCommand : ICliCommand
     private readonly string? _ide;
     private readonly string? _detectedProvider;
     private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
+    private readonly ILocalConfigStore? _localConfigStore;
+    private readonly IGitHubConfigStore? _gitHubConfigStore;
 
     public string Name => "init";
 
     public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null)
-        : this(output, Console.In, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider: null, processRunner: null)
+        : this(output, Console.In, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider: null, processRunner: null, localConfigStore: null, gitHubConfigStore: null)
     {
     }
 
     public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null, string? detectedProvider = null)
-        : this(output, input, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider, processRunner: null)
+        : this(output, input, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider, processRunner: null, localConfigStore: null, gitHubConfigStore: null)
     {
     }
 
@@ -72,7 +77,9 @@ public class InitCommand : ICliCommand
         bool isGlobal,
         string? ide,
         string? detectedProvider,
-        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner)
+        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner,
+        ILocalConfigStore? localConfigStore = null,
+        IGitHubConfigStore? gitHubConfigStore = null)
     {
         _output = output;
         _input = input;
@@ -83,6 +90,8 @@ public class InitCommand : ICliCommand
         _ide = ide;
         _detectedProvider = detectedProvider;
         _processRunner = processRunner;
+        _localConfigStore = localConfigStore;
+        _gitHubConfigStore = gitHubConfigStore;
     }
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -125,6 +134,10 @@ public class InitCommand : ICliCommand
         }
 
         await CopyPromptFilesAsync(gitRoot, cancellationToken);
+
+        // Clear provider caches so the next server start detects fresh config from the new repo
+        _localConfigStore?.Clear();
+        _gitHubConfigStore?.Clear();
 
         // Authenticate via the appropriate CLI flow after configs and prompts are already on disk
         if (string.IsNullOrWhiteSpace(_pat))
@@ -325,7 +338,7 @@ public class InitCommand : ICliCommand
 
     /// <summary>
     /// Returns global (user-level) MCP configuration targets.
-    /// Visual Studio reads <c>~/mcp.json</c> directly from the user's home directory.
+    /// Visual Studio reads <c>~/.mcp.json</c> directly from the user's home directory.
     /// VS Code reads <c>%APPDATA%/Code/User/mcp.json</c> on Windows
     /// (<c>~/.config/Code/User/mcp.json</c> on Linux).
     /// Writing to both ensures every workspace picks up the configuration.
@@ -340,7 +353,7 @@ public class InitCommand : ICliCommand
             new McpConfigTarget(
                 "Visual Studio (global)",
                 userHome,
-                Path.Combine(userHome, McpConfigFileName)),
+                Path.Combine(userHome, VsGlobalMcpConfigFileName)),
 
             new McpConfigTarget(
                 "VS Code (global)",

@@ -69,4 +69,20 @@ public class GitHubConfigStore : IGitHubConfigStore
             _logger.LogWarning(ex, "Failed to save cached GitHub config to {Path}", ConfigFilePath);
         }
     }
+
+    public void Clear()
+    {
+        try
+        {
+            if (File.Exists(ConfigFilePath))
+            {
+                File.Delete(ConfigFilePath);
+                _logger.LogDebug("Cleared cached GitHub config at {Path}", ConfigFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clear cached GitHub config at {Path}", ConfigFilePath);
+        }
+    }
 }

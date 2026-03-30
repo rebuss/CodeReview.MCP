@@ -197,7 +197,10 @@ namespace REBUSS.Pure.AzureDevOps.Api
         /// </summary>
         private async Task<string> GetStringAsync(string relativeUrl, string endpointName = "Unknown")
         {
-            var fullUrl = new Uri(_httpClient.BaseAddress!, relativeUrl);
+            if (_httpClient.BaseAddress is null)
+                throw new InvalidOperationException(Resources.ErrorConfigurationIncomplete);
+
+            var fullUrl = new Uri(_httpClient.BaseAddress, relativeUrl);
             _logger.LogDebug("GET {FullUrl}", fullUrl);
 
             var sw = Stopwatch.StartNew();

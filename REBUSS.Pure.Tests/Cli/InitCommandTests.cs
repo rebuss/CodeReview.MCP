@@ -1,4 +1,6 @@
+using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.Cli;
+using REBUSS.Pure.GitHub.Configuration;
 
 namespace REBUSS.Pure.Tests.Cli;
 
@@ -17,11 +19,314 @@ public class InitCommandTests
     private static InitCommand CreateCommand(
         TextWriter output, string workingDirectory, string executablePath, string? pat = null,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
-        TextReader? input = null, string? detectedProvider = null, bool isGlobal = false, string? ide = null)
+        TextReader? input = null, string? detectedProvider = null, bool isGlobal = false, string? ide = null,
+        ILocalConfigStore? localConfigStore = null, IGitHubConfigStore? gitHubConfigStore = null)
     {
         return new InitCommand(output, input ?? new StringReader("n"), workingDirectory, executablePath, pat,
-            isGlobal, ide, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled);
+            isGlobal, ide, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled,
+            localConfigStore, gitHubConfigStore);
     }
+    // -------------------------------------------------------------------------
+    // Error cases
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_ClearsBothProviderCaches_OnSuccess()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var azdoClearCalled = false;
+            var githubClearCalled = false;
+
+            var localConfigStore = new FakeLocalConfigStore(() => azdoClearCalled = true);
+            var gitHubConfigStore = new 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FakeGitHubConfigStore(() => githubClearCalled = true);
+
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe",
+                localConfigStore: localConfigStore, gitHubConfigStore: gitHubConfigStore);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(azdoClearCalled, "Azure DevOps config store Clear() was not called");
+            Assert.True(githubClearCalled, "GitHub config store Clear() was not called");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotClearCaches_WhenNotInGitRepository()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var azdoClearCalled = false;
+            var githubClearCalled = false;
+
+            var localConfigStore = new FakeLocalConfigStore(() => azdoClearCalled = true);
+            var gitHubConfigStore = new FakeGitHubConfigStore(() => githubClearCalled = true);
+
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe",
+                localConfigStore: localConfigStore, gitHubConfigStore: gitHubConfigStore);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(1, exitCode);
+            Assert.False(azdoClearCalled, "Azure DevOps config store Clear() should not be called on failure");
+            Assert.False(githubClearCalled, "GitHub config store Clear() should not be called on failure");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Error cases
     // -------------------------------------------------------------------------
@@ -1503,7 +1808,7 @@ public class InitCommandTests
 
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var globalVsConfig = Path.Combine(userHome, "mcp.json");
+            var globalVsConfig = Path.Combine(userHome, ".mcp.json");
             var globalVsCodeConfig = Path.Combine(appData, "Code", "User", "mcp.json");
 
             Assert.True(File.Exists(globalVsConfig), $"Expected global VS config at {globalVsConfig}");
@@ -1576,7 +1881,7 @@ public class InitCommandTests
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var globalVsConfig = Path.Combine(userHome, "mcp.json");
+        var globalVsConfig = Path.Combine(userHome, ".mcp.json");
 
         string? existingContent = null;
         bool configExisted = File.Exists(globalVsConfig);
@@ -1629,7 +1934,7 @@ public class InitCommandTests
 
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, "mcp.json"));
+        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".mcp.json"));
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(appData, "Code", "User", "mcp.json"));
     }
 
@@ -1812,3 +2117,16 @@ public class InitCommandTests
     }
 }
 
+file sealed class FakeLocalConfigStore(Action onClear) : ILocalConfigStore
+{
+    public CachedConfig? Load() => null;
+    public void Save(CachedConfig config) { }
+    public void Clear() => onClear();
+}
+
+file sealed class FakeGitHubConfigStore(Action onClear) : IGitHubConfigStore
+{
+    public GitHubCachedConfig? Load() => null;
+    public void Save(GitHubCachedConfig config) { }
+    public void Clear() => onClear();
+}

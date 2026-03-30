@@ -126,6 +126,10 @@ After authenticating, restart Visual Studio (or your MCP client).
 </value>
   </data>
 
+  <data name="ErrorConfigurationIncomplete" xml:space="preserve">
+    <value>Azure DevOps configuration is incomplete — organization, project, or repository name could not be resolved. Provide configuration via MCP roots, appsettings, environment variables, or the AzureDevOps:LocalRepoPath option.</value>
+  </data>
+
   <data name="ErrorFileNotFoundAtRef" xml:space="preserve">
     <value>File '{0}' not found at ref '{1}'</value>
   </data>

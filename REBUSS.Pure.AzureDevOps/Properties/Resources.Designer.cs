@@ -139,7 +139,16 @@ namespace REBUSS.Pure.AzureDevOps.Properties {
                 return ResourceManager.GetString("ErrorAzureDevOpsAuthRequired", resourceCulture);
             }
         }
-        
+
+        /// <summary>
+        ///   Looks up a localized string similar to Azure DevOps configuration is incomplete.
+        /// </summary>
+        internal static string ErrorConfigurationIncomplete {
+            get {
+                return ResourceManager.GetString("ErrorConfigurationIncomplete", resourceCulture);
+            }
+        }
+
         /// <summary>
         ///   Looks up a localized string similar to File &apos;{0}&apos; not found at ref &apos;{1}&apos;.
         /// </summary>

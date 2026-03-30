@@ -21,7 +21,7 @@ rebuss-pure init --provider azuredevops
 rebuss-pure init --ide vscode
 rebuss-pure init --ide vs
 
-# Global mode — writes user-level config (~\mcp.json & %APPDATA%\Code\User\mcp.json)
+# Global mode — writes user-level config (~\.mcp.json & %APPDATA%\Code\User\mcp.json)
 rebuss-pure init -g
 ```
 
@@ -44,7 +44,7 @@ rebuss-pure init -g
 **Global mode (`-g` / `--global`):**
 
 When the `-g` flag is used, the MCP configuration is written to the user's home directory
-(`~/mcp.json` for Visual Studio and `%APPDATA%\Code\User\mcp.json` for VS Code on Windows, `~/.config/Code/User/mcp.json` on Linux) instead of the repository-local directories.
+(`~/.mcp.json` for Visual Studio and `%APPDATA%\Code\User\mcp.json` for VS Code on Windows, `~/.config/Code/User/mcp.json` on Linux) instead of the repository-local directories.
 The `--repo` argument in the config points to the current repository's git root.
 
 This is useful when Visual Studio does not detect the local `.vs/mcp.json` file.
