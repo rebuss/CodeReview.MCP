@@ -20,11 +20,12 @@ public class InitCommandTests
         TextWriter output, string workingDirectory, string executablePath, string? pat = null,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
         TextReader? input = null, string? detectedProvider = null, bool isGlobal = false, string? ide = null,
-        ILocalConfigStore? localConfigStore = null, IGitHubConfigStore? gitHubConfigStore = null)
+        ILocalConfigStore? localConfigStore = null, IGitHubConfigStore? gitHubConfigStore = null,
+        Func<List<McpConfigTarget>>? globalConfigTargetsResolver = null)
     {
         return new InitCommand(output, input ?? new StringReader("n"), workingDirectory, executablePath, pat,
             isGlobal, ide, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled,
-            localConfigStore, gitHubConfigStore);
+            localConfigStore, gitHubConfigStore, globalConfigTargetsResolver);
     }
     // -------------------------------------------------------------------------
     // Error cases
@@ -1797,19 +1798,25 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
+        var globalTempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var globalVsConfig = Path.Combine(globalTempDir, ".mcp.json");
+        var globalVsCodeDir = Path.Combine(globalTempDir, "Code", "User");
+        var globalVsCodeConfig = Path.Combine(globalVsCodeDir, "mcp.json");
+        List<McpConfigTarget> globalTargets =
+        [
+            new McpConfigTarget("Visual Studio (global)", globalTempDir, globalVsConfig),
+            new McpConfigTarget("VS Code (global)", globalVsCodeDir, globalVsCodeConfig)
+        ];
+
         try
         {
             var output = new StringWriter();
-            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true);
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true,
+                globalConfigTargetsResolver: () => globalTargets);
 
             var exitCode = await command.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
-
-            var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var globalVsConfig = Path.Combine(userHome, ".mcp.json");
-            var globalVsCodeConfig = Path.Combine(appData, "Code", "User", "mcp.json");
 
             Assert.True(File.Exists(globalVsConfig), $"Expected global VS config at {globalVsConfig}");
             Assert.True(File.Exists(globalVsCodeConfig), $"Expected global VS Code config at {globalVsCodeConfig}");
@@ -1824,6 +1831,8 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         finally
         {
             Directory.Delete(tempDir, recursive: true);
+            if (Directory.Exists(globalTempDir))
+                Directory.Delete(globalTempDir, recursive: true);
         }
     }
 
@@ -1833,10 +1842,20 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
+        var globalTempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var globalVsConfig = Path.Combine(globalTempDir, ".mcp.json");
+        var globalVsCodeDir = Path.Combine(globalTempDir, "Code", "User");
+        List<McpConfigTarget> globalTargets =
+        [
+            new McpConfigTarget("Visual Studio (global)", globalTempDir, globalVsConfig),
+            new McpConfigTarget("VS Code (global)", globalVsCodeDir, Path.Combine(globalVsCodeDir, "mcp.json"))
+        ];
+
         try
         {
             var output = new StringWriter();
-            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true);
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true,
+                globalConfigTargetsResolver: () => globalTargets);
 
             var exitCode = await command.ExecuteAsync();
 
@@ -1847,6 +1866,8 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         finally
         {
             Directory.Delete(tempDir, recursive: true);
+            if (Directory.Exists(globalTempDir))
+                Directory.Delete(globalTempDir, recursive: true);
         }
     }
 
@@ -1856,10 +1877,20 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
+        var globalTempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var globalVsConfig = Path.Combine(globalTempDir, ".mcp.json");
+        var globalVsCodeDir = Path.Combine(globalTempDir, "Code", "User");
+        List<McpConfigTarget> globalTargets =
+        [
+            new McpConfigTarget("Visual Studio (global)", globalTempDir, globalVsConfig),
+            new McpConfigTarget("VS Code (global)", globalVsCodeDir, Path.Combine(globalVsCodeDir, "mcp.json"))
+        ];
+
         try
         {
             var output = new StringWriter();
-            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true);
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true,
+                globalConfigTargetsResolver: () => globalTargets);
 
             var exitCode = await command.ExecuteAsync();
 
@@ -1871,6 +1902,8 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         finally
         {
             Directory.Delete(tempDir, recursive: true);
+            if (Directory.Exists(globalTempDir))
+                Directory.Delete(globalTempDir, recursive: true);
         }
     }
 
@@ -1880,13 +1913,14 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
-        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var globalVsConfig = Path.Combine(userHome, ".mcp.json");
-
-        string? existingContent = null;
-        bool configExisted = File.Exists(globalVsConfig);
-        if (configExisted)
-            existingContent = await File.ReadAllTextAsync(globalVsConfig);
+        var globalTempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var globalVsConfig = Path.Combine(globalTempDir, ".mcp.json");
+        var globalVsCodeDir = Path.Combine(globalTempDir, "Code", "User");
+        List<McpConfigTarget> globalTargets =
+        [
+            new McpConfigTarget("Visual Studio (global)", globalTempDir, globalVsConfig),
+            new McpConfigTarget("VS Code (global)", globalVsCodeDir, Path.Combine(globalVsCodeDir, "mcp.json"))
+        ];
 
         var otherServerJson = """
             {
@@ -1895,12 +1929,15 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
               }
             }
             """;
+
+        Directory.CreateDirectory(globalTempDir);
         await File.WriteAllTextAsync(globalVsConfig, otherServerJson);
 
         try
         {
             var output = new StringWriter();
-            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true);
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", isGlobal: true,
+                globalConfigTargetsResolver: () => globalTargets);
 
             var exitCode = await command.ExecuteAsync();
 
@@ -1913,13 +1950,8 @@ FakeGitHubConfigStore(() => githubClearCalled = true);
         }
         finally
         {
-            // Restore original global config
-            if (configExisted && existingContent is not null)
-                await File.WriteAllTextAsync(globalVsConfig, existingContent);
-            else if (!configExisted && File.Exists(globalVsConfig))
-                File.Delete(globalVsConfig);
-
             Directory.Delete(tempDir, recursive: true);
+            Directory.Delete(globalTempDir, recursive: true);
         }
     }
 

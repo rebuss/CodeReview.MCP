@@ -52,6 +52,7 @@ public class InitCommand : ICliCommand
     private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
     private readonly ILocalConfigStore? _localConfigStore;
     private readonly IGitHubConfigStore? _gitHubConfigStore;
+    private readonly Func<List<McpConfigTarget>>? _globalConfigTargetsResolver;
 
     public string Name => "init";
 
@@ -79,7 +80,8 @@ public class InitCommand : ICliCommand
         string? detectedProvider,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner,
         ILocalConfigStore? localConfigStore = null,
-        IGitHubConfigStore? gitHubConfigStore = null)
+        IGitHubConfigStore? gitHubConfigStore = null,
+        Func<List<McpConfigTarget>>? globalConfigTargetsResolver = null)
     {
         _output = output;
         _input = input;
@@ -92,6 +94,7 @@ public class InitCommand : ICliCommand
         _processRunner = processRunner;
         _localConfigStore = localConfigStore;
         _gitHubConfigStore = gitHubConfigStore;
+        _globalConfigTargetsResolver = globalConfigTargetsResolver;
     }
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -107,7 +110,7 @@ public class InitCommand : ICliCommand
         // interactive or long-running Azure CLI steps. This ensures files are written
         // even if the user cancels during az install or az login.
         var targets = _isGlobal
-            ? ResolveGlobalConfigTargets()
+            ? (_globalConfigTargetsResolver?.Invoke() ?? ResolveGlobalConfigTargets())
             : ResolveConfigTargets(gitRoot, _ide);
 
         var normalizedExePath = _executablePath.Replace("\\", "\\\\");
