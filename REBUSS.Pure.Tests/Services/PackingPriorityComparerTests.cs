@@ -87,6 +87,17 @@ public class PackingPriorityComparerTests
         Assert.Equal(0, _comparer.Compare(item, item));
     }
 
+    // --- TokenCount is not a sort key ---
+
+    [Fact]
+    public void Compare_IgnoresTokenCount()
+    {
+        var small = new PackingCandidate("a.cs", 50, FileCategory.Source, 10);
+        var large = new PackingCandidate("a.cs", 500, FileCategory.Source, 10);
+
+        Assert.Equal(0, _comparer.Compare(small, large));
+    }
+
     // --- Null handling ---
 
     [Fact]

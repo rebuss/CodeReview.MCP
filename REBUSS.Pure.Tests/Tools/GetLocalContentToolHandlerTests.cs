@@ -188,13 +188,19 @@ public class GetLocalContentToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Returns(new PageAllocation(new[] { slice1, slice2 }, 2, 2));
 
-        await _handler.ExecuteAsync(pageNumber: 1);
+        var json = await _handler.ExecuteAsync(pageNumber: 1);
 
         // Only first file's diff should be fetched
         await _localProvider.Received(1).GetFileDiffAsync(
             "src/A.cs", Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>());
         await _localProvider.DidNotReceive().GetFileDiffAsync(
             "src/B.cs", Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>());
+
+        // Verify the fetched diff actually appears in the output
+        var doc = JsonDocument.Parse(json);
+        var files = doc.RootElement.GetProperty("files");
+        Assert.Equal(1, files.GetArrayLength());
+        Assert.Equal("src/A.cs", files[0].GetProperty("path").GetString());
     }
 
     // --- Error handling ---

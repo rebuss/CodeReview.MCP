@@ -308,6 +308,7 @@ public class ContextBudgetResolverTests
         var result = resolver.Resolve(explicitTokens: null, modelIdentifier: "Claude Sonnet 4.6");
 
         Assert.Equal(200_000, result.TotalBudgetTokens);
+        Assert.Equal(140_000, result.SafeBudgetTokens); // 200000 * 0.70
         Assert.Equal(BudgetSource.Registry, result.Source);
         Assert.Empty(result.Warnings);
     }
@@ -364,6 +365,7 @@ public class ContextBudgetResolverTests
         var result = resolver.Resolve(explicitTokens: null, modelIdentifier: "gpt-4.1-mini-2025");
 
         Assert.Equal(1_048_576, result.TotalBudgetTokens);
+        Assert.Equal(734_003, result.SafeBudgetTokens); // 1048576 * 0.70 (integer arithmetic)
         Assert.Equal(BudgetSource.Registry, result.Source);
         Assert.Empty(result.Warnings);
     }

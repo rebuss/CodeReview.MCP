@@ -24,14 +24,11 @@ Read these files first — they contain the raw material:
 
 Read these to extract the actual patterns (don't guess from docs — verify from code):
 
-- `REBUSS.Pure/Program.cs` — composition root: `ConfigureServices`, `DetectProvider`, `BuildCliConfigOverrides`, `ResolvePatTarget`
+- `REBUSS.Pure/Program.cs` — composition root: `ConfigureBusinessServices`, `DetectProvider`, `BuildCliConfigOverrides`, `ResolvePatTarget`
 - `REBUSS.Pure.AzureDevOps/ServiceCollectionExtensions.cs` — DI registration pattern for a provider
 - `REBUSS.Pure.GitHub/ServiceCollectionExtensions.cs` — same pattern, GitHub variant
 - `REBUSS.Pure.Core/IScmClient.cs` — the core abstraction: `IScmClient`, `IPullRequestDataProvider`, `IFileContentDataProvider`
-- `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — reference MCP tool handler implementation
-- `REBUSS.Pure/Tools/Models/StructuredDiffResult.cs` — reference tool output model (JSON DTO)
-- `REBUSS.Pure/Mcp/IMcpToolHandler.cs` — tool handler interface
-- `REBUSS.Pure/Mcp/McpServer.cs` — JSON-RPC server loop
+- `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — reference MCP tool: `[McpServerToolType]` class, `[McpServerTool]` method, `[Description]` attributes (the MCP SDK handles tool discovery and JSON-RPC dispatch)
 - `REBUSS.Pure.Core/Analysis/IReviewAnalyzer.cs` — pluggable analyzer interface
 - `REBUSS.Pure.Core/Analysis/ReviewContextOrchestrator.cs` — analyzer pipeline orchestration
 - One test file per pattern to understand testing conventions:
@@ -42,12 +39,12 @@ Read these to extract the actual patterns (don't guess from docs — verify from
 ### Step 3: Understand data flow by tracing a real request
 
 Trace the path for `get_pr_diff(prNumber: 42)` from MCP request to JSON response:
-1. `McpServer` reads JSON-RPC → dispatches to `ToolsCallMethodHandler`
-2. `ToolsCallMethodHandler` resolves `IMcpToolHandler` by name → `GetPullRequestDiffToolHandler`
+1. MCP SDK receives JSON-RPC via stdin → dispatches to `[McpServerTool]`-annotated method
+2. SDK resolves `GetPullRequestDiffToolHandler` from DI → calls `ExecuteAsync`
 3. Handler calls `IPullRequestDataProvider.GetDiffAsync(42)`
 4. DI resolves this to `AzureDevOpsScmClient` (or `GitHubScmClient`) → delegates to `DiffProvider`
 5. `DiffProvider` calls API client → parses JSON → builds `PullRequestDiff` via `StructuredDiffBuilder`
-6. Handler maps domain model → `StructuredDiffResult` → serialized to JSON
+6. Handler maps domain model → `StructuredDiffResult` → serialized to JSON string → returned to SDK
 
 Do the same for `get_local_files` (local review path without network).
 
@@ -74,7 +71,7 @@ One provider per process (selected by DetectProvider).]
 ## 2. Data Flow
 
 ### PR Review flow
-[Full pipeline: MCP stdin → McpServer → ToolsCallMethodHandler → ToolHandler → IPullRequestDataProvider → ScmClient → Provider → Parser → API → back through the chain → JSON on stdout]
+[Full pipeline: MCP stdin → SDK JSON-RPC dispatch → [McpServerTool] method → ToolHandler → IPullRequestDataProvider → ScmClient → Provider → Parser → API → back through the chain → JSON on stdout]
 
 ### Local Review flow
 [Pipeline: MCP stdin → ToolHandler → ILocalReviewProvider → LocalGitClient (git process) → StructuredDiffBuilder → JSON on stdout]
@@ -112,8 +109,8 @@ One provider per process (selected by DetectProvider).]
 ### 5.1 Add a new MCP tool
 [Step-by-step with exact file paths:
 1. Create output model in Tools/Models/ (record with [JsonPropertyName])
-2. Create handler implementing IMcpToolHandler in Tools/
-3. Register as services.AddSingleton<IMcpToolHandler, YourHandler>() in Program.ConfigureServices
+2. Create handler class in Tools/ marked with [McpServerToolType], method with [McpServerTool] and [Description]
+3. Mark class with [McpServerToolType] and method with [McpServerTool] — SDK discovers automatically via WithToolsFromAssembly()
 4. Add unit tests in REBUSS.Pure.Tests/Tools/
 5. Add smoke/contract test if applicable
 6. Update CodebaseUnderstanding.md]

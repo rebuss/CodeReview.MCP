@@ -21,18 +21,18 @@ REBUSS.Pure                                          (MCP server app: tool handl
 
 ### PR Review: `get_pr_diff(prNumber: 42)`
 ```
-MCP stdin → McpServer (JSON-RPC loop) → ToolsCallMethodHandler (resolves by ToolName)
-  → GetPullRequestDiffToolHandler.ExecuteAsync
+MCP stdin → SDK (JSON-RPC dispatch) → [McpServerTool] method on GetPullRequestDiffToolHandler
+  → ExecuteAsync
     → IPullRequestDataProvider.GetDiffAsync(42)  [DI → AzureDevOpsScmClient or GitHubScmClient]
       → DiffProvider → API client (HTTP) → Parser (JSON → domain) → StructuredDiffBuilder (hunks)
     ← PullRequestDiff
-  → map to StructuredDiffResult → serialize JSON → ToolResult → JSON-RPC response on stdout
+  → map to StructuredDiffResult → serialize JSON string → returned to SDK → JSON-RPC response on stdout
 ```
 
 ### Local Review: `get_local_files(scope)`
 ```
-MCP stdin → ToolsCallMethodHandler → GetLocalChangesFilesToolHandler.ExecuteAsync
-  → ILocalReviewProvider.GetFilesAsync(scope)
+MCP stdin → SDK → [McpServerTool] method on GetLocalChangesFilesToolHandler
+  → ExecuteAsync → ILocalReviewProvider.GetFilesAsync(scope)
     → ILocalGitClient (git child process: diff --name-status) → FileClassifier
   ← LocalReviewFiles → map to LocalReviewFilesResult → JSON on stdout
 ```
@@ -50,13 +50,13 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 |---|---|
 | **Framework** | .NET 10 (`net10.0`), C# 14, nullable `enable`, implicit usings `enable` |
 | **JSON (tool output)** | `camelCase`, `WriteIndented = true`, `WhenWritingNull` ignore; `[JsonPropertyName]` on all DTO properties |
-| **JSON (MCP protocol)** | `camelCase`, **no indent**, `WhenWritingNull` ignore (`SystemTextJsonSerializer`) |
+| **JSON (MCP protocol)** | Handled by MCP SDK internally (compact JSON-RPC envelope) |
 | **Naming** | `*Provider`, `*Parser`, `*ToolHandler`, `*ScmClient`; `I*` interfaces; `_field` privates |
 | **Pure helpers** | `internal static` methods (e.g. `ParseRemoteUrl`, `MapState`) — unit-testable via `InternalsVisibleTo` |
 | **Value types** | `readonly record struct` (e.g. `DiffEdit`, `LocalReviewScope`) |
 | **Async** | `async` all the way; propagate `CancellationToken` to every I/O call |
 | **DI** | Constructor injection; all singletons; interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IFileContentDataProvider` |
-| **Errors** | Custom exceptions (`PullRequestNotFoundException`, etc.) caught in tool handlers → `ToolResult { IsError = true }` |
+| **Errors** | Custom exceptions (`PullRequestNotFoundException`, etc.) caught in tool handlers → rethrown as `McpException` (SDK converts to error response) |
 | **Logging** | `Microsoft.Extensions.Logging`; stderr via console provider; file via `FileLoggerProvider` (daily rotation, 3-day retention) |
 | **CLI output** | All user output to `Console.Error` — stdout is **reserved** for MCP JSON-RPC stdio transport |
 | **Child processes** | Must set `RedirectStandardInput = true` + `process.StandardInput.Close()` after `Start()` to prevent stdin handle inheritance deadlocks with SDK's stdio transport |
@@ -78,9 +78,9 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 
 ### 5.1 Add a new MCP tool
 1. **Output model** → `REBUSS.Pure/Tools/Models/{Name}Result.cs` (class with `[JsonPropertyName]` on all properties)
-2. **Handler** → `REBUSS.Pure/Tools/{Name}ToolHandler.cs` implementing `IMcpToolHandler` (`ToolName`, `GetToolDefinition`, `ExecuteAsync`)
-3. **DI** → `Program.ConfigureServices`: `services.AddSingleton<IMcpToolHandler, {Name}ToolHandler>()`
-4. **Tests** → `REBUSS.Pure.Tests/Tools/{Name}ToolHandlerTests.cs` (mock provider, verify JSON structure)
+2. **Handler** → `REBUSS.Pure/Tools/{Name}ToolHandler.cs`: public class with `[McpServerToolType]`, public method with `[McpServerTool(Name = "tool_name")]` and `[Description]` on method + parameters. Returns `Task<string>` (JSON). Inject dependencies via constructor.
+3. **Discovery** → automatic via `WithToolsFromAssembly()` in `Program.cs` — no manual DI registration needed for tools
+4. **Tests** → `REBUSS.Pure.Tests/Tools/{Name}ToolHandlerTests.cs` (mock provider, call `ExecuteAsync` directly, verify JSON structure)
 5. **Smoke** → update `REBUSS.Pure.SmokeTests/McpProtocol/McpServerSmokeTests.cs` tool count assertion
 
 ### 5.2 Add a new domain model
@@ -97,7 +97,7 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 
 ### 5.4 Add a new `IReviewAnalyzer`
 1. **Implementation** → `REBUSS.Pure.Core/Analysis/{Name}Analyzer.cs` implementing `IReviewAnalyzer` (`SectionKey`, `DisplayName`, `Order`, `CanAnalyze`, `AnalyzeAsync`)
-2. **DI** → register as `services.AddSingleton<IReviewAnalyzer, {Name}Analyzer>()` (in `Program.ConfigureServices` or provider's `ServiceCollectionExtensions`)
+2. **DI** → register as `services.AddSingleton<IReviewAnalyzer, {Name}Analyzer>()` (in `Program.ConfigureBusinessServices` or provider's `ServiceCollectionExtensions`)
 3. `ReviewContextOrchestrator` discovers and invokes it automatically via `IEnumerable<IReviewAnalyzer>`
 
 ### 5.5 Add or modify a prompt
@@ -115,7 +115,7 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 1. **Project** → new `REBUSS.Pure.{Provider}` with reference to `REBUSS.Pure.Core`
 2. **Structure** → `Api/`, `Parsers/`, `Providers/`, `Configuration/` folders (mirror AzureDevOps/GitHub)
 3. **Facade** → implement `IScmClient` + `ServiceCollectionExtensions.Add{Provider}Provider(IConfiguration)`
-4. **Wire up** → add `case` in `Program.DetectProvider` + `ConfigureServices` switch
+4. **Wire up** → add `case` in `Program.DetectProvider` + `ConfigureBusinessServices` switch
 5. **Tests** → new `REBUSS.Pure.{Provider}.Tests` project
 
 ## 6. Configuration & Auth Quick Reference

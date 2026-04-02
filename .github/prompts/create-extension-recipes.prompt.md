@@ -25,14 +25,10 @@ Create a **detailed, implementable cookbook** (~250–350 lines) with full recip
 For each recipe, read the **reference implementation** files listed below **in full**. Extract the structural patterns (not business logic) to create code templates.
 
 **Recipe: New MCP tool — read these reference files:**
-- `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — full handler: `IMcpToolHandler` implementation, `JsonSerializerOptions`, `GetToolDefinition` with `ToolInputSchema`, `ExecuteAsync` with try/catch, input extraction pattern, result building
+- `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — full handler: `[McpServerToolType]` class, `[McpServerTool]` method with `[Description]` attributes, `JsonSerializerOptions`, `ExecuteAsync` with try/catch, parameter binding, result building
 - `REBUSS.Pure/Tools/GetLocalChangesFilesToolHandler.cs` — simpler handler: different provider type, optional parameters with defaults
 - `REBUSS.Pure/Tools/Models/StructuredDiffResult.cs` — output DTO: `[JsonPropertyName]` on every property, nullable for optional fields
 - `REBUSS.Pure/Tools/Models/LocalReviewFilesResult.cs` — output DTO: different shape, context fields
-- `REBUSS.Pure/Mcp/Models/ToolInputSchema.cs` — input schema: `Properties`, `Required` list
-- `REBUSS.Pure/Mcp/Models/ToolProperty.cs` — property definition: `Type`, `Description`, `Enum`, `Default`
-- `REBUSS.Pure/Mcp/Models/ToolResult.cs` — result shape: `Content` list, `IsError`
-- `REBUSS.Pure/Mcp/Models/ContentItem.cs` — content item: `Type = "text"`, `Text`
 - `REBUSS.Pure.Tests/Tools/GetPullRequestDiffToolHandlerTests.cs` — test pattern: mock provider, verify JSON, test validation, test exceptions
 - `REBUSS.Pure.Tests/Tools/GetLocalChangesFilesToolHandlerTests.cs` — test pattern: optional params, scope parsing
 
@@ -76,16 +72,16 @@ For each recipe, read the **reference implementation** files listed below **in f
 - `REBUSS.Pure.GitHub/GitHubScmClient.cs` — facade pattern: delegation + enrichment
 - `REBUSS.Pure.GitHub/Api/IGitHubApiClient.cs` — API client interface
 - `REBUSS.Pure.GitHub/Providers/GitHubDiffProvider.cs` — first ~40 lines for constructor pattern
-- `REBUSS.Pure/Program.cs` — `DetectProvider` and `ConfigureServices` switch
+- `REBUSS.Pure/Program.cs` — `DetectProvider` and `ConfigureBusinessServices` switch
 
 ### Step 3: Identify common pitfalls by reading test files
 
 For each recipe, scan the corresponding test files for edge cases that reveal common mistakes:
 - Missing `CancellationToken` propagation
 - Missing `[JsonPropertyName]` on new DTO properties (serializes as PascalCase instead of camelCase)
-- Forgetting to register in `Program.ConfigureServices`
+- Tool class not public or missing `[McpServerToolType]` attribute (SDK can't discover it)
 - Output to `Console.Out` instead of `Console.Error` (breaks MCP stdio)
-- Not handling `JsonElement` in `TryExtract*` methods (MCP sends params as `JsonElement`)
+- Missing `[Description]` on tool parameters (tool definition incomplete for AI agents)
 - Not updating smoke test tool count after adding a tool
 
 ### Step 4: Write the document
@@ -128,29 +124,28 @@ patterns to choose from based on the new tool's data source.]
 
 ### Step 2: Tool handler
 [Code template for REBUSS.Pure/Tools/{Name}ToolHandler.cs:
-- Implements IMcpToolHandler
+- Class marked with [McpServerToolType]
 - Static readonly JsonSerializerOptions (camelCase, WriteIndented=true, WhenWritingNull)
 - Constructor: inject provider interface + ILogger<T>
-- ToolName property (snake_case, e.g. "get_something")
-- GetToolDefinition: McpTool with ToolInputSchema, Properties dict, Required list
-- ExecuteAsync: try/catch structure, TryExtract* for each param, 
-  Stopwatch for logging, custom exception catch, generic Exception catch
-- Input extraction: handle JsonElement (MCP sends params as JsonElement, not CLR types)
-- Result building: domain model → DTO mapping → JSON serialization → ToolResult with ContentItem]
+- Public async method marked with [McpServerTool(Name = "tool_name")], [Description("...")]
+- Parameters with [Description] attributes, optional params have defaults
+- Returns Task<string> (JSON-serialized result)
+- try/catch structure: McpException for validation, custom exception catch, generic Exception catch
+- Result building: domain model → DTO mapping → JSON serialization → return string]
 
-### Step 3: DI registration
-[Exact line to add in Program.ConfigureServices:
-services.AddSingleton<IMcpToolHandler, {Name}ToolHandler>();
-WHERE to add it (after existing tool registrations, grouped by category)]
+### Step 3: Tool discovery
+[No manual DI registration needed. The MCP SDK discovers tools automatically via 
+`WithToolsFromAssembly()` in Program.cs, scanning for `[McpServerToolType]` classes.
+The tool class must be public. Constructor dependencies are resolved from the DI container.]
 
 ### Step 4: Unit tests
 [Code template for REBUSS.Pure.Tests/Tools/{Name}ToolHandlerTests.cs:
 - Mock provider as readonly field
-- SUT created in constructor with NullLogger<T>.Instance
-- Happy path: verify JSON structure with JsonDocument.Parse
-- Validation tests: missing params, invalid params
-- Exception tests: custom exceptions → IsError=true, generic → IsError=true
-- Pattern: CreateArgs helper method]
+- SUT created in constructor with NullLogger<T>.Instance and other dependencies
+- Happy path: call ExecuteAsync directly, verify JSON structure with JsonDocument.Parse
+- Validation tests: missing params, invalid params → McpException
+- Exception tests: custom exceptions → error JSON, generic → error JSON
+- Pattern: direct method invocation (no MCP protocol layer in unit tests)]
 
 ### Step 5: Smoke test update
 [Which assertion in McpServerSmokeTests to update (tool count)]
@@ -161,8 +156,10 @@ JSON output is camelCase, optional fields omitted when null,
 CodebaseUnderstanding.md updated]
 
 ### Common pitfalls
-[List from Step 3 analysis: JsonElement handling, [JsonPropertyName] missing, 
-Console.Out usage, CancellationToken not propagated, tool not registered]
+[List from Step 3 analysis: [JsonPropertyName] missing on DTO properties, 
+Console.Out usage (breaks MCP stdio), CancellationToken not propagated, 
+tool class not public (SDK can't discover it), missing [McpServerToolType] attribute,
+[Description] missing on parameters (tool definition incomplete)]
 
 ---
 
@@ -257,7 +254,7 @@ Test template: command test + parser test.]
 - Configuration/ (Options, Validator, RemoteDetector, ConfigStore, AuthProvider, Handler, Resolver)
 - {Provider}ScmClient.cs (facade)
 - ServiceCollectionExtensions.cs (full DI)
-Update in REBUSS.Pure: Program.DetectProvider + ConfigureServices switch.
+Update in REBUSS.Pure: Program.DetectProvider + ConfigureBusinessServices switch.
 Test project creation.]
 
 ### Validation checklist
@@ -281,15 +278,17 @@ How to read in consumer via IOptions<T>.]
 
 ---
 
-## 9. Add a New MCP Method Handler
+## 9. Extend MCP Server Capabilities
 
 ### Reference implementation
-[InitializeMethodHandler, ToolsCallMethodHandler, ToolsListMethodHandler]
+[Program.cs MCP SDK bootstrap: `AddMcpServer`, `WithStdioServerTransport`, `WithToolsFromAssembly`]
 
 ### Steps
-[Implement IMcpMethodHandler (MethodName, HandleAsync).
-Register: services.AddSingleton<IMcpMethodHandler, {Name}MethodHandler>().
-McpServer discovers automatically via IEnumerable<IMcpMethodHandler>.]
+[The MCP SDK handles all protocol methods (initialize, tools/list, tools/call) internally.
+To add new capabilities, use SDK extension points:
+- New tools: add `[McpServerToolType]` class (see Recipe 1)
+- Server info: modify `options.ServerInfo` in Program.cs
+- Resources/prompts: use SDK's `WithResources`/`WithPrompts` if supported]
 
 ### Validation checklist
 ### Common pitfalls

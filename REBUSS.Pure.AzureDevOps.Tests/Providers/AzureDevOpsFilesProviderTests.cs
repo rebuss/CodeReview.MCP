@@ -61,6 +61,7 @@ public class AzureDevOpsFilesProviderTests
         var file = result.Files[0];
         Assert.Equal("src/Service.cs", file.Path);
         Assert.Equal("modified", file.Status);
+        // Azure DevOps iteration-changes API does not return line counts — always zero
         Assert.Equal(0, file.Additions);
         Assert.Equal(0, file.Deletions);
         Assert.Equal(0, file.Changes);
@@ -159,6 +160,7 @@ public class AzureDevOpsFilesProviderTests
         var result = await _provider.GetFilesAsync(6);
 
         var file = Assert.Single(result.Files);
+        // Azure DevOps iteration-changes API does not return line counts — always zero
         Assert.Equal(0, file.Additions);
         Assert.Equal(0, file.Deletions);
         Assert.Equal(0, file.Changes);

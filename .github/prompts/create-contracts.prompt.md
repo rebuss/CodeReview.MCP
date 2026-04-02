@@ -56,21 +56,20 @@ Read **every** output model file. Document every property: name (as it appears i
 
 The server uses **two different serialization configs**. Read these to understand the full pipeline:
 
-- `REBUSS.Pure/Mcp/SystemTextJsonSerializer.cs` — MCP transport layer: `camelCase`, `WriteIndented = false`, `WhenWritingNull`
+- The MCP SDK handles transport-layer serialization internally (compact JSON-RPC envelope)
 - `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — tool handler layer: `camelCase`, `WriteIndented = true`, `WhenWritingNull`
 
-**Key insight to document:** Tool handlers serialize their output DTOs to a JSON **string** (indented, human-readable). This string is placed in `ToolResult.Content[0].Text`. The MCP transport then serializes the entire `JsonRpcResponse` (containing the `ToolResult`) with `WriteIndented = false`. The result is: compact JSON-RPC envelope wrapping a `content[0].text` field that contains a pretty-printed JSON string.
+**Key insight to document:** Tool handlers serialize their output DTOs to a JSON **string** (indented, human-readable). This string is returned from the `[McpServerTool]` method. The MCP SDK then wraps it in the JSON-RPC response envelope with compact serialization. The result is: compact JSON-RPC envelope wrapping a `content[0].text` field that contains a pretty-printed JSON string.
 
 ### Step 5: Extract error contract from tool handlers
 
 Read the error handling pattern from any tool handler (they all follow the same pattern):
 - `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — `CreateErrorResult` method
 
-And the models:
-- `REBUSS.Pure/Mcp/Models/ToolResult.cs` — `Content` + `IsError`
-- `REBUSS.Pure/Mcp/Models/ContentItem.cs` — `Type` + `Text`
-- `REBUSS.Pure/Mcp/Models/JsonRpcResponse.cs` — response envelope
-- `REBUSS.Pure/Mcp/Models/JsonRpcError.cs` — JSON-RPC level error (method not found, etc.)
+And the models (provided by the MCP SDK — `ModelContextProtocol` NuGet package):
+- The SDK defines `ToolResult`, `ContentItem`, `JsonRpcResponse`, and error types internally
+- Tool handlers return `Task<string>` — the SDK wraps the return value in the appropriate response structure
+- For protocol-level errors, the SDK generates standard JSON-RPC error responses
 
 **Document both levels:**
 1. **Tool-level error:** `ToolResult { isError: true, content: [{ type: "text", text: "error message" }] }` — returned for business errors (PR not found, file not found, validation errors)

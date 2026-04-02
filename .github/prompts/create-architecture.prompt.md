@@ -28,17 +28,13 @@ This file sits between the brief cheat sheet (`ProjectConventions.md`, ~130 line
 
 Read these files **in full** to understand internal mechanics — don't summarize from docs:
 
-**MCP protocol layer:**
-- `REBUSS.Pure/Mcp/McpServer.cs` — JSON-RPC loop: how messages are read, dispatched, errors handled, notifications ignored
-- `REBUSS.Pure/Mcp/IMcpMethodHandler.cs` — method handler contract
-- `REBUSS.Pure/Mcp/Handlers/InitializeMethodHandler.cs` — MCP handshake: what gets extracted, what gets stored
-- `REBUSS.Pure/Mcp/Handlers/ToolsCallMethodHandler.cs` — tool resolution and dispatch
-- `REBUSS.Pure/Mcp/Handlers/ToolsListMethodHandler.cs` — tool discovery
-- `REBUSS.Pure/Mcp/IJsonRpcTransport.cs` + `REBUSS.Pure/Mcp/StreamJsonRpcTransport.cs` — stdin/stdout framing
-- `REBUSS.Pure/Mcp/IJsonRpcSerializer.cs` + `REBUSS.Pure/Mcp/SystemTextJsonSerializer.cs` — serialization config
+**MCP protocol layer (SDK-based):**
+- `REBUSS.Pure/Program.cs` — MCP server bootstrap: `AddMcpServer`, `WithStdioServerTransport`, `WithToolsFromAssembly` (the SDK handles JSON-RPC loop, transport, and serialization)
+- `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — reference tool: `[McpServerToolType]` class with `[McpServerTool]` methods, `[Description]` on parameters (the SDK discovers tools via assembly scanning)
+- `REBUSS.Pure/Tools/GetLocalChangesFilesToolHandler.cs` — simpler tool example for comparison
 
 **DI composition root:**
-- `REBUSS.Pure/Program.cs` — full file: `Main`, `ConfigureServices`, `DetectProvider`, `BuildCliConfigOverrides`, `ResolvePatTarget`
+- `REBUSS.Pure/Program.cs` — full file: `Main`, `ConfigureBusinessServices`, `DetectProvider`, `BuildCliConfigOverrides`, `ResolvePatTarget`
 
 **Provider architecture (pick ONE provider to trace fully, note differences with the other):**
 - `REBUSS.Pure.AzureDevOps/ServiceCollectionExtensions.cs` — full DI registration
@@ -61,7 +57,7 @@ Read these files **in full** to understand internal mechanics — don't summariz
 - `REBUSS.Pure.GitHub/Configuration/GitHubConfigurationResolver.cs` — same pattern, note differences
 
 **Workspace root resolution:**
-- `REBUSS.Pure/Mcp/McpWorkspaceRootProvider.cs` — CLI `--repo` > MCP roots > `localRepoPath` config; URI conversion
+- `REBUSS.Pure/Services/McpWorkspaceRootProvider.cs` — CLI `--repo` > MCP roots (fetched lazily via SDK's `IMcpServer.RequestRootsAsync`) > `localRepoPath` config; URI conversion
 
 **Analysis pipeline:**
 - `REBUSS.Pure.Core/Analysis/ReviewContextOrchestrator.cs` — orchestration: fetch → order → filter → run → accumulate
@@ -81,7 +77,7 @@ While reading the code above, pay special attention to and document:
 2. **Why one provider per process?** — `DetectProvider` selects once; no runtime switching. What's the design rationale?
 3. **Why `IPostConfigureOptions` for config resolution?** — why not resolve in constructor? What does the lazy pattern buy?
 4. **Why fine-grained providers instead of one big class?** — SRP, testability, but also: how do they share data (e.g. diff provider data reused by files provider)?
-5. **MCP notification handling** — how does `McpServer` handle messages without `id`? Why silently ignore?
+5. **MCP SDK integration** — how does the app configure the MCP SDK (`AddMcpServer`, `WithStdioServerTransport`, `WithToolsFromAssembly`)? How are tools discovered via `[McpServerToolType]`/`[McpServerTool]` attributes?
 6. **HTML 203 response detection** — Azure DevOps returns HTML on expired auth with 2xx status. How is this caught?
 7. **GitHub rate-limit exclusion** — `GitHubAuthenticationHandler` retries on 401/403 but NOT on rate-limit 403. How is this distinguished?
 8. **`WorkingTreeRef` sentinel** — what is it, why does it exist, how does `LocalGitClient` use it?
@@ -102,21 +98,24 @@ Use this **exact structure** (all sections mandatory):
 > For file inventory and DI registrations, see `CodebaseUnderstanding.md`.
 > Update this file when internal mechanics, protocol handling, or design patterns change.
 
-## 1. MCP Protocol Layer
+## 1. MCP Protocol Layer (SDK-Based)
 
-### JSON-RPC Server Loop
-[How McpServer reads messages, dispatches to IMcpMethodHandler by MethodName, 
-handles errors, ignores notifications (no `id`). Mention the OCP pattern — 
-new methods added by registering new IMcpMethodHandler, not by changing McpServer.]
+### SDK Bootstrap
+[How Program.cs configures the MCP SDK: `AddMcpServer` (server info), 
+`WithStdioServerTransport` (stdin/stdout), `WithToolsFromAssembly` (attribute-based 
+tool discovery). The SDK handles JSON-RPC loop, message dispatch, and serialization — 
+no custom McpServer, transport, or serializer classes exist.]
 
-### Message Flow: initialize → tools/list → tools/call
-[Lifecycle of an MCP session: handshake (roots extraction), tool discovery, 
-tool execution. What each handler does and what state it mutates.]
+### Tool Discovery & Execution
+[How the SDK discovers tools via `[McpServerToolType]` classes and `[McpServerTool]` methods.
+`[Description]` attributes on methods and parameters generate tool definitions.
+Constructor injection works via the DI container — tool classes are not singletons, 
+they are resolved per-call.]
 
 ### Transport & Serialization
-[StreamJsonRpcTransport: newline-delimited stdin/stdout.
-SystemTextJsonSerializer: camelCase, no indent, ignore nulls.
-Why stdout is reserved — all non-protocol output must go to stderr.]
+[SDK provides stdio transport. Logging must go to stderr (stdout reserved for MCP).
+Tool handlers serialize their output DTOs to JSON strings (WriteIndented=true, camelCase, 
+WhenWritingNull) which the SDK wraps in the JSON-RPC envelope.]
 
 ## 2. Provider Architecture
 

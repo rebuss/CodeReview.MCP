@@ -24,6 +24,7 @@ Use it to determine:
 - general PR scope (title, description)
 
 Do NOT fetch any page content before metadata.
+Always call get_pr_metadata — never infer PR scope, title, or content from conversation history or branch names.
 
 ---
 
@@ -35,8 +36,19 @@ For each page:
    get_pr_content(prNumber, pageNumber, same modelName/maxTokens)
 2. Review files on this page:
    - analyze diff hunks
-   - ignore skipped diffs (note skipReason)
-   - when diff is insufficient, optionally call get_file_content_at_ref(path, head.sha or base.sha)
+   - handle skipped diffs by skipReason:
+     | skipReason | Meaning | Action |
+     |---|---|---|
+     | binary | Binary file (image, DLL, etc.) | Note as skipped; do not retrieve |
+     | generated | Auto-generated code (designer, .g.cs) | Note as skipped; do not retrieve |
+     | deleted | File removed entirely | Note deletion; no content to review |
+     | renamed | Rename/move without content change | Note rename; no diff to review |
+     | fullRewrite | Diff too large / full-file rewrite | Consider retrieving via get_file_content_at_ref |
+   - full-file retrieval rules (get_file_content_at_ref):
+     - prefer **head.sha** to see the final state of the file
+     - use **base.sha** only when you need the original for comparison
+     - never bulk-retrieve all files — only fetch when the diff is genuinely insufficient
+     - skip retrieval for binary, generated, and trivially deleted files
 3. After finishing this page:
    **Ask the user:** “Continue to next page (page X+1)?”
 
