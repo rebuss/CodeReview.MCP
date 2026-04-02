@@ -1,10 +1,20 @@
+using System.ComponentModel;
 using System.Diagnostics;
-using Microsoft.Extensions.Logging;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Models;
-using REBUSS.Pure.Services.LocalReview;
-using REBUSS.Pure.Tools.Models;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
+using REBUSS.Pure.Core;
+using REBUSS.Pure.Core.Exceptions;
+using REBUSS.Pure.Core.Models.Pagination;
+using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Shared;
+using REBUSS.Pure.Properties;
+using REBUSS.Pure.Services.LocalReview;
+using REBUSS.Pure.Services.Pagination;
+using REBUSS.Pure.Services.ResponsePacking;
+using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
@@ -12,10 +22,18 @@ namespace REBUSS.Pure.Tools
     /// Handles the <c>get_local_files</c> MCP tool.
     /// Returns a classified list of locally changed files so an AI agent can
     /// decide which files to inspect in detail.
+    /// Integrates with response packing (F003) and deterministic pagination (F004).
     /// </summary>
-    public class GetLocalChangesFilesToolHandler : IMcpToolHandler
+    [McpServerToolType]
+    public class GetLocalChangesFilesToolHandler
     {
         private readonly ILocalReviewProvider _reviewProvider;
+        private readonly IResponsePacker _packer;
+        private readonly IContextBudgetResolver _budgetResolver;
+        private readonly ITokenEstimator _tokenEstimator;
+        private readonly IFileClassifier _fileClassifier;
+        private readonly IPageAllocator _pageAllocator;
+        private readonly IPageReferenceCodec _pageReferenceCodec;
         private readonly ILogger<GetLocalChangesFilesToolHandler> _logger;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -25,58 +43,148 @@ namespace REBUSS.Pure.Tools
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
 
-        public string ToolName => "get_local_files";
-
         public GetLocalChangesFilesToolHandler(
             ILocalReviewProvider reviewProvider,
+            IResponsePacker packer,
+            IContextBudgetResolver budgetResolver,
+            ITokenEstimator tokenEstimator,
+            IFileClassifier fileClassifier,
+            IPageAllocator pageAllocator,
+            IPageReferenceCodec pageReferenceCodec,
             ILogger<GetLocalChangesFilesToolHandler> logger)
         {
             _reviewProvider = reviewProvider;
+            _packer = packer;
+            _budgetResolver = budgetResolver;
+            _tokenEstimator = tokenEstimator;
+            _fileClassifier = fileClassifier;
+            _pageAllocator = pageAllocator;
+            _pageReferenceCodec = pageReferenceCodec;
             _logger = logger;
         }
 
-        public McpTool GetToolDefinition() => new()
-        {
-            Name = ToolName,
-            Description =
-                "Lists all locally changed files in the git repository with classification metadata " +
-                "(status, extension, binary/generated/test flags, review priority) and a summary by category. " +
-                "Use this as the first step of a self-review to discover what changed before inspecting diffs. " +
-                "Supported scopes: 'working-tree' (default, staged + unstaged vs HEAD), " +
-                "'staged' (index vs HEAD only), or any branch/ref name to diff the current branch against it.",
-            InputSchema = new ToolInputSchema
-            {
-                Type = "object",
-                Properties = new Dictionary<string, ToolProperty>
-                {
-                    ["scope"] = new ToolProperty
-                    {
-                        Type = "string",
-                        Description =
-                            "The change scope to review. " +
-                            "'working-tree' (default): all uncommitted changes vs HEAD. " +
-                            "'staged': only staged (indexed) changes vs HEAD. " +
-                            "Any other value is treated as a base branch/ref (e.g. 'main', 'origin/main') " +
-                            "and returns all commits on the current branch not yet merged into that base."
-                    }
-                },
-                Required = new List<string>()
-            }
-        };
-
-        public async Task<ToolResult> ExecuteAsync(
-            Dictionary<string, object>? arguments,
+        [McpServerTool(Name = "get_local_files"), Description(
+            "Lists all locally changed files in the git repository with classification metadata " +
+            "(status, extension, binary/generated/test flags, review priority) and a summary by category. " +
+            "Use this as the first step of a self-review to discover what changed before inspecting diffs. " +
+            "Supported scopes: 'working-tree' (default, staged + unstaged vs HEAD), " +
+            "'staged' (index vs HEAD only), or any branch/ref name to diff the current branch against it.")]
+        public async Task<string> ExecuteAsync(
+            [Description("The change scope to review. 'working-tree' (default): all uncommitted changes vs HEAD. 'staged': only staged (indexed) changes vs HEAD. Any other value is treated as a base branch/ref.")] string? scope = null,
+            [Description("Optional model name (e.g. 'Claude Sonnet') to resolve context window size")] string? modelName = null,
+            [Description("Optional explicit context window size in tokens")] int? maxTokens = null,
+            [Description("Opaque page reference from a previous response. Encodes all context needed to re-derive the page.")] string? pageReference = null,
+            [Description("Page number for direct access (requires original params + budget)")] int? pageNumber = null,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                var scopeStr = ExtractScope(arguments);
-                var scope = LocalReviewScope.Parse(scopeStr);
+                var mutualExclError = PaginationOrchestrator.ValidateInputs(pageReference, pageNumber);
+                if (mutualExclError != null)
+                    throw new McpException(mutualExclError);
 
-                _logger.LogInformation("[{ToolName}] Entry: scope={Scope}", ToolName, scope);
+                var hasExplicitBudget = modelName != null || maxTokens != null;
+
+                var budget = _budgetResolver.Resolve(maxTokens, modelName);
+
+                var resolution = PaginationOrchestrator.ResolvePage(
+                    pageReference, pageNumber, _pageReferenceCodec, budget.SafeBudgetTokens, hasExplicitBudget);
+
+                if (!resolution.IsSuccess)
+                    throw new McpException(resolution.ErrorMessage!);
+
+                // Extract scope from page reference if provided
+                var effectiveScope = scope;
+                if (resolution.DecodedParams != null)
+                {
+                    if (resolution.DecodedParams.Value.TryGetProperty("scope", out var decodedScope))
+                        effectiveScope = decodedScope.GetString();
+
+                    if (scope != null && effectiveScope != null)
+                    {
+                        var scopeJson = JsonSerializer.SerializeToElement(scope);
+                        var paramError = PaginationOrchestrator.ValidateParameterMatch(
+                            resolution.DecodedParams, "scope", scopeJson);
+                        if (paramError != null)
+                            throw new McpException(paramError);
+                    }
+                }
+
+                var parsedScope = LocalReviewScope.Parse(effectiveScope);
+                var effectiveBudget = resolution.ResolvedBudget;
+
+                _logger.LogInformation(Resources.LogGetLocalFilesEntry, parsedScope);
                 var sw = Stopwatch.StartNew();
 
-                var reviewFiles = await _reviewProvider.GetFilesAsync(scope, cancellationToken);
+                var reviewFiles = await _reviewProvider.GetFilesAsync(parsedScope, cancellationToken);
+
+                if (!hasExplicitBudget && pageReference == null)
+                {
+                    // Feature 003 path
+                    var fileItems003 = BuildFileItems(reviewFiles);
+                    var candidates003 = ToolHandlerHelpers.BuildCandidates(
+                        fileItems003, budget.SafeBudgetTokens, _tokenEstimator, _fileClassifier,
+                        fi => fi.Path, fi => fi.Additions + fi.Deletions);
+                    var decision = _packer.Pack(candidates003, budget.SafeBudgetTokens);
+
+                    var packedFiles003 = new List<PullRequestFileItem>();
+                    for (var i = 0; i < decision.Items.Count; i++)
+                    {
+                        if (decision.Items[i].Status != PackingItemStatus.Deferred)
+                            packedFiles003.Add(fileItems003[i]);
+                    }
+
+                    var result003 = new LocalReviewFilesResult
+                    {
+                        RepositoryRoot = reviewFiles.RepositoryRoot,
+                        Scope = reviewFiles.Scope,
+                        CurrentBranch = reviewFiles.CurrentBranch,
+                        TotalFiles = reviewFiles.Files.Count,
+                        Files = packedFiles003,
+                        Summary = BuildSummary(reviewFiles),
+                        Manifest = ContentManifestResult.From(decision.Manifest)
+                    };
+
+                    var json003 = JsonSerializer.Serialize(result003, JsonOptions);
+                    sw.Stop();
+                    _logger.LogInformation(Resources.LogGetLocalFilesCompletedF003,
+                        parsedScope, reviewFiles.Files.Count, sw.ElapsedMilliseconds);
+                    return json003;
+                }
+
+                // Feature 004 path
+                var fileItems = BuildFileItems(reviewFiles);
+                var candidates = ToolHandlerHelpers.BuildCandidates(
+                    fileItems, effectiveBudget, _tokenEstimator, _fileClassifier,
+                    fi => fi.Path, fi => fi.Additions + fi.Deletions);
+                var sortedCandidates = ToolHandlerHelpers.SortCandidates(candidates);
+
+                PageAllocation allocation;
+                try
+                {
+                    allocation = _pageAllocator.Allocate(sortedCandidates, effectiveBudget);
+                }
+                catch (BudgetTooSmallException ex)
+                {
+                    throw new McpException(ex.Message);
+                }
+
+                var requestedPage = resolution.PageNumber;
+                if (requestedPage < 1 || requestedPage > allocation.TotalPages)
+                    throw new McpException(string.Format(Resources.ErrorPageNumberOutOfRange, requestedPage, allocation.TotalPages));
+
+                var pageSlice = allocation.Pages[requestedPage - 1];
+                var packedFiles = ToolHandlerHelpers.ExtractPageFiles(
+                    fileItems, sortedCandidates, pageSlice, fi => fi.Path);
+
+                var scopeForRef = effectiveScope ?? "working-tree";
+                var requestParams = JsonSerializer.SerializeToElement(new { scope = scopeForRef });
+
+                var paginationMeta = PaginationOrchestrator.BuildPaginationMetadata(
+                    allocation, requestedPage, _pageReferenceCodec,
+                    "get_local_files", requestParams, effectiveBudget, null);
+
+                var manifestResult = ToolHandlerHelpers.BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
 
                 var result = new LocalReviewFilesResult
                 {
@@ -84,77 +192,69 @@ namespace REBUSS.Pure.Tools
                     Scope = reviewFiles.Scope,
                     CurrentBranch = reviewFiles.CurrentBranch,
                     TotalFiles = reviewFiles.Files.Count,
-                    Files = reviewFiles.Files.Select(f => new PullRequestFileItem
-                    {
-                        Path = f.Path,
-                        Status = f.Status,
-                        Additions = f.Additions,
-                        Deletions = f.Deletions,
-                        Changes = f.Changes,
-                        Extension = f.Extension,
-                        IsBinary = f.IsBinary,
-                        IsGenerated = f.IsGenerated,
-                        IsTestFile = f.IsTestFile,
-                        ReviewPriority = f.ReviewPriority
-                    }).ToList(),
-                    Summary = new PullRequestFilesSummaryResult
-                    {
-                        SourceFiles = reviewFiles.Summary.SourceFiles,
-                        TestFiles = reviewFiles.Summary.TestFiles,
-                        ConfigFiles = reviewFiles.Summary.ConfigFiles,
-                        DocsFiles = reviewFiles.Summary.DocsFiles,
-                        BinaryFiles = reviewFiles.Summary.BinaryFiles,
-                        GeneratedFiles = reviewFiles.Summary.GeneratedFiles,
-                        HighPriorityFiles = reviewFiles.Summary.HighPriorityFiles
-                    }
+                    Files = packedFiles,
+                    Summary = BuildSummary(reviewFiles),
+                    Manifest = manifestResult,
+                    Pagination = paginationMeta
                 };
 
                 var json = JsonSerializer.Serialize(result, JsonOptions);
                 sw.Stop();
-
                 _logger.LogInformation(
-                    "[{ToolName}] Completed: scope={Scope}, {FileCount} file(s), {ResponseLength} chars, {ElapsedMs}ms",
-                    ToolName, scope, reviewFiles.Files.Count, json.Length, sw.ElapsedMilliseconds);
+                    Resources.LogGetLocalFilesCompletedF004,
+                    parsedScope, requestedPage, allocation.TotalPages, sw.ElapsedMilliseconds);
 
-                return CreateSuccessResult(json);
+                return json;
             }
             catch (LocalRepositoryNotFoundException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Repository not found", ToolName);
-                return CreateErrorResult($"Repository not found: {ex.Message}");
+                _logger.LogWarning(ex, Resources.LogGetLocalFilesRepositoryNotFound);
+                throw new McpException(string.Format(Resources.ErrorRepositoryNotFound, ex.Message));
             }
             catch (GitCommandException ex)
             {
-                _logger.LogWarning(ex, "[{ToolName}] Git command failed", ToolName);
-                return CreateErrorResult($"Git command failed: {ex.Message}");
+                _logger.LogWarning(ex, Resources.LogGetLocalFilesGitCommandFailed);
+                throw new McpException(string.Format(Resources.ErrorGitCommandFailed, ex.Message));
             }
+            catch (McpException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{ToolName}] Error", ToolName);
-                return CreateErrorResult($"Error retrieving local files: {ex.Message}");
+                _logger.LogError(ex, Resources.LogGetLocalFilesError);
+                throw new McpException(string.Format(Resources.ErrorRetrievingLocalFiles, ex.Message));
             }
         }
 
-        private static string? ExtractScope(Dictionary<string, object>? arguments)
-        {
-            if (arguments == null || !arguments.TryGetValue("scope", out var scopeObj))
-                return null;
+        // --- Build helpers ---
 
-            return scopeObj is JsonElement jsonElement
-                ? jsonElement.GetString()
-                : scopeObj?.ToString();
+        private static List<PullRequestFileItem> BuildFileItems(LocalReviewFiles reviewFiles)
+        {
+            return reviewFiles.Files.Select(f => new PullRequestFileItem
+            {
+                Path = f.Path,
+                Status = f.Status,
+                Additions = f.Additions,
+                Deletions = f.Deletions,
+                Changes = f.Changes,
+                Extension = f.Extension,
+                IsBinary = f.IsBinary,
+                IsGenerated = f.IsGenerated,
+                IsTestFile = f.IsTestFile,
+                ReviewPriority = f.ReviewPriority
+            }).ToList();
         }
 
-        private static ToolResult CreateSuccessResult(string text) => new()
+        private static PullRequestFilesSummaryResult BuildSummary(LocalReviewFiles reviewFiles)
         {
-            Content = new List<ContentItem> { new() { Type = "text", Text = text } },
-            IsError = false
-        };
-
-        private static ToolResult CreateErrorResult(string errorMessage) => new()
-        {
-            Content = new List<ContentItem> { new() { Type = "text", Text = $"Error: {errorMessage}" } },
-            IsError = true
-        };
+            return new PullRequestFilesSummaryResult
+            {
+                SourceFiles = reviewFiles.Summary.SourceFiles,
+                TestFiles = reviewFiles.Summary.TestFiles,
+                ConfigFiles = reviewFiles.Summary.ConfigFiles,
+                DocsFiles = reviewFiles.Summary.DocsFiles,
+                BinaryFiles = reviewFiles.Summary.BinaryFiles,
+                GeneratedFiles = reviewFiles.Summary.GeneratedFiles,
+                HighPriorityFiles = reviewFiles.Summary.HighPriorityFiles
+            };
+        }
     }
 }

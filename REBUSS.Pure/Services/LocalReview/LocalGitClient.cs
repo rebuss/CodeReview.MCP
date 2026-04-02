@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.Properties;
 
 namespace REBUSS.Pure.Services.LocalReview
 {
@@ -22,10 +23,32 @@ namespace REBUSS.Pure.Services.LocalReview
             LocalReviewScope scope,
             CancellationToken cancellationToken = default)
         {
-            var (args, parseMode) = BuildStatusArgs(scope);
+            // Optimistic path: assume HEAD exists (true for virtually all repositories).
+            // On failure we verify HEAD absence before retrying with no-HEAD fallback,
+            // avoiding a redundant `rev-parse --verify HEAD` process on every call.
+            var (args, parseMode) = BuildStatusArgs(scope, hasHead: true);
 
-            _logger.LogDebug("Running: git {Args} (in {Root})", args, repositoryRoot);
-            var output = await RunGitAsync(repositoryRoot, args, cancellationToken);
+            _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+
+            string output;
+            try
+            {
+                output = await RunGitAsync(repositoryRoot, args, cancellationToken);
+            }
+            catch (GitCommandException)
+            {
+                // Primary command failed â€” verify whether this is a fresh repo with no commits.
+                // If HEAD exists the failure has a different cause; re-throw the original error.
+                if (await HasHeadAsync(repositoryRoot, cancellationToken))
+                    throw;
+
+                _logger.LogDebug(Resources.LogLocalGitClientNoHead, repositoryRoot);
+
+                // BuildStatusArgs throws for BranchDiff when no HEAD â€” provides a clear error.
+                (args, parseMode) = BuildStatusArgs(scope, hasHead: false);
+                _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+                output = await RunGitAsync(repositoryRoot, args, cancellationToken);
+            }
 
             return parseMode == StatusParseMode.Porcelain
                 ? ParsePorcelainStatus(output)
@@ -50,10 +73,10 @@ namespace REBUSS.Pure.Services.LocalReview
                 return await File.ReadAllTextAsync(fullPath, cancellationToken);
             }
 
-            // git show <ref>:<path> — works for HEAD, branch names, commit SHAs, and ":0" (index)
+            // git show <ref>:<path> ï¿½ works for HEAD, branch names, commit SHAs, and ":0" (index)
             var args = $"show {gitRef}:{normalizedPath}";
 
-            _logger.LogDebug("Running: git {Args} (in {Root})", args, repositoryRoot);
+            _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
 
             try
             {
@@ -62,7 +85,7 @@ namespace REBUSS.Pure.Services.LocalReview
             catch (GitCommandException ex) when (ex.ExitCode != 0)
             {
                 // File does not exist at this ref (new file / deleted file)
-                _logger.LogDebug("File '{Path}' not found at ref '{Ref}': {Error}", filePath, gitRef, ex.StdErr);
+                _logger.LogDebug(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
                 return null;
             }
         }
@@ -81,14 +104,14 @@ namespace REBUSS.Pure.Services.LocalReview
             {
                 var output = await RunGitAsync(
                     repositoryRoot,
-                    "rev-parse --abbrev-ref HEAD",
+                    Resources.GitRevParseAbbrevRefHead,
                     cancellationToken);
                 var branch = output.Trim();
                 return string.Equals(branch, "HEAD", StringComparison.Ordinal) ? null : branch;
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Could not determine current branch");
+                _logger.LogDebug(ex, Resources.LogLocalGitClientCouldNotDetermineBranch);
                 return null;
             }
         }
@@ -97,8 +120,26 @@ namespace REBUSS.Pure.Services.LocalReview
 
         private enum StatusParseMode { Porcelain, NameStatus }
 
-        private static (string Args, StatusParseMode Mode) BuildStatusArgs(LocalReviewScope scope)
+        private static (string Args, StatusParseMode Mode) BuildStatusArgs(LocalReviewScope scope, bool hasHead)
         {
+            if (!hasHead)
+            {
+                return scope.Kind switch
+                {
+                    LocalReviewScopeKind.Staged =>
+                        ("diff --name-status --cached", StatusParseMode.NameStatus),
+
+                    LocalReviewScopeKind.WorkingTree =>
+                        ("status --porcelain", StatusParseMode.Porcelain),
+
+                    LocalReviewScopeKind.BranchDiff =>
+                        throw new GitCommandException(128,
+                            Resources.ErrorBranchDiffRequiresCommits),
+
+                    _ => throw new ArgumentOutOfRangeException(nameof(scope))
+                };
+            }
+
             return scope.Kind switch
             {
                 LocalReviewScopeKind.Staged =>
@@ -164,7 +205,7 @@ namespace REBUSS.Pure.Services.LocalReview
                 var parts = line.Split('\t');
                 if (parts.Length < 2) continue;
 
-                // Status field may include a similarity score (e.g. "R95") — take first char
+                // Status field may include a similarity score (e.g. "R95") ï¿½ take first char
                 var statusChar = parts[0].Length > 0 ? parts[0][0] : 'M';
                 var path = parts.Length >= 3 ? parts[2] : parts[1];
                 var originalPath = parts.Length >= 3 ? parts[1] : null;
@@ -173,6 +214,23 @@ namespace REBUSS.Pure.Services.LocalReview
             }
 
             return result;
+        }
+
+        // --- HEAD detection -------------------------------------------------------
+
+        private async Task<bool> HasHeadAsync(
+            string repositoryRoot,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await RunGitAsync(repositoryRoot, Resources.GitRevParseVerifyHead, cancellationToken);
+                return true;
+            }
+            catch (GitCommandException)
+            {
+                return false;
+            }
         }
 
         // --- Git process execution ------------------------------------------------
@@ -186,8 +244,9 @@ namespace REBUSS.Pure.Services.LocalReview
             {
                 StartInfo = new ProcessStartInfo
                 {
-                    FileName = "git",
+                    FileName = Resources.GitExecutable,
                     Arguments = arguments,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -197,6 +256,7 @@ namespace REBUSS.Pure.Services.LocalReview
             };
 
             process.Start();
+            process.StandardInput.Close();
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);

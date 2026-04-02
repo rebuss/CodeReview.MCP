@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.AzureDevOps.Api;
+using REBUSS.Pure.AzureDevOps.Parsers;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
 
@@ -7,21 +9,35 @@ namespace REBUSS.Pure.AzureDevOps.Providers
 {
     /// <summary>
     /// Fetches the list of changed files for a pull request, classifies each file,
-    /// computes per-file line stats from the diff content, and builds a category summary.
-    /// Delegates to <see cref="AzureDevOpsDiffProvider"/> for the raw file data and diffs.
+    /// and builds a category summary. Calls the Azure DevOps API directly to retrieve
+    /// file metadata from iteration changes without fetching individual file contents.
+    /// <para>
+    /// <b>Line-count limitation:</b> <see cref="Core.Models.PullRequestFileInfo.Additions"/>,
+    /// <see cref="Core.Models.PullRequestFileInfo.Deletions"/>, and
+    /// <see cref="Core.Models.PullRequestFileInfo.Changes"/> are always zero because the Azure DevOps
+    /// iteration-changes API does not include per-file line counts. Consumers must treat these
+    /// zero values as "unavailable" rather than "no lines changed" (see
+    /// <see cref="Core.IPullRequestDataProvider.GetFilesAsync"/> remarks).
+    /// </para>
     /// </summary>
     public class AzureDevOpsFilesProvider
     {
-        private readonly AzureDevOpsDiffProvider _diffProvider;
+        private readonly IAzureDevOpsApiClient _apiClient;
+        private readonly IFileChangesParser _fileChangesParser;
+        private readonly IIterationInfoParser _iterationInfoParser;
         private readonly IFileClassifier _fileClassifier;
         private readonly ILogger<AzureDevOpsFilesProvider> _logger;
 
         public AzureDevOpsFilesProvider(
-            AzureDevOpsDiffProvider diffProvider,
+            IAzureDevOpsApiClient apiClient,
+            IFileChangesParser fileChangesParser,
+            IIterationInfoParser iterationInfoParser,
             IFileClassifier fileClassifier,
             ILogger<AzureDevOpsFilesProvider> logger)
         {
-            _diffProvider = diffProvider;
+            _apiClient = apiClient;
+            _fileChangesParser = fileChangesParser;
+            _iterationInfoParser = iterationInfoParser;
             _fileClassifier = fileClassifier;
             _logger = logger;
         }
@@ -31,9 +47,23 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             _logger.LogInformation("Fetching files for PR #{PrNumber}", prNumber);
             var sw = Stopwatch.StartNew();
 
-            var diff = await _diffProvider.GetDiffAsync(prNumber, cancellationToken);
+            var iterationsJson = await _apiClient.GetPullRequestIterationsAsync(prNumber);
+            var lastIteration = _iterationInfoParser.ParseLast(iterationsJson);
 
-            var classified = diff.Files
+            if (lastIteration == IterationInfo.Empty)
+            {
+                _logger.LogWarning("No iterations found for PR #{PrNumber}", prNumber);
+                return new PullRequestFiles
+                {
+                    Files = new List<PullRequestFileInfo>(),
+                    Summary = new PullRequestFilesSummary()
+                };
+            }
+
+            var changesJson = await _apiClient.GetPullRequestIterationChangesAsync(prNumber, lastIteration.Id);
+            var fileChanges = _fileChangesParser.Parse(changesJson);
+
+            var classified = fileChanges
                 .Select(f => (fileChange: f, classification: _fileClassifier.Classify(f.Path)))
                 .ToList();
 

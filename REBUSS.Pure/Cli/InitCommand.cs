@@ -1,5 +1,10 @@
 using System.Diagnostics;
 using System.Reflection;
+using REBUSS.Pure.AzureDevOps.Configuration;
+using REBUSS.Pure.GitHub.Configuration;
+using REBUSS.Pure.Properties;
+using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
+using GitHubNames = REBUSS.Pure.GitHub.Names;
 
 namespace REBUSS.Pure.Cli;
 
@@ -14,9 +19,10 @@ namespace REBUSS.Pure.Cli;
 /// will use it automatically at runtime.
 /// </para>
 /// <para>
-/// The target location is determined by IDE auto-detection:
-/// VS Code ? <c>.vscode/mcp.json</c>;
-/// Visual Studio ? <c>.vs/mcp.json</c>;
+/// The target location can be forced with <c>--ide vscode</c> or <c>--ide vs</c>.
+/// When <c>--ide</c> is not specified, the target is determined by IDE auto-detection:
+/// VS Code → <c>.vscode/mcp.json</c>;
+/// Visual Studio → <c>.vs/mcp.json</c>;
 /// both written when both IDEs are detected.
 /// Falls back to VS Code when no IDE markers are found.
 /// </para>
@@ -26,7 +32,8 @@ public class InitCommand : ICliCommand
     private const string VsCodeDir = ".vscode";
     private const string VisualStudioDir = ".vs";
     private const string McpConfigFileName = "mcp.json";
-    private const string ResourcePrefix = "REBUSS.Pure.Cli.Prompts.";
+    private const string VsGlobalMcpConfigFileName = ".mcp.json";
+    private const string ResourcePrefix = AppConstants.ServerName + ".Cli.Prompts.";
 
     private static readonly string[] PromptFileNames =
     {
@@ -39,18 +46,23 @@ public class InitCommand : ICliCommand
     private readonly string _workingDirectory;
     private readonly string _executablePath;
     private readonly string? _pat;
+    private readonly bool _isGlobal;
+    private readonly string? _ide;
     private readonly string? _detectedProvider;
     private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
+    private readonly ILocalConfigStore? _localConfigStore;
+    private readonly IGitHubConfigStore? _gitHubConfigStore;
+    private readonly Func<List<McpConfigTarget>>? _globalConfigTargetsResolver;
 
     public string Name => "init";
 
-    public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null)
-        : this(output, Console.In, workingDirectory, executablePath, pat, detectedProvider: null, processRunner: null)
+    public InitCommand(TextWriter output, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null)
+        : this(output, Console.In, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider: null, processRunner: null, localConfigStore: null, gitHubConfigStore: null)
     {
     }
 
-    public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null, string? detectedProvider = null)
-        : this(output, input, workingDirectory, executablePath, pat, detectedProvider, processRunner: null)
+    public InitCommand(TextWriter output, TextReader input, string workingDirectory, string executablePath, string? pat = null, bool isGlobal = false, string? ide = null, string? detectedProvider = null)
+        : this(output, input, workingDirectory, executablePath, pat, isGlobal, ide, detectedProvider, processRunner: null, localConfigStore: null, gitHubConfigStore: null)
     {
     }
 
@@ -63,16 +75,26 @@ public class InitCommand : ICliCommand
         string workingDirectory,
         string executablePath,
         string? pat,
+        bool isGlobal,
+        string? ide,
         string? detectedProvider,
-        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner)
+        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner,
+        ILocalConfigStore? localConfigStore = null,
+        IGitHubConfigStore? gitHubConfigStore = null,
+        Func<List<McpConfigTarget>>? globalConfigTargetsResolver = null)
     {
         _output = output;
         _input = input;
         _workingDirectory = workingDirectory;
         _executablePath = executablePath;
         _pat = pat;
+        _isGlobal = isGlobal;
+        _ide = ide;
         _detectedProvider = detectedProvider;
         _processRunner = processRunner;
+        _localConfigStore = localConfigStore;
+        _gitHubConfigStore = gitHubConfigStore;
+        _globalConfigTargetsResolver = globalConfigTargetsResolver;
     }
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -80,14 +102,16 @@ public class InitCommand : ICliCommand
         var gitRoot = FindGitRepositoryRoot(_workingDirectory);
         if (gitRoot is null)
         {
-            await _output.WriteLineAsync("Error: Not inside a Git repository. Run this command from a Git repository root.");
+            await _output.WriteLineAsync(Resources.ErrorNotInsideGitRepository);
             return 1;
         }
 
         // Create MCP config files and copy prompts FIRST — before any potentially
         // interactive or long-running Azure CLI steps. This ensures files are written
         // even if the user cancels during az install or az login.
-        var targets = ResolveConfigTargets(gitRoot);
+        var targets = _isGlobal
+            ? (_globalConfigTargetsResolver?.Invoke() ?? ResolveGlobalConfigTargets())
+            : ResolveConfigTargets(gitRoot, _ide);
 
         var normalizedExePath = _executablePath.Replace("\\", "\\\\");
         var normalizedRepoPath = gitRoot.Replace("\\", "\\\\");
@@ -102,17 +126,21 @@ public class InitCommand : ICliCommand
                 var existing = await File.ReadAllTextAsync(target.ConfigPath, cancellationToken);
                 newContent = MergeConfigContent(existing, _executablePath, gitRoot, _pat);
                 await File.WriteAllTextAsync(target.ConfigPath, newContent, cancellationToken);
-                await _output.WriteLineAsync($"Updated MCP configuration ({target.IdeName}): {target.ConfigPath}");
+                await _output.WriteLineAsync(string.Format(Resources.MsgUpdatedMcpConfiguration, target.IdeName, target.ConfigPath));
             }
             else
             {
                 newContent = BuildConfigContent(normalizedExePath, normalizedRepoPath, _pat);
                 await File.WriteAllTextAsync(target.ConfigPath, newContent, cancellationToken);
-                await _output.WriteLineAsync($"Created MCP configuration ({target.IdeName}): {target.ConfigPath}");
+                await _output.WriteLineAsync(string.Format(Resources.MsgCreatedMcpConfiguration, target.IdeName, target.ConfigPath));
             }
         }
 
         await CopyPromptFilesAsync(gitRoot, cancellationToken);
+
+        // Clear provider caches so the next server start detects fresh config from the new repo
+        _localConfigStore?.Clear();
+        _gitHubConfigStore?.Clear();
 
         // Authenticate via the appropriate CLI flow after configs and prompts are already on disk
         if (string.IsNullOrWhiteSpace(_pat))
@@ -122,8 +150,8 @@ public class InitCommand : ICliCommand
         }
 
         await _output.WriteLineAsync();
-        await _output.WriteLineAsync("The MCP server will be launched with --repo pointing to your workspace.");
-        await _output.WriteLineAsync("Restart your IDE or reload the MCP client to pick up the new configuration.");
+        await _output.WriteLineAsync(Resources.MsgMcpServerRepoHint);
+        await _output.WriteLineAsync(Resources.MsgRestartIdeHint);
 
         return 0;
     }
@@ -136,7 +164,7 @@ public class InitCommand : ICliCommand
     {
         var provider = _detectedProvider ?? DetectProviderFromGitRemote(_workingDirectory);
 
-        if (string.Equals(provider, "GitHub", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(provider, GitHubNames.Provider, StringComparison.OrdinalIgnoreCase))
             return new GitHubCliAuthFlow(_output, _input, _processRunner);
 
         return new AzureDevOpsCliAuthFlow(_output, _input, _processRunner);
@@ -151,12 +179,12 @@ public class InitCommand : ICliCommand
         try
         {
             var gitRoot = FindGitRepositoryRoot(workingDirectory);
-            if (gitRoot is null) return "AzureDevOps";
+            if (gitRoot is null) return AzureDevOpsNames.Provider;
 
             var psi = new ProcessStartInfo
             {
-                FileName = "git",
-                Arguments = "remote get-url origin",
+                FileName = Resources.GitExecutable,
+                Arguments = Resources.GitRemoteGetUrlArgs,
                 WorkingDirectory = gitRoot,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -165,22 +193,22 @@ public class InitCommand : ICliCommand
             };
 
             using var process = Process.Start(psi);
-            if (process is null) return "AzureDevOps";
+            if (process is null) return AzureDevOpsNames.Provider;
 
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit(TimeSpan.FromSeconds(5));
 
-            if (process.ExitCode != 0) return "AzureDevOps";
+            if (process.ExitCode != 0) return AzureDevOpsNames.Provider;
 
-            if (output.Contains("github.com", StringComparison.OrdinalIgnoreCase))
-                return "GitHub";
+            if (output.Contains(GitHubNames.Domain, StringComparison.OrdinalIgnoreCase))
+                return GitHubNames.Provider;
         }
         catch
         {
             // Ignore detection errors — fall back to Azure DevOps
         }
 
-        return "AzureDevOps";
+        return AzureDevOpsNames.Provider;
     }
 
     internal static async Task<(int ExitCode, string StdOut, string StdErr)> RunProcessAsync(
@@ -200,7 +228,7 @@ public class InitCommand : ICliCommand
 
             using var process = Process.Start(psi);
             if (process is null)
-                return (-1, string.Empty, "Failed to start process");
+                return (-1, string.Empty, Resources.ErrorFailedToStartProcess);
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
@@ -259,12 +287,35 @@ public class InitCommand : ICliCommand
 
     /// <summary>
     /// Detects which IDE(s) are in use and returns the list of config file targets to write.
-    /// Selection is based on which IDE folders physically exist:
-    /// only <c>.vscode</c> ? VS Code only; only <c>.vs</c> ? Visual Studio only;
-    /// both or neither ? both targets.
+    /// When <paramref name="ide"/> is provided (<c>"vscode"</c> or <c>"vs"</c>), only that
+    /// IDE's target is returned — no auto-detection is performed.
+    /// Otherwise, selection is based on which IDE folders physically exist:
+    /// only <c>.vscode</c> → VS Code only; only <c>.vs</c> → Visual Studio only;
+    /// both or neither → both targets.
     /// </summary>
-    internal static List<McpConfigTarget> ResolveConfigTargets(string gitRoot)
+    internal static List<McpConfigTarget> ResolveConfigTargets(string gitRoot, string? ide = null)
     {
+        if (!string.IsNullOrWhiteSpace(ide))
+        {
+            if (string.Equals(ide, "vscode", StringComparison.OrdinalIgnoreCase))
+                return
+                [
+                    new McpConfigTarget(
+                        "VS Code",
+                        Path.Combine(gitRoot, VsCodeDir),
+                        Path.Combine(gitRoot, VsCodeDir, McpConfigFileName))
+                ];
+
+            if (string.Equals(ide, "vs", StringComparison.OrdinalIgnoreCase))
+                return
+                [
+                    new McpConfigTarget(
+                        "Visual Studio",
+                        Path.Combine(gitRoot, VisualStudioDir),
+                        Path.Combine(gitRoot, VisualStudioDir, McpConfigFileName))
+                ];
+        }
+
         var targets = new List<McpConfigTarget>();
 
         bool hasVsCode = DetectsVsCode(gitRoot);
@@ -286,6 +337,32 @@ public class InitCommand : ICliCommand
                 Path.Combine(gitRoot, VisualStudioDir, McpConfigFileName)));
 
         return targets;
+    }
+
+    /// <summary>
+    /// Returns global (user-level) MCP configuration targets.
+    /// Visual Studio reads <c>~/.mcp.json</c> directly from the user's home directory.
+    /// VS Code reads <c>%APPDATA%/Code/User/mcp.json</c> on Windows
+    /// (<c>~/.config/Code/User/mcp.json</c> on Linux).
+    /// Writing to both ensures every workspace picks up the configuration.
+    /// </summary>
+    internal static List<McpConfigTarget> ResolveGlobalConfigTargets()
+    {
+        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+        return
+        [
+            new McpConfigTarget(
+                "Visual Studio (global)",
+                userHome,
+                Path.Combine(userHome, VsGlobalMcpConfigFileName)),
+
+            new McpConfigTarget(
+                "VS Code (global)",
+                Path.Combine(appData, "Code", "User"),
+                Path.Combine(appData, "Code", "User", McpConfigFileName))
+        ];
     }
 
     internal static bool DetectsVsCode(string gitRoot) =>
@@ -436,7 +513,7 @@ public class InitCommand : ICliCommand
 
             if (resourceName is null)
             {
-                await _output.WriteLineAsync($"Warning: Embedded prompt resource not found: {promptFileName}");
+                await _output.WriteLineAsync(string.Format(Resources.WarnEmbeddedPromptResourceNotFound, promptFileName));
                 continue;
             }
 
@@ -457,10 +534,10 @@ public class InitCommand : ICliCommand
         }
 
         if (promptsWritten > 0)
-            await _output.WriteLineAsync($"Copied {promptsWritten} prompt file(s) to {promptsTargetDir}");
+            await _output.WriteLineAsync(string.Format(Resources.MsgCopiedPrompts, promptsWritten, promptsTargetDir));
 
         if (instructionsWritten > 0)
-            await _output.WriteLineAsync($"Copied {instructionsWritten} instruction file(s) to {instructionsTargetDir}");
+            await _output.WriteLineAsync(string.Format(Resources.MsgCopiedInstructions, instructionsWritten, instructionsTargetDir));
     }
 
     /// <summary>

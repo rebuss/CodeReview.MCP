@@ -111,6 +111,13 @@ public class FullInstallSmokeTests : IAsyncLifetime
 
         using var process = System.Diagnostics.Process.Start(psi)!;
 
+        // Drain stderr on a background thread to prevent pipe deadlocks.
+        var stderrTask = Task.Run(async () =>
+        {
+            try { await process.StandardError.ReadToEndAsync(); }
+            catch { /* process exited */ }
+        });
+
         try
         {
             var initRequest = JsonSerializer.Serialize(new
@@ -118,7 +125,18 @@ public class FullInstallSmokeTests : IAsyncLifetime
                 jsonrpc = "2.0",
                 id = "1",
                 method = "initialize",
-                @params = new { }
+                @params = new
+                {
+                    protocolVersion = "2025-03-26",
+                    capabilities = new { roots = new { listChanged = true } },
+                    clientInfo = new { name = "REBUSS.Pure.SmokeTests", version = "1.0.0" }
+                }
+            });
+
+            var initializedNotification = JsonSerializer.Serialize(new
+            {
+                jsonrpc = "2.0",
+                method = "notifications/initialized"
             });
 
             var toolsListRequest = JsonSerializer.Serialize(new
@@ -131,7 +149,6 @@ public class FullInstallSmokeTests : IAsyncLifetime
             try
             {
                 await process.StandardInput.WriteLineAsync(initRequest);
-                await process.StandardInput.WriteLineAsync(toolsListRequest);
                 await process.StandardInput.FlushAsync();
             }
             catch (IOException) { }
@@ -139,6 +156,16 @@ public class FullInstallSmokeTests : IAsyncLifetime
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
             var initLine = await process.StandardOutput.ReadLineAsync(cts.Token);
+
+            // Send notifications/initialized before tools/list (required by MCP SDK)
+            try
+            {
+                await process.StandardInput.WriteLineAsync(initializedNotification);
+                await process.StandardInput.WriteLineAsync(toolsListRequest);
+                await process.StandardInput.FlushAsync();
+            }
+            catch (IOException) { }
+
             var toolsLine = await process.StandardOutput.ReadLineAsync(cts.Token);
 
             try { process.StandardInput.Close(); }

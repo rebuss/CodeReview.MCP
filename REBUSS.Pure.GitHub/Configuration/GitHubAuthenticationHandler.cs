@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.GitHub.Properties;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 
@@ -55,20 +56,21 @@ public class GitHubAuthenticationHandler : DelegatingHandler
 
     private static void SetGitHubHeaders(HttpRequestMessage request)
     {
-        if (!request.Headers.Accept.Contains(new MediaTypeWithQualityHeaderValue("application/vnd.github+json")))
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        if (!request.Headers.Accept.Contains(new MediaTypeWithQualityHeaderValue(Resources.GitHubAcceptHeader)))
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(Resources.GitHubAcceptHeader));
 
-        if (!request.Headers.Contains("X-GitHub-Api-Version"))
-            request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+        if (!request.Headers.Contains(Resources.GitHubApiVersionHeader))
+            request.Headers.Add(Resources.GitHubApiVersionHeader, Resources.GitHubApiVersion);
 
         if (request.Headers.UserAgent.Count == 0)
-            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("REBUSS-Pure", "1.0"));
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue(Resources.HttpUserAgentProduct, "1.0"));
     }
 
     /// <summary>
     /// Detects an authentication failure (HTTP 401 Unauthorized or 403 Forbidden).
-    /// GitHub returns 403 with <c>X-RateLimit-Remaining: 0</c> for rate limits —
-    /// retrying with a fresh token would not help in that case.
+    /// GitHub returns 403 with <c>X-RateLimit-Remaining: 0</c> for primary rate limits,
+    /// and 403 with <c>Retry-After</c> header for secondary rate limits —
+    /// retrying with a fresh token would not help in either case.
     /// </summary>
     private static bool IsAuthFailureResponse(HttpResponseMessage response)
     {
@@ -77,8 +79,13 @@ public class GitHubAuthenticationHandler : DelegatingHandler
 
         if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
         {
-            if (response.Headers.TryGetValues("X-RateLimit-Remaining", out var values) &&
+            // Primary rate limit: X-RateLimit-Remaining: 0
+            if (response.Headers.TryGetValues(Resources.GitHubRateLimitRemainingHeader, out var values) &&
                 values.FirstOrDefault() == "0")
+                return false;
+
+            // Secondary rate limit: Retry-After header present
+            if (response.Headers.Contains(Resources.GitHubRetryAfterHeader))
                 return false;
 
             return true;

@@ -15,6 +15,11 @@ public interface ILocalConfigStore
     /// Saves configuration data to local storage.
     /// </summary>
     void Save(CachedConfig config);
+
+    /// <summary>
+    /// Removes all cached configuration data from local storage.
+    /// </summary>
+    void Clear();
 }
 
 /// <summary>

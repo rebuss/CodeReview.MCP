@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.GitHub.Properties;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 
@@ -12,9 +13,9 @@ public class GitHubConfigStore : IGitHubConfigStore
 {
     private static readonly string ConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "REBUSS.Pure");
+        Resources.AppDataDirectoryName);
 
-    private static readonly string ConfigFilePath = Path.Combine(ConfigDirectory, "github-config.json");
+    private static readonly string ConfigFilePath = Path.Combine(ConfigDirectory, Resources.GitHubConfigFileName);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -66,6 +67,22 @@ public class GitHubConfigStore : IGitHubConfigStore
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to save cached GitHub config to {Path}", ConfigFilePath);
+        }
+    }
+
+    public void Clear()
+    {
+        try
+        {
+            if (File.Exists(ConfigFilePath))
+            {
+                File.Delete(ConfigFilePath);
+                _logger.LogDebug("Cleared cached GitHub config at {Path}", ConfigFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clear cached GitHub config at {Path}", ConfigFilePath);
         }
     }
 }

@@ -1,0 +1,190 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Server;
+using REBUSS.Pure.Core;
+using REBUSS.Pure.Core.Models;
+using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Shared;
+using REBUSS.Pure.Properties;
+using REBUSS.Pure.Services.LocalReview;
+using REBUSS.Pure.Services.Pagination;
+using REBUSS.Pure.Services.ResponsePacking;
+using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
+
+namespace REBUSS.Pure.Tools
+{
+    /// <summary>
+    /// Handles the <c>get_local_content</c> MCP tool.
+    /// Returns diff content for a single page of local uncommitted changes.
+    /// Pages are computed via stat-based token estimation and deterministic page allocation.
+    /// </summary>
+    [McpServerToolType]
+    public class GetLocalContentToolHandler
+    {
+        private readonly ILocalReviewProvider _localProvider;
+        private readonly IContextBudgetResolver _budgetResolver;
+        private readonly ITokenEstimator _tokenEstimator;
+        private readonly IFileClassifier _fileClassifier;
+        private readonly IPageAllocator _pageAllocator;
+        private readonly ILogger<GetLocalContentToolHandler> _logger;
+
+        private static readonly JsonSerializerOptions JsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+
+        public GetLocalContentToolHandler(
+            ILocalReviewProvider localProvider,
+            IContextBudgetResolver budgetResolver,
+            ITokenEstimator tokenEstimator,
+            IFileClassifier fileClassifier,
+            IPageAllocator pageAllocator,
+            ILogger<GetLocalContentToolHandler> logger)
+        {
+            _localProvider = localProvider;
+            _budgetResolver = budgetResolver;
+            _tokenEstimator = tokenEstimator;
+            _fileClassifier = fileClassifier;
+            _pageAllocator = pageAllocator;
+            _logger = logger;
+        }
+
+        [McpServerTool(Name = "get_local_content"), Description(
+            "Returns the diff content for a specific page of local uncommitted changes. " +
+            "Pages are determined by stat-based token estimation and the provided budget. " +
+            "The tool computes page allocation internally — no separate metadata call is needed.")]
+        public async Task<string> ExecuteAsync(
+            [Description("Page number to retrieve (1-based)")] int? pageNumber = null,
+            [Description("Review scope: 'working-tree' (default), 'staged', or a branch/ref name")] string? scope = null,
+            [Description("Model name for context budget resolution")] string? modelName = null,
+            [Description("Explicit token budget override")] int? maxTokens = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (pageNumber == null)
+                throw new McpException(Resources.ErrorMissingRequiredPageNumber);
+            if (pageNumber < 1)
+                throw new McpException(Resources.ErrorPageNumberMustBePositive);
+
+            try
+            {
+                var parsedScope = LocalReviewScope.Parse(scope);
+                _logger.LogInformation(Resources.LogGetLocalContentEntry,
+                    pageNumber, parsedScope);
+
+                var sw = Stopwatch.StartNew();
+
+                var budget = _budgetResolver.Resolve(maxTokens, modelName);
+                var safeBudget = budget.SafeBudgetTokens;
+
+                // 1. Fetch lightweight file list and build page allocation
+                var localFiles = await _localProvider.GetFilesAsync(parsedScope, cancellationToken);
+                var candidates = BuildStatBasedCandidates(localFiles.Files);
+                candidates.Sort(PackingPriorityComparer.Instance);
+
+                var allocation = _pageAllocator.Allocate(candidates, safeBudget);
+
+                if (pageNumber > allocation.TotalPages)
+                    throw new McpException(
+                        string.Format(Resources.ErrorPageNumberExceedsTotalPages, pageNumber, allocation.TotalPages));
+
+                var pageSlice = allocation.Pages[pageNumber.Value - 1];
+
+                // 2. Fetch diffs for page files in parallel (each call spawns an independent git process)
+                var diffTasks = pageSlice.Items
+                    .Select(item => (
+                        Index: item.OriginalIndex,
+                        Task: _localProvider.GetFileDiffAsync(
+                            candidates[item.OriginalIndex].Path, parsedScope, cancellationToken)))
+                    .ToList();
+
+                await Task.WhenAll(diffTasks.Select(d => d.Task));
+
+                var pageFiles = new List<StructuredFileChange>(diffTasks.Count);
+                var pageCandidateIndices = new List<int>(diffTasks.Count);
+                foreach (var (index, task) in diffTasks)
+                {
+                    pageCandidateIndices.Add(index);
+                    var fileChange = task.Result.Files.FirstOrDefault();
+                    if (fileChange != null)
+                        pageFiles.Add(FileTokenMeasurement.MapToStructured(fileChange));
+                }
+
+                // 3. Build category breakdown
+                var categories = BuildCategoryBreakdown(pageCandidateIndices, candidates);
+
+                var summary = new ContentPageSummary(
+                    FilesOnPage: pageFiles.Count,
+                    TotalFiles: allocation.TotalItems,
+                    EstimatedTokens: pageSlice.BudgetUsed,
+                    HasMorePages: pageNumber.Value < allocation.TotalPages,
+                    Categories: categories);
+
+                var result = new LocalContentPageResult(
+                    RepositoryRoot: localFiles.RepositoryRoot,
+                    CurrentBranch: localFiles.CurrentBranch,
+                    Scope: parsedScope.ToString(),
+                    PageNumber: pageNumber.Value,
+                    TotalPages: allocation.TotalPages,
+                    Files: pageFiles,
+                    Summary: summary);
+
+                var json = JsonSerializer.Serialize(result, JsonOptions);
+                sw.Stop();
+
+                _logger.LogInformation(
+                    Resources.LogGetLocalContentCompleted,
+                    pageNumber, allocation.TotalPages, pageFiles.Count, json.Length, sw.ElapsedMilliseconds);
+
+                return json;
+            }
+            catch (McpException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, Resources.LogGetLocalContentError,
+                    pageNumber, scope);
+                throw new McpException(string.Format(Resources.ErrorRetrievingLocalContent, ex.Message));
+            }
+        }
+
+        // --- Helpers ---------------------------------------------------------------
+
+        private List<PackingCandidate> BuildStatBasedCandidates(List<PullRequestFileInfo> files)
+        {
+            var candidates = new List<PackingCandidate>(files.Count);
+            foreach (var file in files)
+            {
+                var estimatedTokens = file.Changes > 0
+                    ? _tokenEstimator.EstimateFromStats(file.Additions, file.Deletions)
+                    : PaginationConstants.FallbackEstimateWhenLinecountsUnknown;
+                var classification = _fileClassifier.Classify(file.Path);
+                candidates.Add(new PackingCandidate(
+                    file.Path,
+                    estimatedTokens,
+                    classification.Category,
+                    file.Additions + file.Deletions));
+            }
+            return candidates;
+        }
+
+        private static Dictionary<string, int> BuildCategoryBreakdown(
+            List<int> pageCandidateIndices, List<PackingCandidate> candidates)
+        {
+            var categories = new Dictionary<string, int>();
+            foreach (var idx in pageCandidateIndices)
+            {
+                var key = candidates[idx].Category.ToString().ToLowerInvariant();
+                categories[key] = categories.GetValueOrDefault(key) + 1;
+            }
+            return categories;
+        }
+    }
+}

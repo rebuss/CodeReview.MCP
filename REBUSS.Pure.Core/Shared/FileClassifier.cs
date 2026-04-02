@@ -110,12 +110,12 @@ public class FileClassifier : IFileClassifier
 
     private static string DetermineReviewPriority(FileCategory category) => category switch
     {
-        FileCategory.Source => "high",
-        FileCategory.Test => "medium",
-        FileCategory.Config => "medium",
-        FileCategory.Docs => "low",
-        FileCategory.Binary => "low",
-        FileCategory.Generated => "low",
-        _ => "medium"
+        FileCategory.Source => ReviewPriorities.High,
+        FileCategory.Test => ReviewPriorities.Medium,
+        FileCategory.Config => ReviewPriorities.Medium,
+        FileCategory.Docs => ReviewPriorities.Low,
+        FileCategory.Binary => ReviewPriorities.Low,
+        FileCategory.Generated => ReviewPriorities.Low,
+        _ => ReviewPriorities.Medium
     };
 }

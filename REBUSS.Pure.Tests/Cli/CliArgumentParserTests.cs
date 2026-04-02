@@ -224,4 +224,113 @@ public class CliArgumentParserTests
         Assert.Equal("my-repo", result.Repository);
     }
 
+    // --- Global flag for init ---
+
+    [Fact]
+    public void Parse_InitWithGlobalShortFlag_ReturnsIsGlobalTrue()
+    {
+        var result = CliArgumentParser.Parse(["init", "-g"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.True(result.IsGlobal);
+    }
+
+    [Fact]
+    public void Parse_InitWithGlobalLongFlag_ReturnsIsGlobalTrue()
+    {
+        var result = CliArgumentParser.Parse(["init", "--global"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.True(result.IsGlobal);
+    }
+
+    [Fact]
+    public void Parse_InitWithGlobalFlagCaseInsensitive_ReturnsIsGlobalTrue()
+    {
+        var result = CliArgumentParser.Parse(["init", "--GLOBAL"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.True(result.IsGlobal);
+    }
+
+    [Fact]
+    public void Parse_InitWithGlobalAndPat_ReturnsBothValues()
+    {
+        var result = CliArgumentParser.Parse(["init", "-g", "--pat", "my-token"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.True(result.IsGlobal);
+        Assert.Equal("my-token", result.Pat);
+    }
+
+    [Fact]
+    public void Parse_InitWithoutGlobal_ReturnsIsGlobalFalse()
+    {
+        var result = CliArgumentParser.Parse(["init"]);
+
+        Assert.False(result.IsGlobal);
+    }
+
+    // --- IDE argument for init ---
+
+    [Fact]
+    public void Parse_InitWithIdeVscode_ReturnsIdeVscode()
+    {
+        var result = CliArgumentParser.Parse(["init", "--ide", "vscode"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.Equal("vscode", result.Ide);
+    }
+
+    [Fact]
+    public void Parse_InitWithIdeVs_ReturnsIdeVs()
+    {
+        var result = CliArgumentParser.Parse(["init", "--ide", "vs"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.Equal("vs", result.Ide);
+    }
+
+    [Fact]
+    public void Parse_InitWithIdeCaseInsensitive_ReturnsIde()
+    {
+        var result = CliArgumentParser.Parse(["init", "--IDE", "vscode"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("vscode", result.Ide);
+    }
+
+    [Fact]
+    public void Parse_InitWithoutIde_ReturnsNullIde()
+    {
+        var result = CliArgumentParser.Parse(["init"]);
+
+        Assert.Null(result.Ide);
+    }
+
+    [Fact]
+    public void Parse_InitWithIdeWithoutValue_ReturnsNullIde()
+    {
+        var result = CliArgumentParser.Parse(["init", "--ide"]);
+
+        Assert.Null(result.Ide);
+    }
+
+    [Fact]
+    public void Parse_InitWithIdeAndPatAndGlobal_ReturnsAllValues()
+    {
+        var result = CliArgumentParser.Parse(["init", "--ide", "vs", "--pat", "my-token", "-g"]);
+
+        Assert.False(result.IsServerMode);
+        Assert.Equal("init", result.CommandName);
+        Assert.Equal("vs", result.Ide);
+        Assert.Equal("my-token", result.Pat);
+        Assert.True(result.IsGlobal);
+    }
+
 }

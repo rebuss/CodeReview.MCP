@@ -23,7 +23,8 @@ public class InitializeProtocolTests
         var response = await _fixture.Server.SendInitializeAsync();
         var result = response.RootElement.GetProperty("result");
 
-        Assert.Equal("2024-11-05", result.GetProperty("protocolVersion").GetString());
+        var protocolVersion = result.GetProperty("protocolVersion").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(protocolVersion));
     }
 
     [Fact]

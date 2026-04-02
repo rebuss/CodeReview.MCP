@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Api;
 using REBUSS.Pure.AzureDevOps.Parsers;
+using REBUSS.Pure.AzureDevOps.Properties;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
@@ -63,7 +64,7 @@ namespace REBUSS.Pure.AzureDevOps.Providers
 
                 await BuildFileDiffsAsync(files, baseCommit, targetCommit, cancellationToken);
 
-                var result = BuildDiff(metadata, files);
+                var result = BuildDiff(metadata, files, targetCommit);
                 sw.Stop();
 
                 var totalHunks = result.Files.Sum(f => f.Hunks.Count);
@@ -76,7 +77,7 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 _logger.LogWarning("Pull Request #{PrNumber} not found", prNumber);
-                throw new PullRequestNotFoundException($"Pull Request #{prNumber} not found", ex);
+                throw new PullRequestNotFoundException(string.Format(Resources.ErrorPullRequestNotFound, prNumber), ex);
             }
             catch (Exception ex)
             {
@@ -103,12 +104,12 @@ namespace REBUSS.Pure.AzureDevOps.Providers
                 {
                     _logger.LogWarning("File '{Path}' not found in PR #{PrNumber}", path, prNumber);
                     throw new FileNotFoundInPullRequestException(
-                        $"File '{path}' not found in Pull Request #{prNumber}");
+                            string.Format(Resources.ErrorFileNotFoundInPullRequest, path, prNumber));
                 }
 
                 await BuildFileDiffsAsync(matchingFiles, baseCommit, targetCommit, cancellationToken);
 
-                var result = BuildDiff(metadata, matchingFiles);
+                var result = BuildDiff(metadata, matchingFiles, targetCommit);
                 sw.Stop();
 
                 var totalHunks = result.Files.Sum(f => f.Hunks.Count);
@@ -121,7 +122,7 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 _logger.LogWarning("Pull Request #{PrNumber} not found", prNumber);
-                throw new PullRequestNotFoundException($"Pull Request #{prNumber} not found", ex);
+                throw new PullRequestNotFoundException(string.Format(Resources.ErrorPullRequestNotFound, prNumber), ex);
             }
             catch (FileNotFoundInPullRequestException)
             {
@@ -155,61 +156,82 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             return _changesParser.Parse(changesJson);
         }
 
-        private async Task BuildFileDiffsAsync(
-            List<FileChange> files,
-            string baseCommit,
-            string targetCommit,
-            CancellationToken cancellationToken)
-        {
-            foreach (var file in files)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
+        internal const int MaxParallelDiffRequests = 15;
 
+        private async Task BuildFileDiffsAsync(
+                List<FileChange> files,
+                string baseCommit,
+                string targetCommit,
+                CancellationToken cancellationToken)
+            {
                 if (string.IsNullOrEmpty(baseCommit) || string.IsNullOrEmpty(targetCommit))
                 {
-                    _logger.LogDebug(
-                        "Skipping diff for '{FilePath}': commit SHAs not resolved (base={BaseCommit}, target={TargetCommit})",
-                        file.Path, baseCommit ?? "<null>", targetCommit ?? "<null>");
-                    continue;
+                    foreach (var file in files)
+                    {
+                        _logger.LogDebug(
+                            "Skipping diff for '{FilePath}': commit SHAs not resolved (base={BaseCommit}, target={TargetCommit})",
+                            file.Path, baseCommit ?? "<null>", targetCommit ?? "<null>");
+                    }
+                    return;
                 }
 
-                var skipReason = GetSkipReason(file);
-                if (skipReason is not null)
+                // Pre-filter skippable files synchronously (no I/O needed)
+                foreach (var file in files)
                 {
-                    file.SkipReason = skipReason;
-                    _logger.LogDebug(
-                        "Skipping diff for '{FilePath}': {SkipReason}",
-                        file.Path, skipReason);
-                    continue;
+                    var skipReason = GetSkipReason(file);
+                    if (skipReason is not null)
+                    {
+                        file.SkipReason = skipReason;
+                        _logger.LogDebug(
+                            "Skipping diff for '{FilePath}': {SkipReason}",
+                            file.Path, skipReason);
+                    }
                 }
 
-                var fileSw = Stopwatch.StartNew();
+                var filesToDiff = files.Where(f => f.SkipReason is null).ToList();
 
-                var baseContent   = await _apiClient.GetFileContentAtCommitAsync(baseCommit,   file.Path);
-                var targetContent = await _apiClient.GetFileContentAtCommitAsync(targetCommit, file.Path);
-                file.Hunks = _diffBuilder.Build(file.Path, baseContent, targetContent);
+                // Thread-safety: each FileChange is a distinct instance — the lambda
+                // mutates only its own file (Hunks, SkipReason, Additions, Deletions).
+                await Parallel.ForEachAsync(
+                    filesToDiff,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = MaxParallelDiffRequests,
+                        CancellationToken = cancellationToken
+                    },
+                    async (file, ct) =>
+                    {
+                        var fileSw = Stopwatch.StartNew();
 
-                if (IsFullFileRewrite(baseContent, targetContent, file.Hunks))
-                {
-                    file.SkipReason = "full file rewrite";
-                    file.Hunks = new List<DiffHunk>();
-                    _logger.LogDebug(
-                        "Replaced diff for '{FilePath}': detected full file rewrite",
-                        file.Path);
-                }
-                else
-                {
-                    file.Additions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '+');
-                    file.Deletions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '-');
-                }
+                        var baseContentTask = _apiClient.GetFileContentAtCommitAsync(baseCommit, file.Path);
+                        var targetContentTask = _apiClient.GetFileContentAtCommitAsync(targetCommit, file.Path);
+                        await Task.WhenAll(baseContentTask, targetContentTask);
 
-                fileSw.Stop();
+                        var baseContent = await baseContentTask;
+                        var targetContent = await targetContentTask;
+                        file.Hunks = _diffBuilder.Build(file.Path, baseContent, targetContent);
 
-                _logger.LogDebug(
-                    "Built diff for '{FilePath}' ({ChangeType}): {HunkCount} hunk(s), {ElapsedMs}ms",
-                    file.Path, file.ChangeType, file.Hunks.Count, fileSw.ElapsedMilliseconds);
+                        if (IsFullFileRewrite(baseContent, targetContent, file.Hunks))
+                        {
+                            file.SkipReason = Resources.SkipReasonFullFileRewrite;
+                            file.Hunks = new List<DiffHunk>();
+                            _logger.LogDebug(
+                                "Replaced diff for '{FilePath}': detected full file rewrite",
+                                file.Path);
+                        }
+                        else
+                        {
+                            file.Additions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '+');
+                            file.Deletions = file.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '-');
+                        }
+
+                        fileSw.Stop();
+
+                        _logger.LogDebug(
+                            "Built diff for '{FilePath}' ({ChangeType}): {HunkCount} hunk(s), {ElapsedMs}ms",
+                            file.Path, file.ChangeType, file.Hunks.Count, fileSw.ElapsedMilliseconds);
+                    });
             }
-        }
 
         /// <summary>
         /// Returns a skip reason if the file should not have its diff computed,
@@ -218,18 +240,18 @@ namespace REBUSS.Pure.AzureDevOps.Providers
         internal string? GetSkipReason(FileChange file)
         {
             if (string.Equals(file.ChangeType, "delete", StringComparison.OrdinalIgnoreCase))
-                return "file deleted";
+                return Resources.SkipReasonFileDeleted;
 
             if (string.Equals(file.ChangeType, "rename", StringComparison.OrdinalIgnoreCase))
-                return "file renamed";
+                return Resources.SkipReasonFileRenamed;
 
             var classification = _fileClassifier.Classify(file.Path);
 
             if (classification.IsBinary)
-                return "binary file";
+                return Resources.SkipReasonBinaryFile;
 
             if (classification.IsGenerated)
-                return "generated file";
+                return Resources.SkipReasonGeneratedFile;
 
             return null;
         }
@@ -257,7 +279,8 @@ namespace REBUSS.Pure.AzureDevOps.Providers
 
         private static PullRequestDiff BuildDiff(
             PullRequestMetadata metadata,
-            List<FileChange> files)
+            List<FileChange> files,
+            string? sourceCommitId)
         {
             return new PullRequestDiff
             {
@@ -267,7 +290,8 @@ namespace REBUSS.Pure.AzureDevOps.Providers
                 TargetBranch  = metadata.TargetBranch,
                 SourceRefName = metadata.SourceRefName,
                 TargetRefName = metadata.TargetRefName,
-                Files         = files
+                Files         = files,
+                LastSourceCommitId = sourceCommitId
             };
         }
     }

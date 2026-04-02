@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
@@ -61,12 +62,9 @@ public class GetFileDiffToolHandlerTests
         _diffProvider.GetFileDiffAsync(42, "/src/A.cs", Arg.Any<CancellationToken>())
             .Returns(SampleFileDiff);
 
-        var args = CreateArgs(42, "/src/A.cs");
-        var result = await _handler.ExecuteAsync(args);
+        var json = await _handler.ExecuteAsync(42, "/src/A.cs");
 
-        Assert.False(result.IsError);
-        var text = result.Content[0].Text;
-        var doc = JsonDocument.Parse(text);
+        var doc = JsonDocument.Parse(json);
         Assert.Equal(42, doc.RootElement.GetProperty("prNumber").GetInt32());
         Assert.True(doc.RootElement.TryGetProperty("files", out var files));
         Assert.Equal(1, files.GetArrayLength());
@@ -81,164 +79,69 @@ public class GetFileDiffToolHandlerTests
     // --- Validation errors ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenArgumentsNull()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenPrNumberZero()
     {
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(0, "/src/A.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberMissing()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenPrNumberNegative()
     {
-        var args = new Dictionary<string, object> { ["path"] = "/src/A.cs" };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(-5, "/src/A.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter: prNumber", result.Content[0].Text);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathMissing()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenPathEmpty()
     {
-        var args = new Dictionary<string, object> { ["prNumber"] = 42 };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(42, ""));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter: path", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathEmpty()
-    {
-        var args = CreateArgs(42, "");
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("path parameter must not be empty", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNotInteger()
-    {
-        var args = new Dictionary<string, object>
-        {
-            ["prNumber"] = "not-a-number",
-            ["path"] = "/src/A.cs"
-        };
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("must be an integer", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberZero()
-    {
-        var args = CreateArgs(0, "/src/A.cs");
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNegative()
-    {
-        var args = CreateArgs(-5, "/src/A.cs");
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    // --- JsonElement input (real MCP scenario) ---
-
-    [Fact]
-    public async Task ExecuteAsync_HandlesPrNumberAndPathAsJsonElement()
-    {
-        _diffProvider.GetFileDiffAsync(42, "/src/A.cs", Arg.Any<CancellationToken>())
-            .Returns(SampleFileDiff);
-
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            """{"prNumber": 42, "path": "/src/A.cs"}""")!;
-        var result = await _handler.ExecuteAsync(json);
-
-        Assert.False(result.IsError);
+        Assert.Contains("Missing required parameter: path", ex.Message);
     }
 
     // --- Provider exceptions ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPullRequestNotFound()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenPullRequestNotFound()
     {
         _diffProvider.GetFileDiffAsync(999, "/src/A.cs", Arg.Any<CancellationToken>())
             .ThrowsAsync(new PullRequestNotFoundException("PR #999 not found"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(999, "/src/A.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(999, "/src/A.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Pull Request not found", result.Content[0].Text);
+        Assert.Contains("Pull Request not found", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenFileNotFoundInPullRequest()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenFileNotFoundInPullRequest()
     {
         _diffProvider.GetFileDiffAsync(42, "/src/NonExistent.cs", Arg.Any<CancellationToken>())
             .ThrowsAsync(new FileNotFoundInPullRequestException(
                 "File '/src/NonExistent.cs' not found in Pull Request #42"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42, "/src/NonExistent.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(42, "/src/NonExistent.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("File not found in Pull Request", result.Content[0].Text);
-        Assert.Contains("NonExistent.cs", result.Content[0].Text);
+        Assert.Contains("File not found in Pull Request", ex.Message);
+        Assert.Contains("NonExistent.cs", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsMcpException_OnUnexpectedException()
     {
         _diffProvider.GetFileDiffAsync(42, "/src/A.cs", Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Something broke"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42, "/src/A.cs"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(42, "/src/A.cs"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Something broke", result.Content[0].Text);
-    }
-
-    // --- Tool definition ---
-
-    [Fact]
-    public void ToolName_IsGetFileDiff()
-    {
-        Assert.Equal("get_file_diff", _handler.ToolName);
-    }
-
-    [Fact]
-    public void GetToolDefinition_HasCorrectSchema()
-    {
-        var tool = _handler.GetToolDefinition();
-
-        Assert.Equal("get_file_diff", tool.Name);
-        Assert.Contains("prNumber", tool.InputSchema.Properties.Keys);
-        Assert.Equal("integer", tool.InputSchema.Properties["prNumber"].Type);
-        Assert.Contains("path", tool.InputSchema.Properties.Keys);
-        Assert.Equal("string", tool.InputSchema.Properties["path"].Type);
-        Assert.DoesNotContain("format", tool.InputSchema.Properties.Keys);
-        Assert.Contains("prNumber", tool.InputSchema.Required!);
-        Assert.Contains("path", tool.InputSchema.Required!);
-    }
-
-    // --- Helpers ---
-
-    private static Dictionary<string, object> CreateArgs(int prNumber, string path)
-    {
-        return new Dictionary<string, object>
-        {
-            ["prNumber"] = prNumber,
-            ["path"] = path
-        };
+        Assert.Contains("Something broke", ex.Message);
     }
 }

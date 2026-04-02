@@ -1,4 +1,6 @@
+using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.Cli;
+using REBUSS.Pure.GitHub.Configuration;
 
 namespace REBUSS.Pure.Tests.Cli;
 
@@ -17,11 +19,78 @@ public class InitCommandTests
     private static InitCommand CreateCommand(
         TextWriter output, string workingDirectory, string executablePath, string? pat = null,
         Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
-        TextReader? input = null, string? detectedProvider = null)
+        TextReader? input = null, string? detectedProvider = null, bool isGlobal = false, string? ide = null,
+        ILocalConfigStore? localConfigStore = null, IGitHubConfigStore? gitHubConfigStore = null,
+        Func<List<McpConfigTarget>>? globalConfigTargetsResolver = null)
     {
         return new InitCommand(output, input ?? new StringReader("n"), workingDirectory, executablePath, pat,
-            detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled);
+            isGlobal, ide, detectedProvider ?? "AzureDevOps", processRunner ?? AzCliNotInstalled,
+            localConfigStore, gitHubConfigStore, globalConfigTargetsResolver);
     }
+    // -------------------------------------------------------------------------
+    // Error cases
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_ClearsBothProviderCaches_OnSuccess()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var azdoClearCalled = false;
+            var githubClearCalled = false;
+
+            var localConfigStore = new FakeLocalConfigStore(() => azdoClearCalled = true);
+            var gitHubConfigStore = new FakeGitHubConfigStore(() => githubClearCalled = true);
+
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe",
+                localConfigStore: localConfigStore, gitHubConfigStore: gitHubConfigStore);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(azdoClearCalled, "Azure DevOps config store Clear() was not called");
+            Assert.True(githubClearCalled, "GitHub config store Clear() was not called");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotClearCaches_WhenNotInGitRepository()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var azdoClearCalled = false;
+            var githubClearCalled = false;
+
+            var localConfigStore = new FakeLocalConfigStore(() => azdoClearCalled = true);
+            var gitHubConfigStore = new FakeGitHubConfigStore(() => githubClearCalled = true);
+
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe",
+                localConfigStore: localConfigStore, gitHubConfigStore: gitHubConfigStore);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(1, exitCode);
+            Assert.False(azdoClearCalled, "Azure DevOps config store Clear() should not be called on failure");
+            Assert.False(githubClearCalled, "GitHub config store Clear() should not be called on failure");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Error cases
     // -------------------------------------------------------------------------
@@ -626,7 +695,7 @@ public class InitCommandTests
 
             var selfReviewContent = await File.ReadAllTextAsync(selfReviewPath);
             Assert.Contains("Self-Review", selfReviewContent);
-            Assert.Contains("get_local_files", selfReviewContent);
+            Assert.Contains("get_local_content", selfReviewContent);
         }
         finally
         {
@@ -1481,5 +1550,336 @@ public class InitCommandTests
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Global mode (-g / --global)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_Global_WritesConfigToUserHome()
+    {
+        using var ctx = new GlobalTestContext();
+        var output = new StringWriter();
+        var command = CreateCommand(output, ctx.RepoDir, "rebuss-pure.exe", isGlobal: true,
+            globalConfigTargetsResolver: () => ctx.GlobalTargets);
+
+        var exitCode = await command.ExecuteAsync();
+
+        Assert.Equal(0, exitCode);
+
+        Assert.True(File.Exists(ctx.GlobalVsConfig), $"Expected global VS config at {ctx.GlobalVsConfig}");
+        Assert.True(File.Exists(ctx.GlobalVsCodeConfig), $"Expected global VS Code config at {ctx.GlobalVsCodeConfig}");
+
+        var content = await File.ReadAllTextAsync(ctx.GlobalVsConfig);
+        Assert.Contains("REBUSS.Pure", content);
+        Assert.Contains("--repo", content);
+
+        var outputText = output.ToString();
+        Assert.Contains("global", outputText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Global_DoesNotWriteLocalConfigs()
+    {
+        using var ctx = new GlobalTestContext();
+        var output = new StringWriter();
+        var command = CreateCommand(output, ctx.RepoDir, "rebuss-pure.exe", isGlobal: true,
+            globalConfigTargetsResolver: () => ctx.GlobalTargets);
+
+        var exitCode = await command.ExecuteAsync();
+
+        Assert.Equal(0, exitCode);
+        Assert.False(File.Exists(Path.Combine(ctx.RepoDir, ".vscode", "mcp.json")));
+        Assert.False(File.Exists(Path.Combine(ctx.RepoDir, ".vs", "mcp.json")));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Global_StillCopiesPromptFiles()
+    {
+        using var ctx = new GlobalTestContext();
+        var output = new StringWriter();
+        var command = CreateCommand(output, ctx.RepoDir, "rebuss-pure.exe", isGlobal: true,
+            globalConfigTargetsResolver: () => ctx.GlobalTargets);
+
+        var exitCode = await command.ExecuteAsync();
+
+        Assert.Equal(0, exitCode);
+
+        var reviewPrPath = Path.Combine(ctx.RepoDir, ".github", "prompts", "review-pr.md");
+        Assert.True(File.Exists(reviewPrPath), "Prompt files should still be copied in global mode");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Global_MergesExistingGlobalConfig()
+    {
+        using var ctx = new GlobalTestContext();
+
+        var otherServerJson = """
+            {
+              "servers": {
+                "OtherTool": { "type": "stdio", "command": "other.exe", "args": [] }
+              }
+            }
+            """;
+
+        Directory.CreateDirectory(ctx.GlobalDir);
+        await File.WriteAllTextAsync(ctx.GlobalVsConfig, otherServerJson);
+
+        var output = new StringWriter();
+        var command = CreateCommand(output, ctx.RepoDir, "rebuss-pure.exe", isGlobal: true,
+            globalConfigTargetsResolver: () => ctx.GlobalTargets);
+
+        var exitCode = await command.ExecuteAsync();
+
+        Assert.Equal(0, exitCode);
+
+        var content = await File.ReadAllTextAsync(ctx.GlobalVsConfig);
+        Assert.Contains("\"OtherTool\"", content);
+        Assert.Contains("\"REBUSS.Pure\"", content);
+        Assert.Contains("Updated", output.ToString());
+    }
+
+    [Fact]
+    public void ResolveGlobalConfigTargets_ReturnsBothGlobalTargets()
+    {
+        var targets = InitCommand.ResolveGlobalConfigTargets();
+
+        Assert.Equal(2, targets.Count);
+        Assert.Contains(targets, t => t.IdeName == "Visual Studio (global)");
+        Assert.Contains(targets, t => t.IdeName == "VS Code (global)");
+
+        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".mcp.json"));
+        Assert.Contains(targets, t => t.ConfigPath == Path.Combine(appData, "Code", "User", "mcp.json"));
+    }
+
+    // -------------------------------------------------------------------------
+    // --ide option: explicit IDE targeting
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ResolveConfigTargets_ReturnsVsCodeOnly_WhenIdeIsVscode()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vscode");
+
+            Assert.Single(targets);
+            Assert.Equal("VS Code", targets[0].IdeName);
+            Assert.Contains(".vscode", targets[0].Directory);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_ReturnsVsOnly_WhenIdeIsVs()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vs");
+
+            Assert.Single(targets);
+            Assert.Equal("Visual Studio", targets[0].IdeName);
+            Assert.Contains(".vs", targets[0].Directory);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_IsCaseInsensitive_ForIdeValue()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var vscodeTargets = InitCommand.ResolveConfigTargets(tempDir, "VSCODE");
+            Assert.Single(vscodeTargets);
+            Assert.Equal("VS Code", vscodeTargets[0].IdeName);
+
+            var vsTargets = InitCommand.ResolveConfigTargets(tempDir, "VS");
+            Assert.Single(vsTargets);
+            Assert.Equal("Visual Studio", vsTargets[0].IdeName);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_FallsBackToAutoDetect_WhenIdeIsNull()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, null);
+
+            Assert.Equal(2, targets.Count);
+            Assert.Contains(targets, t => t.IdeName == "VS Code");
+            Assert.Contains(targets, t => t.IdeName == "Visual Studio");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfigTargets_IgnoresIdeMarkers_WhenIdeIsExplicit()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vs"));
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vscode"));
+
+        try
+        {
+            var targets = InitCommand.ResolveConfigTargets(tempDir, "vscode");
+
+            Assert.Single(targets);
+            Assert.Equal("VS Code", targets[0].IdeName);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CreatesOnlyVsCodeConfig_WhenIdeIsVscode()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", ide: "vscode");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+            Assert.Contains("VS Code", output.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CreatesOnlyVsConfig_WhenIdeIsVs()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", ide: "vs");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.Contains("Visual Studio", output.ToString());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UsesAutoDetection_WhenIdeIsNotSpecified()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        Directory.CreateDirectory(Path.Combine(tempDir, ".vscode"));
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Disposable context for global-mode tests: creates a temp Git repository and a
+    /// separate temp directory simulating user-level VS / VS Code config locations.
+    /// </summary>
+    private sealed class GlobalTestContext : IDisposable
+    {
+        public string RepoDir { get; }
+        public string GlobalDir { get; }
+        public string GlobalVsConfig { get; }
+        public string GlobalVsCodeConfig { get; }
+        public List<McpConfigTarget> GlobalTargets { get; }
+
+        public GlobalTestContext()
+        {
+            RepoDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            Directory.CreateDirectory(Path.Combine(RepoDir, ".git"));
+
+            GlobalDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            GlobalVsConfig = Path.Combine(GlobalDir, ".mcp.json");
+            var globalVsCodeDir = Path.Combine(GlobalDir, "Code", "User");
+            GlobalVsCodeConfig = Path.Combine(globalVsCodeDir, "mcp.json");
+            GlobalTargets =
+            [
+                new McpConfigTarget("Visual Studio (global)", GlobalDir, GlobalVsConfig),
+                new McpConfigTarget("VS Code (global)", globalVsCodeDir, GlobalVsCodeConfig)
+            ];
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(RepoDir))
+                Directory.Delete(RepoDir, recursive: true);
+            if (Directory.Exists(GlobalDir))
+                Directory.Delete(GlobalDir, recursive: true);
+        }
+    }
 }
 
+file sealed class FakeLocalConfigStore(Action onClear) : ILocalConfigStore
+{
+    public CachedConfig? Load() => null;
+    public void Save(CachedConfig config) { }
+    public void Clear() => onClear();
+}
+
+file sealed class FakeGitHubConfigStore(Action onClear) : IGitHubConfigStore
+{
+    public GitHubCachedConfig? Load() => null;
+    public void Save(GitHubCachedConfig config) { }
+    public void Clear() => onClear();
+}

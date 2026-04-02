@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.AzureDevOps;
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.Cli;
@@ -9,10 +11,14 @@ using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Logging;
-using REBUSS.Pure.Mcp;
-using REBUSS.Pure.Mcp.Handlers;
+using REBUSS.Pure.Services;
+using REBUSS.Pure.Services.ContextWindow;
 using REBUSS.Pure.Services.LocalReview;
-using REBUSS.Pure.Tools;
+using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
+using GitHubNames = REBUSS.Pure.GitHub.Names;
+using ResponsePacking = REBUSS.Pure.Services.ResponsePacking;
+using Pagination = REBUSS.Pure.Services.Pagination;
+using REBUSS.Pure.Properties;
 
 namespace REBUSS.Pure
 {
@@ -21,7 +27,6 @@ namespace REBUSS.Pure
         static async Task<int> Main(string[] args)
         {
             var parseResult = CliArgumentParser.Parse(args);
-
             if (!parseResult.IsServerMode)
                 return await RunCliCommandAsync(parseResult);
 
@@ -33,13 +38,19 @@ namespace REBUSS.Pure
         {
             ICliCommand command = parseResult.CommandName switch
             {
-                "init" => new InitCommand(
+                var cmd when cmd == Resources.CliCommandInit => new InitCommand(
                     Console.Error,
                     Console.In,
                     Environment.CurrentDirectory,
                     GetExecutablePath(),
-                    parseResult.Pat),
-                _ => throw new InvalidOperationException($"Unknown command: {parseResult.CommandName}")
+                    parseResult.Pat,
+                    parseResult.IsGlobal,
+                    parseResult.Ide,
+                    detectedProvider: null,
+                    processRunner: null,
+                    localConfigStore: new AzureDevOps.Configuration.LocalConfigStore(NullLogger<AzureDevOps.Configuration.LocalConfigStore>.Instance),
+                    gitHubConfigStore: new GitHub.Configuration.GitHubConfigStore(NullLogger<GitHub.Configuration.GitHubConfigStore>.Instance)),
+                _ => throw new InvalidOperationException(string.Format(Resources.ErrorUnknownCommand, parseResult.CommandName))
             };
 
             return await command.ExecuteAsync();
@@ -51,14 +62,14 @@ namespace REBUSS.Pure
             if (!string.IsNullOrEmpty(processPath))
                 return processPath;
 
-            return Path.Combine(AppContext.BaseDirectory, "REBUSS.Pure.exe");
+            return Path.Combine(AppContext.BaseDirectory, AppConstants.ExecutableName);
         }
 
         private static string GetLogDirectory()
         {
             var logDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "REBUSS.Pure");
+                AppConstants.ServerName);
             Directory.CreateDirectory(logDir);
             return logDir;
         }
@@ -71,42 +82,107 @@ namespace REBUSS.Pure
 
                 var configuration = new ConfigurationBuilder()
                     .SetBasePath(AppContext.BaseDirectory)
-                    .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
-                    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true)
+                    .AddJsonFile(Resources.AppSettingsFileName, optional: true, reloadOnChange: true)
+                    .AddJsonFile(Resources.AppSettingsLocalFileName, optional: true, reloadOnChange: true)
                     .AddEnvironmentVariables()
                     .AddInMemoryCollection(cliOverrides)
                     .Build();
 
-                var services = new ServiceCollection();
-                ConfigureServices(services, configuration);
-                await using var serviceProvider = services.BuildServiceProvider();
+                var builder = Host.CreateApplicationBuilder();
 
-                // Apply CLI --repo argument if provided
-                if (!string.IsNullOrWhiteSpace(parseResult.RepoPath))
+                // Replace the host's default configuration with our pre-built one
+                builder.Services.AddSingleton<IConfiguration>(configuration);
+
+                // Configure logging: all output to stderr (Constitution Principle II)
+                builder.Logging.ClearProviders();
+                builder.Logging.AddConsole(options =>
                 {
-                    var workspaceRootProvider = serviceProvider.GetRequiredService<IWorkspaceRootProvider>();
-                    workspaceRootProvider.SetCliRepositoryPath(parseResult.RepoPath);
-                }
+                    options.LogToStandardErrorThreshold = LogLevel.Trace;
+                });
+                builder.Logging.AddProvider(new FileLoggerProvider(GetLogDirectory()));
+                builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
-                var server = serviceProvider.GetRequiredService<McpServer>();
+                // Register business services (providers, algorithms, shared services)
+                ConfigureBusinessServices(builder.Services, configuration, parseResult.RepoPath);
+
+                // Add MCP server with stdio transport and tool discovery
+                builder.Services
+                    .AddMcpServer(options =>
+                    {
+                        options.ServerInfo = new() { Name = AppConstants.ServerName, Version = Resources.ServerVersion };
+                    })
+                    .WithStdioServerTransport()
+                    .WithToolsFromAssembly();
+
                 using var cts = new CancellationTokenSource();
-
                 Console.CancelKeyPress += (_, e) =>
                 {
                     e.Cancel = true;
                     cts.Cancel();
                 };
 
-                await server.RunAsync(cts.Token);
+                var app = builder.Build();
+
+                // Apply CLI --repo argument if provided
+                if (!string.IsNullOrWhiteSpace(parseResult.RepoPath))
+                {
+                    var workspaceRootProvider = app.Services.GetRequiredService<IWorkspaceRootProvider>();
+                    workspaceRootProvider.SetCliRepositoryPath(parseResult.RepoPath);
+                }
+
+                await app.RunAsync(cts.Token);
             }
             catch (Exception ex)
             {
-                await Console.Error.WriteLineAsync($"[REBUSS.Pure] FATAL: {ex.GetType().FullName}: {ex.Message}");
+                await Console.Error.WriteLineAsync(string.Format(Resources.ErrorFatalMessage, AppConstants.ServerName, ex.GetType().FullName, ex.Message));
                 if (ex.InnerException is not null)
-                    await Console.Error.WriteLineAsync($"[REBUSS.Pure] INNER: {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}");
+                    await Console.Error.WriteLineAsync(string.Format(Resources.ErrorInnerMessage, AppConstants.ServerName, ex.InnerException.GetType().FullName, ex.InnerException.Message));
                 await Console.Error.WriteLineAsync(ex.StackTrace ?? string.Empty);
                 Environment.Exit(1);
             }
+        }
+
+        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration, string? repoPath = null)
+        {
+            // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
+            services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
+
+            // Shared services (provider-agnostic)
+            services.AddSingleton<IDiffAlgorithm, LcsDiffAlgorithm>();
+            services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
+            services.AddSingleton<IFileClassifier, FileClassifier>();
+
+            // Context Window Awareness
+            services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
+            services.AddSingleton<IContextBudgetResolver, ContextBudgetResolver>();
+            services.AddSingleton<ITokenEstimator, TokenEstimator>();
+
+            // Response Packing
+            services.AddSingleton<IResponsePacker, ResponsePacking.ResponsePacker>();
+
+            // Deterministic Pagination (Feature 004)
+            services.AddSingleton<IPageAllocator, Pagination.PageAllocator>();
+            services.AddSingleton<IPageReferenceCodec, Pagination.PageReferenceCodec>();
+
+            // PR diff cache (eliminates duplicate API calls between metadata and content)
+            services.AddSingleton<IPullRequestDiffCache, PullRequestDiffCache>();
+
+            // Provider selection: explicit config > auto-detection from git remote
+            var provider = DetectProvider(configuration, repoPath);
+            switch (provider)
+            {
+                case GitHubNames.Provider:
+                    services.AddGitHubProvider(configuration);
+                    break;
+                case AzureDevOpsNames.Provider:
+                default:
+                    services.AddAzureDevOpsProvider(configuration);
+                    break;
+            }
+
+            // Local self-review pipeline
+            services.AddSingleton<ILocalGitClient, LocalGitClient>();
+            services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
         }
 
         private static Dictionary<string, string?> BuildCliConfigOverrides(CliParseResult parseResult)
@@ -114,16 +190,16 @@ namespace REBUSS.Pure
             var overrides = new Dictionary<string, string?>();
 
             if (!string.IsNullOrWhiteSpace(parseResult.Provider))
-                overrides["Provider"] = parseResult.Provider;
+                overrides[Resources.ConfigKeyProvider] = parseResult.Provider;
 
             // Determine which provider should receive the PAT based on CLI context
             var patTarget = ResolvePatTarget(parseResult);
 
             if (!string.IsNullOrWhiteSpace(parseResult.Pat))
             {
-                if (patTarget is null || string.Equals(patTarget, "AzureDevOps", StringComparison.OrdinalIgnoreCase))
+                if (patTarget is null || string.Equals(patTarget, AzureDevOpsNames.Provider, StringComparison.OrdinalIgnoreCase))
                     overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.PersonalAccessToken)}"] = parseResult.Pat;
-                if (patTarget is null || string.Equals(patTarget, "GitHub", StringComparison.OrdinalIgnoreCase))
+                if (patTarget is null || string.Equals(patTarget, GitHubNames.Provider, StringComparison.OrdinalIgnoreCase))
                     overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.PersonalAccessToken)}"] = parseResult.Pat;
             }
 
@@ -135,9 +211,9 @@ namespace REBUSS.Pure
 
             if (!string.IsNullOrWhiteSpace(parseResult.Repository))
             {
-                if (patTarget is null || string.Equals(patTarget, "AzureDevOps", StringComparison.OrdinalIgnoreCase))
+                if (patTarget is null || string.Equals(patTarget, AzureDevOpsNames.Provider, StringComparison.OrdinalIgnoreCase))
                     overrides[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.RepositoryName)}"] = parseResult.Repository;
-                if (patTarget is null || string.Equals(patTarget, "GitHub", StringComparison.OrdinalIgnoreCase))
+                if (patTarget is null || string.Equals(patTarget, GitHubNames.Provider, StringComparison.OrdinalIgnoreCase))
                     overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.RepositoryName)}"] = parseResult.Repository;
             }
 
@@ -158,120 +234,55 @@ namespace REBUSS.Pure
             if (!string.IsNullOrWhiteSpace(parseResult.Provider))
                 return parseResult.Provider;
             if (!string.IsNullOrWhiteSpace(parseResult.Owner))
-                return "GitHub";
+                return GitHubNames.Provider;
             if (!string.IsNullOrWhiteSpace(parseResult.Organization))
-                return "AzureDevOps";
+                return AzureDevOpsNames.Provider;
             return null;
-        }
-
-        private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
-        {
-            // Register IConfiguration so it can be injected directly (e.g. by McpWorkspaceRootProvider)
-            services.AddSingleton<IConfiguration>(configuration);
-
-            services.AddLogging(builder =>
-            {
-                builder.AddConsole(options =>
-                {
-                    options.LogToStandardErrorThreshold = LogLevel.Trace;
-                });
-                builder.AddProvider(new FileLoggerProvider(GetLogDirectory()));
-                builder.SetMinimumLevel(LogLevel.Debug);
-            });
-
-            // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
-            services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
-
-            // Shared services (provider-agnostic)
-            services.AddSingleton<IDiffAlgorithm, LcsDiffAlgorithm>();
-            services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
-            services.AddSingleton<IFileClassifier, FileClassifier>();
-
-            // Provider selection: explicit config > auto-detection from git remote
-            var provider = DetectProvider(configuration);
-            switch (provider)
-            {
-                case "GitHub":
-                    services.AddGitHubProvider(configuration);
-                    break;
-                case "AzureDevOps":
-                default:
-                    services.AddAzureDevOpsProvider(configuration);
-                    break;
-            }
-
-            services.AddSingleton<IMcpToolHandler, GetPullRequestDiffToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetFileDiffToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetPullRequestMetadataToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetPullRequestFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetFileContentAtRefToolHandler>();
-
-            // Local self-review pipeline
-            services.AddSingleton<ILocalGitClient, LocalGitClient>();
-            services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
-            services.AddSingleton<IMcpToolHandler, GetLocalChangesFilesToolHandler>();
-            services.AddSingleton<IMcpToolHandler, GetLocalFileDiffToolHandler>();
-
-            // JSON-RPC infrastructure
-            services.AddSingleton<IJsonRpcSerializer, SystemTextJsonSerializer>();
-            services.AddSingleton<IJsonRpcTransport>(_ =>
-                new StreamJsonRpcTransport(Console.OpenStandardInput(), Console.OpenStandardOutput()));
-
-            // Method handlers — each handles one JSON-RPC method (OCP: add new methods without changing McpServer)
-            services.AddSingleton<IMcpMethodHandler, InitializeMethodHandler>();
-            services.AddSingleton<IMcpMethodHandler, ToolsListMethodHandler>();
-            services.AddSingleton<IMcpMethodHandler, ToolsCallMethodHandler>();
-
-            services.AddSingleton<McpServer>(sp => new McpServer(
-                sp.GetRequiredService<ILogger<McpServer>>(),
-                sp.GetRequiredService<IEnumerable<IMcpMethodHandler>>(),
-                sp.GetRequiredService<IJsonRpcTransport>(),
-                sp.GetRequiredService<IJsonRpcSerializer>()));
         }
 
         /// <summary>
         /// Determines the SCM provider to use based on configuration, then git remote auto-detection.
         /// Priority: explicit "Provider" key > GitHub config section populated > AzureDevOps config section populated > git remote URL > default (AzureDevOps).
         /// </summary>
-        internal static string DetectProvider(IConfiguration configuration)
+        internal static string DetectProvider(IConfiguration configuration, string? repoPath = null)
         {
             // 1. Explicit provider setting (normalized to canonical casing)
-            var explicitProvider = configuration.GetValue<string>("Provider");
+            var explicitProvider = configuration.GetValue<string>(Resources.ConfigKeyProvider);
             if (!string.IsNullOrWhiteSpace(explicitProvider))
                 return explicitProvider.ToLowerInvariant() switch
                 {
-                    "github" => "GitHub",
-                    "azuredevops" => "AzureDevOps",
+                    GitHubNames.ProviderLower => GitHubNames.Provider,
+                    AzureDevOpsNames.ProviderLower => AzureDevOpsNames.Provider,
                     _ => explicitProvider
                 };
 
             // 2. Check if GitHub section has owner configured
             var githubOwner = configuration[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.Owner)}"];
             if (!string.IsNullOrWhiteSpace(githubOwner))
-                return "GitHub";
+                return GitHubNames.Provider;
 
             // 3. Check if AzureDevOps section has organization configured
             var adoOrg = configuration[$"{AzureDevOpsOptions.SectionName}:{nameof(AzureDevOpsOptions.OrganizationName)}"];
             if (!string.IsNullOrWhiteSpace(adoOrg))
-                return "AzureDevOps";
+                return AzureDevOpsNames.Provider;
 
             // 4. Auto-detect from git remote URL
-            var remoteUrl = GetGitRemoteUrl();
+            var remoteUrl = GetGitRemoteUrl(repoPath);
             if (remoteUrl is not null)
             {
-                if (remoteUrl.Contains("github.com", StringComparison.OrdinalIgnoreCase))
-                    return "GitHub";
+                if (remoteUrl.Contains(GitHubNames.Domain, StringComparison.OrdinalIgnoreCase))
+                    return GitHubNames.Provider;
 
-                if (remoteUrl.Contains("dev.azure.com", StringComparison.OrdinalIgnoreCase) ||
-                    remoteUrl.Contains("visualstudio.com", StringComparison.OrdinalIgnoreCase))
-                    return "AzureDevOps";
+                if (remoteUrl.Contains(AzureDevOpsNames.Domain, StringComparison.OrdinalIgnoreCase) ||
+                    remoteUrl.Contains(AzureDevOpsNames.LegacyDomain, StringComparison.OrdinalIgnoreCase))
+                    return AzureDevOpsNames.Provider;
             }
 
             // 5. Default
-            return "AzureDevOps";
+            return AzureDevOpsNames.Provider;
         }
 
-        private static string? GetGitRemoteUrl()
+        private static string? GetGitRemoteUrl(string? workingDirectory = null)
         {
             try
             {
@@ -279,8 +290,10 @@ namespace REBUSS.Pure
                 {
                     StartInfo = new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = "git",
-                        Arguments = "remote get-url origin",
+                        FileName = Resources.GitExecutable,
+                        Arguments = Resources.GitRemoteGetUrlArgs,
+                        WorkingDirectory = workingDirectory ?? string.Empty,
+                        RedirectStandardInput = true,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
                         UseShellExecute = false,
@@ -289,6 +302,7 @@ namespace REBUSS.Pure
                 };
 
                 process.Start();
+                process.StandardInput.Close();
                 var output = process.StandardOutput.ReadToEnd();
                 process.WaitForExit(TimeSpan.FromSeconds(5));
 
@@ -299,5 +313,6 @@ namespace REBUSS.Pure
                 return null;
             }
         }
+
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
@@ -39,11 +40,9 @@ public class GetFileContentAtRefToolHandlerTests
         _fileContentProvider.GetFileContentAsync("src/Cache/CacheService.cs", "abc123def456", Arg.Any<CancellationToken>())
             .Returns(SampleFileContent);
 
-        var args = CreateArgs("src/Cache/CacheService.cs", "abc123def456");
-        var result = await _handler.ExecuteAsync(args);
+        var json = await _handler.ExecuteAsync("src/Cache/CacheService.cs", "abc123def456");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(json);
         Assert.Equal("src/Cache/CacheService.cs", doc.RootElement.GetProperty("path").GetString());
         Assert.Equal("abc123def456", doc.RootElement.GetProperty("ref").GetString());
         Assert.Equal(30, doc.RootElement.GetProperty("size").GetInt32());
@@ -68,11 +67,9 @@ public class GetFileContentAtRefToolHandlerTests
         _fileContentProvider.GetFileContentAsync("image.png", "abc123", Arg.Any<CancellationToken>())
             .Returns(binaryContent);
 
-        var args = CreateArgs("image.png", "abc123");
-        var result = await _handler.ExecuteAsync(args);
+        var json = await _handler.ExecuteAsync("image.png", "abc123");
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("isBinary").GetBoolean());
         Assert.Equal("base64", doc.RootElement.GetProperty("encoding").GetString());
     }
@@ -80,139 +77,60 @@ public class GetFileContentAtRefToolHandlerTests
     // --- Validation errors ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenArgumentsNull()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenPathEmpty()
     {
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("", "abc123"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter: path", result.Content[0].Text);
+        Assert.Contains("Missing required parameter: path", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathMissing()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenRefEmpty()
     {
-        var args = new Dictionary<string, object> { ["ref"] = "abc123" };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/File.cs", ""));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter: path", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenRefMissing()
-    {
-        var args = new Dictionary<string, object> { ["path"] = "src/File.cs" };
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter: ref", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPathEmpty()
-    {
-        var args = CreateArgs("", "abc123");
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("path parameter must not be empty", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenRefEmpty()
-    {
-        var args = CreateArgs("src/File.cs", "");
-        var result = await _handler.ExecuteAsync(args);
-
-        Assert.True(result.IsError);
-        Assert.Contains("ref parameter must not be empty", result.Content[0].Text);
-    }
-
-    // --- JsonElement input (real MCP scenario) ---
-
-    [Fact]
-    public async Task ExecuteAsync_HandlesPathAndRefAsJsonElement()
-    {
-        _fileContentProvider.GetFileContentAsync("src/File.cs", "abc123", Arg.Any<CancellationToken>())
-            .Returns(SampleFileContent);
-
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            """{"path": "src/File.cs", "ref": "abc123"}""")!;
-        var result = await _handler.ExecuteAsync(json);
-
-        Assert.False(result.IsError);
+        Assert.Contains("Missing required parameter: ref", ex.Message);
     }
 
     // --- Provider exceptions ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenFileContentNotFound()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenFileContentNotFound()
     {
         _fileContentProvider.GetFileContentAsync("src/Missing.cs", "abc123", Arg.Any<CancellationToken>())
             .ThrowsAsync(new FileContentNotFoundException("File 'src/Missing.cs' not found at ref 'abc123'"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/Missing.cs", "abc123"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/Missing.cs", "abc123"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("File not found", result.Content[0].Text);
-        Assert.Contains("Missing.cs", result.Content[0].Text);
+        Assert.Contains("File not found", ex.Message);
+        Assert.Contains("Missing.cs", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenRefInvalid()
+    public async Task ExecuteAsync_ThrowsMcpException_WhenRefInvalid()
     {
         _fileContentProvider.GetFileContentAsync("src/File.cs", "invalid-ref", Arg.Any<CancellationToken>())
             .ThrowsAsync(new FileContentNotFoundException("File 'src/File.cs' not found at ref 'invalid-ref'"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/File.cs", "invalid-ref"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/File.cs", "invalid-ref"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("File not found", result.Content[0].Text);
-        Assert.Contains("invalid-ref", result.Content[0].Text);
+        Assert.Contains("File not found", ex.Message);
+        Assert.Contains("invalid-ref", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsMcpException_OnUnexpectedException()
     {
         _fileContentProvider.GetFileContentAsync("src/File.cs", "abc123", Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Something broke"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs("src/File.cs", "abc123"));
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync("src/File.cs", "abc123"));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Something broke", result.Content[0].Text);
-    }
-
-    // --- Tool definition ---
-
-    [Fact]
-    public void ToolName_IsGetFileContentAtRef()
-    {
-        Assert.Equal("get_file_content_at_ref", _handler.ToolName);
-    }
-
-    [Fact]
-    public void GetToolDefinition_HasCorrectSchema()
-    {
-        var tool = _handler.GetToolDefinition();
-
-        Assert.Equal("get_file_content_at_ref", tool.Name);
-        Assert.Contains("path", tool.InputSchema.Properties.Keys);
-        Assert.Equal("string", tool.InputSchema.Properties["path"].Type);
-        Assert.Contains("ref", tool.InputSchema.Properties.Keys);
-        Assert.Equal("string", tool.InputSchema.Properties["ref"].Type);
-        Assert.Contains("path", tool.InputSchema.Required!);
-        Assert.Contains("ref", tool.InputSchema.Required!);
-    }
-
-    // --- Helpers ---
-
-    private static Dictionary<string, object> CreateArgs(string path, string gitRef)
-    {
-        return new Dictionary<string, object>
-        {
-            ["path"] = path,
-            ["ref"] = gitRef
-        };
+        Assert.Contains("Something broke", ex.Message);
     }
 }

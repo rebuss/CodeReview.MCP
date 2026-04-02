@@ -10,7 +10,7 @@ namespace REBUSS.Pure.Core.Models
         public bool IsGenerated { get; init; }
         public bool IsTestFile { get; init; }
         public FileCategory Category { get; init; }
-        public string ReviewPriority { get; init; } = "medium";
+        public string ReviewPriority { get; init; } = ReviewPriorities.Medium;
     }
 
     /// <summary>

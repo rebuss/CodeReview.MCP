@@ -12,11 +12,24 @@ namespace REBUSS.Pure.Core.Models
         public string SourceRefName { get; set; } = string.Empty;
         public string TargetRefName { get; set; } = string.Empty;
         public List<FileChange> Files { get; set; } = new();
+
+        /// <summary>
+        /// The commit SHA of the PR's source (head) branch at the time this diff was fetched.
+        /// Used by <see cref="IPullRequestDiffCache"/> for staleness detection.
+        /// </summary>
+        public string? LastSourceCommitId { get; set; }
     }
 
     /// <summary>
     /// Represents a single file change in a PR.
     /// </summary>
+    /// <remarks>
+    /// This class is <b>not</b> thread-safe. Diff providers mutate <see cref="Hunks"/>,
+    /// <see cref="SkipReason"/>, <see cref="Additions"/>, and <see cref="Deletions"/> inside
+    /// <see cref="System.Threading.Tasks.Parallel.ForEachAsync{TSource}"/>. This is safe only
+    /// because each iteration receives a distinct instance — do not share a single
+    /// <see cref="FileChange"/> across concurrent operations.
+    /// </remarks>
     public class FileChange
     {
         public string Path { get; set; } = string.Empty;

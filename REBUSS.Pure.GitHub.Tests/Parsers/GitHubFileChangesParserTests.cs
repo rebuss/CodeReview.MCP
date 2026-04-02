@@ -23,8 +23,28 @@ public class GitHubFileChangesParserTests
         Assert.Equal(2, result.Count);
         Assert.Equal("src/A.cs", result[0].Path);
         Assert.Equal("edit", result[0].ChangeType);
+        Assert.Equal(5, result[0].Additions);
+        Assert.Equal(2, result[0].Deletions);
         Assert.Equal("src/B.cs", result[1].Path);
         Assert.Equal("add", result[1].ChangeType);
+        Assert.Equal(10, result[1].Additions);
+        Assert.Equal(0, result[1].Deletions);
+    }
+
+    [Fact]
+    public void Parse_MissingAdditionsDeletions_DefaultsToZero()
+    {
+        const string json = """
+            [
+                { "filename": "src/C.cs", "status": "modified" }
+            ]
+            """;
+
+        var result = _parser.Parse(json);
+
+        Assert.Single(result);
+        Assert.Equal(0, result[0].Additions);
+        Assert.Equal(0, result[0].Deletions);
     }
 
     [Fact]

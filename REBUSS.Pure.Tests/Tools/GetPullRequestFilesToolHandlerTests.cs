@@ -1,10 +1,14 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
+using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Shared;
+using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools;
 
 namespace REBUSS.Pure.Tests.Tools;
@@ -12,6 +16,11 @@ namespace REBUSS.Pure.Tests.Tools;
 public class GetPullRequestFilesToolHandlerTests
 {
     private readonly IPullRequestDataProvider _filesProvider = Substitute.For<IPullRequestDataProvider>();
+    private readonly IContextBudgetResolver _budgetResolver = Substitute.For<IContextBudgetResolver>();
+    private readonly ITokenEstimator _tokenEstimator = Substitute.For<ITokenEstimator>();
+    private readonly IFileClassifier _fileClassifier = Substitute.For<IFileClassifier>();
+    private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
+    private readonly IPageReferenceCodec _pageReferenceCodec = Substitute.For<IPageReferenceCodec>();
     private readonly GetPullRequestFilesToolHandler _handler;
 
     private static readonly PullRequestFiles SampleFiles = new()
@@ -43,8 +52,21 @@ public class GetPullRequestFilesToolHandlerTests
 
     public GetPullRequestFilesToolHandlerTests()
     {
+        _budgetResolver.Resolve(Arg.Any<int?>(), Arg.Any<string?>())
+            .Returns(new BudgetResolutionResult(200000, 140000, BudgetSource.Default, Array.Empty<string>()));
+        _tokenEstimator.Estimate(Arg.Any<string>(), Arg.Any<int>())
+            .Returns(new TokenEstimationResult(100, 0.07, true));
+        _fileClassifier.Classify(Arg.Any<string>())
+            .Returns(new FileClassification { Category = FileCategory.Source, Extension = ".cs", IsBinary = false, IsGenerated = false, IsTestFile = false, ReviewPriority = "high" });
+
         _handler = new GetPullRequestFilesToolHandler(
             _filesProvider,
+            new ResponsePacker(NullLogger<ResponsePacker>.Instance),
+            _budgetResolver,
+            _tokenEstimator,
+            _fileClassifier,
+            _pageAllocator,
+            _pageReferenceCodec,
             NullLogger<GetPullRequestFilesToolHandler>.Instance);
     }
 
@@ -55,10 +77,9 @@ public class GetPullRequestFilesToolHandlerTests
     {
         _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
+        var text = await _handler.ExecuteAsync(prNumber: 42);
 
-        Assert.False(result.IsError);
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var doc = JsonDocument.Parse(text);
         var root = doc.RootElement;
 
         Assert.Equal(42, root.GetProperty("prNumber").GetInt32());
@@ -71,8 +92,8 @@ public class GetPullRequestFilesToolHandlerTests
     {
         _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var text = await _handler.ExecuteAsync(prNumber: 42);
+        var doc = JsonDocument.Parse(text);
         var firstFile = doc.RootElement.GetProperty("files")[0];
 
         Assert.Equal("src/Service.cs", firstFile.GetProperty("path").GetString());
@@ -92,8 +113,8 @@ public class GetPullRequestFilesToolHandlerTests
     {
         _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
-        var doc = JsonDocument.Parse(result.Content[0].Text);
+        var text = await _handler.ExecuteAsync(prNumber: 42);
+        var doc = JsonDocument.Parse(text);
         var summary = doc.RootElement.GetProperty("summary");
 
         Assert.Equal(1, summary.GetProperty("sourceFiles").GetInt32());
@@ -108,114 +129,81 @@ public class GetPullRequestFilesToolHandlerTests
     // --- Validation errors ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenArgumentsNull()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberMissing()
     {
-        var result = await _handler.ExecuteAsync(null);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync());
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("Missing required parameter", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberMissing()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberZero()
     {
-        var result = await _handler.ExecuteAsync(new Dictionary<string, object>());
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 0));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Missing required parameter", result.Content[0].Text);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNotInteger()
+    public async Task ExecuteAsync_ThrowsError_WhenPrNumberNegative()
     {
-        var args = new Dictionary<string, object> { ["prNumber"] = "not-a-number" };
-        var result = await _handler.ExecuteAsync(args);
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: -1));
 
-        Assert.True(result.IsError);
-        Assert.Contains("must be an integer", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberZero()
-    {
-        var result = await _handler.ExecuteAsync(CreateArgs(0));
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPrNumberNegative()
-    {
-        var result = await _handler.ExecuteAsync(CreateArgs(-1));
-
-        Assert.True(result.IsError);
-        Assert.Contains("greater than 0", result.Content[0].Text);
-    }
-
-    // --- JsonElement input (real MCP scenario) ---
-
-    [Fact]
-    public async Task ExecuteAsync_HandlesPrNumberAsJsonElement()
-    {
-        _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
-
-        var json = JsonSerializer.Deserialize<Dictionary<string, object>>(
-            """{"prNumber": 42}""")!;
-        var result = await _handler.ExecuteAsync(json);
-
-        Assert.False(result.IsError);
+        Assert.Contains("greater than 0", ex.Message);
     }
 
     // --- Provider exceptions ---
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_WhenPullRequestNotFound()
+    public async Task ExecuteAsync_ThrowsError_WhenPullRequestNotFound()
     {
         _filesProvider.GetFilesAsync(999, Arg.Any<CancellationToken>())
             .ThrowsAsync(new PullRequestNotFoundException("PR #999 not found"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(999));
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 999));
 
-        Assert.True(result.IsError);
-        Assert.Contains("not found", result.Content[0].Text);
+        Assert.Contains("not found", ex.Message);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsError_OnUnexpectedException()
+    public async Task ExecuteAsync_ThrowsError_OnUnexpectedException()
     {
         _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Something broke"));
 
-        var result = await _handler.ExecuteAsync(CreateArgs(42));
+        var ex = await Assert.ThrowsAsync<McpException>(() => _handler.ExecuteAsync(prNumber: 42));
 
-        Assert.True(result.IsError);
-        Assert.Contains("Something broke", result.Content[0].Text);
-    }
-
-    // --- Tool definition ---
-
-    [Fact]
-    public void ToolName_IsGetPrFiles()
-    {
-        Assert.Equal("get_pr_files", _handler.ToolName);
+        Assert.Contains("Something broke", ex.Message);
     }
 
     [Fact]
-    public void GetToolDefinition_HasCorrectSchema()
+    public async Task ExecuteAsync_BudgetTooSmallForPagination_ThrowsError()
     {
-        var tool = _handler.GetToolDefinition();
+        _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
+        _budgetResolver.Resolve(Arg.Any<int?>(), Arg.Any<string?>())
+            .Returns(new BudgetResolutionResult(200, 100, BudgetSource.Explicit, Array.Empty<string>()));
 
-        Assert.Equal("get_pr_files", tool.Name);
-        Assert.Contains("prNumber", tool.InputSchema.Properties.Keys);
-        Assert.Equal("integer", tool.InputSchema.Properties["prNumber"].Type);
-        Assert.Contains("prNumber", tool.InputSchema.Required!);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Throws(new BudgetTooSmallException("Token budget (100) is too small for pagination."));
+
+        var ex = await Assert.ThrowsAsync<McpException>(() =>
+            _handler.ExecuteAsync(prNumber: 42, maxTokens: 200));
+
+        Assert.Contains("too small", ex.Message);
     }
 
-    // --- Helpers ---
+    // --- Packing integration ---
 
-    private static Dictionary<string, object> CreateArgs(int prNumber)
+    [Fact]
+    public async Task ExecuteAsync_IncludesManifest_InResponse()
     {
-        return new Dictionary<string, object> { ["prNumber"] = prNumber };
+        _filesProvider.GetFilesAsync(42, Arg.Any<CancellationToken>()).Returns(SampleFiles);
+
+        var text = await _handler.ExecuteAsync(prNumber: 42);
+
+        var doc = JsonDocument.Parse(text);
+        Assert.True(doc.RootElement.TryGetProperty("manifest", out var manifest));
+        Assert.True(manifest.TryGetProperty("summary", out var summary));
+        Assert.Equal(2, summary.GetProperty("totalItems").GetInt32());
     }
 }

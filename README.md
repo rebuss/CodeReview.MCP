@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="REBUSS.Pure.png" alt="REBUSS.Pure" />
+</p>
+
 # 🚀 REBUSS.Pure – AI Code Review That Focuses Only on What Matters
 
 **Stop sending irrelevant code to AI.**  
@@ -139,6 +143,19 @@ This will:
 - ✔ copy instruction files to `.github/instructions/` (for GitHub Copilot custom instructions)
 - ✔ authenticate via Azure CLI (opens browser for login) or accept a GitHub PAT
 
+### Global mode (`-g`)
+
+If Visual Studio does not detect the local `.vs/mcp.json` file in your repository, use the global flag:
+
+```bash
+cd /path/to/your/repo
+rebuss-pure init -g
+```
+
+This writes the MCP configuration to the **user-level** paths (`~/.vs/mcp.json` and `~/.vscode/mcp.json`) instead of the repository-local directories. The global config points `--repo` to the current repository, so it works for any workspace you open.
+
+> **Switching between repositories:** If you use multiple repositories, run `rebuss-pure init -g` in the target repository before switching to it. This updates the global configuration to point to the correct workspace.
+
 ---
 
 ## 3. Review a Pull Request
@@ -147,6 +164,11 @@ In Copilot / AI chat:
 
 ```
 123 #review-pr
+```
+or use `execute` to force tool invocation (recommended for smaller models that may not call tools autonomously):
+
+```
+execute 123 #review-pr
 ```
 
 Where `123` is the Azure DevOps or GitHub Pull Request number.
@@ -160,3 +182,29 @@ Where `123` is the Azure DevOps or GitHub Pull Request number.
 ```
 
 Works **offline** — no Azure DevOps connection required.
+
+---
+
+## ⚙️ Gateway Token Limit
+
+By default, REBUSS.Pure ships with `GatewayMaxTokens` set to **128 000** in `appsettings.json`. This hard cap matches the context window limit imposed by **GitHub Copilot's proxy** and prevents `model_max_prompt_tokens_exceeded` errors — even when the model's native context window is larger (e.g. Claude's 200K).
+
+**If you use Claude Code, Anthropic API directly, or any other client without a gateway limit**, remove or disable this cap so you can use the model's full context window:
+
+In `appsettings.Local.json` (next to the server executable):
+
+```json
+{
+  "ContextWindow": {
+    "GatewayMaxTokens": null
+  }
+}
+```
+
+Or via environment variable:
+
+```
+ContextWindow__GatewayMaxTokens=0
+```
+
+When `GatewayMaxTokens` is `null` or `0`, the limit is disabled and the full model-native context window from the `ModelRegistry` is used.

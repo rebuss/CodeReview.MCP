@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.GitHub.Configuration;
+using REBUSS.Pure.GitHub.Properties;
 
 namespace REBUSS.Pure.GitHub.Api;
 
@@ -14,7 +15,6 @@ namespace REBUSS.Pure.GitHub.Api;
 /// </summary>
 public class GitHubApiClient : IGitHubApiClient
 {
-    private const string BaseUrl = "https://api.github.com/";
     private const int MaxPagesPerEndpoint = 10;
     private const int DefaultPerPage = 100;
 
@@ -32,7 +32,7 @@ public class GitHubApiClient : IGitHubApiClient
         _logger = logger;
 
         if (_httpClient.BaseAddress is null)
-            _httpClient.BaseAddress = new Uri(BaseUrl);
+            _httpClient.BaseAddress = new Uri(Resources.ApiBaseUrl);
     }
 
     public async Task<string> GetPullRequestDetailsAsync(int pullRequestNumber, CancellationToken cancellationToken = default)
@@ -70,10 +70,12 @@ public class GitHubApiClient : IGitHubApiClient
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Clear();
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(Resources.GitHubRawContentAcceptHeader));
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
         sw.Stop();
+
+        LogRateLimitHeaders(response, filePath);
 
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -86,13 +88,13 @@ public class GitHubApiClient : IGitHubApiClient
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning(
-                    "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
-                    (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
-                response.EnsureSuccessStatusCode();
-            }
+            _logger.LogWarning(
+                "Contents API returned {StatusCode} for {FilePath}@{GitRef} in {ElapsedMs}ms: {Error}",
+                (int)response.StatusCode, filePath, gitRef, sw.ElapsedMilliseconds, error);
+            response.EnsureSuccessStatusCode();
+        }
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
         _logger.LogDebug(
             "GetFileContentAtRef {FilePath}@{GitRef} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
@@ -101,12 +103,37 @@ public class GitHubApiClient : IGitHubApiClient
         return content;
     }
 
+    private void LogRateLimitHeaders(HttpResponseMessage response, string context)
+    {
+        var remaining = response.Headers.TryGetValues(Resources.GitHubRateLimitRemainingHeader, out var remValues)
+            ? remValues.FirstOrDefault() : null;
+        var limit = response.Headers.TryGetValues(Resources.GitHubRateLimitLimitHeader, out var limValues)
+            ? limValues.FirstOrDefault() : null;
+        var retryAfter = response.Headers.TryGetValues(Resources.GitHubRetryAfterHeader, out var raValues)
+            ? raValues.FirstOrDefault() : null;
+
+        if (retryAfter is not null)
+        {
+            _logger.LogWarning(
+                "Rate limit hit for {Context}: Retry-After={RetryAfter}s, Remaining={Remaining}/{Limit}, Status={StatusCode}",
+                context, retryAfter, remaining ?? "?", limit ?? "?", (int)response.StatusCode);
+        }
+        else if (remaining is not null && int.TryParse(remaining, out var rem) && rem < 100)
+        {
+            _logger.LogWarning(
+                "Rate limit low for {Context}: Remaining={Remaining}/{Limit}",
+                context, remaining, limit ?? "?");
+        }
+    }
+
     private async Task<string> GetStringAsync(string url, string operationName, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
         var response = await _httpClient.GetAsync(url, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         sw.Stop();
+
+        LogRateLimitHeaders(response, operationName);
 
         _logger.LogDebug(
             "{Operation} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
@@ -134,6 +161,8 @@ public class GitHubApiClient : IGitHubApiClient
             var response = await _httpClient.GetAsync(url, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             sw.Stop();
+
+            LogRateLimitHeaders(response, operationName);
 
             _logger.LogDebug(
                 "{Operation} page {Page} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",

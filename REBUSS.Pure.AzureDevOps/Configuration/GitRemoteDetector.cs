@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using REBUSS.Pure.AzureDevOps.Properties;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 
@@ -103,8 +104,9 @@ public partial class GitRemoteDetector : IGitRemoteDetector
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "git",
-                Arguments = "remote get-url origin",
+                FileName = Resources.GitExecutable,
+                Arguments = Resources.GitRemoteGetUrlArgs,
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -114,6 +116,7 @@ public partial class GitRemoteDetector : IGitRemoteDetector
         };
 
         process.Start();
+        process.StandardInput.Close();
 
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit(TimeSpan.FromSeconds(5));
