@@ -190,6 +190,8 @@ namespace REBUSS.Pure.AzureDevOps.Providers
 
                 var filesToDiff = files.Where(f => f.SkipReason is null).ToList();
 
+                // Thread-safety: each FileChange is a distinct instance — the lambda
+                // mutates only its own file (Hunks, SkipReason, Additions, Deletions).
                 await Parallel.ForEachAsync(
                     filesToDiff,
                     new ParallelOptions

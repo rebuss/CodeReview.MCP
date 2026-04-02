@@ -8,7 +8,11 @@ namespace REBUSS.Pure.Services;
 /// <summary>
 /// Session-scoped cache for <see cref="PullRequestDiff"/> keyed by PR number.
 /// Thread-safe via <see cref="ConcurrentDictionary{TKey,TValue}"/>.
-/// Failed fetches are not cached — errors propagate to the caller.
+/// Concurrent cache misses for the same PR are deduplicated — only one fetch
+/// is issued and all waiters share the result via a <see cref="Lazy{T}"/>
+/// wrapper in <see cref="_inflight"/>.
+/// Failed fetches are not cached — errors propagate to all waiters and the
+/// in-flight entry is evicted so the next call retries.
 /// Supports staleness detection: when a known head commit ID is provided
 /// and differs from the cached diff's <see cref="PullRequestDiff.LastSourceCommitId"/>,
 /// the stale entry is evicted and a fresh diff is fetched.
@@ -18,6 +22,7 @@ public sealed class PullRequestDiffCache : IPullRequestDiffCache
     private readonly IPullRequestDataProvider _inner;
     private readonly ILogger<PullRequestDiffCache> _logger;
     private readonly ConcurrentDictionary<int, PullRequestDiff> _cache = new();
+    private readonly ConcurrentDictionary<int, Lazy<Task<PullRequestDiff>>> _inflight = new();
 
     public PullRequestDiffCache(IPullRequestDataProvider inner, ILogger<PullRequestDiffCache> logger)
     {
@@ -32,6 +37,7 @@ public sealed class PullRequestDiffCache : IPullRequestDiffCache
             if (IsStale(cached, knownHeadCommitId, prNumber))
             {
                 _cache.TryRemove(prNumber, out _);
+                _inflight.TryRemove(prNumber, out _);
             }
             else
             {
@@ -41,9 +47,22 @@ public sealed class PullRequestDiffCache : IPullRequestDiffCache
         }
 
         _logger.LogInformation("PR diff cache miss for PR #{PrNumber}, fetching from provider", prNumber);
-        var diff = await _inner.GetDiffAsync(prNumber, ct);
-        _cache.TryAdd(prNumber, diff);
-        return diff;
+
+        var lazy = _inflight.GetOrAdd(prNumber,
+            _ => new Lazy<Task<PullRequestDiff>>(() => _inner.GetDiffAsync(prNumber, ct)));
+
+        try
+        {
+            var diff = await lazy.Value;
+            _cache.TryAdd(prNumber, diff);
+            _inflight.TryRemove(KeyValuePair.Create(prNumber, lazy));
+            return diff;
+        }
+        catch
+        {
+            _inflight.TryRemove(KeyValuePair.Create(prNumber, lazy));
+            throw;
+        }
     }
 
     private bool IsStale(PullRequestDiff cached, string? knownHeadCommitId, int prNumber)

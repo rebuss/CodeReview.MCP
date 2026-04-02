@@ -133,6 +133,8 @@ public class GitHubApiClient : IGitHubApiClient
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         sw.Stop();
 
+        LogRateLimitHeaders(response, operationName);
+
         _logger.LogDebug(
             "{Operation} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",
             operationName, (int)response.StatusCode, body.Length, sw.ElapsedMilliseconds);
@@ -159,6 +161,8 @@ public class GitHubApiClient : IGitHubApiClient
             var response = await _httpClient.GetAsync(url, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             sw.Stop();
+
+            LogRateLimitHeaders(response, operationName);
 
             _logger.LogDebug(
                 "{Operation} page {Page} completed: {StatusCode}, {ResponseLength} chars, {ElapsedMs}ms",

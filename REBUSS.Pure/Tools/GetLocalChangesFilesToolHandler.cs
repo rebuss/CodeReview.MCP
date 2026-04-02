@@ -14,6 +14,7 @@ using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
@@ -101,7 +102,7 @@ namespace REBUSS.Pure.Tools
 
                     if (scope != null && effectiveScope != null)
                     {
-                        var scopeJson = JsonDocument.Parse($"\"{scope}\"").RootElement;
+                        var scopeJson = JsonSerializer.SerializeToElement(scope);
                         var paramError = PaginationOrchestrator.ValidateParameterMatch(
                             resolution.DecodedParams, "scope", scopeJson);
                         if (paramError != null)
@@ -121,7 +122,9 @@ namespace REBUSS.Pure.Tools
                 {
                     // Feature 003 path
                     var fileItems003 = BuildFileItems(reviewFiles);
-                    var candidates003 = BuildCandidates(fileItems003, budget.SafeBudgetTokens);
+                    var candidates003 = ToolHandlerHelpers.BuildCandidates(
+                        fileItems003, budget.SafeBudgetTokens, _tokenEstimator, _fileClassifier,
+                        fi => fi.Path, fi => fi.Additions + fi.Deletions);
                     var decision = _packer.Pack(candidates003, budget.SafeBudgetTokens);
 
                     var packedFiles003 = new List<PullRequestFileItem>();
@@ -151,8 +154,10 @@ namespace REBUSS.Pure.Tools
 
                 // Feature 004 path
                 var fileItems = BuildFileItems(reviewFiles);
-                var candidates = BuildCandidates(fileItems, effectiveBudget);
-                var sortedCandidates = SortCandidates(candidates);
+                var candidates = ToolHandlerHelpers.BuildCandidates(
+                    fileItems, effectiveBudget, _tokenEstimator, _fileClassifier,
+                    fi => fi.Path, fi => fi.Additions + fi.Deletions);
+                var sortedCandidates = ToolHandlerHelpers.SortCandidates(candidates);
 
                 PageAllocation allocation;
                 try
@@ -169,16 +174,17 @@ namespace REBUSS.Pure.Tools
                     throw new McpException(string.Format(Resources.ErrorPageNumberOutOfRange, requestedPage, allocation.TotalPages));
 
                 var pageSlice = allocation.Pages[requestedPage - 1];
-                var packedFiles = ExtractPageFiles(fileItems, sortedCandidates, pageSlice);
+                var packedFiles = ToolHandlerHelpers.ExtractPageFiles(
+                    fileItems, sortedCandidates, pageSlice, fi => fi.Path);
 
                 var scopeForRef = effectiveScope ?? "working-tree";
-                var requestParams = JsonDocument.Parse($"{{\"scope\":\"{scopeForRef}\"}}").RootElement;
+                var requestParams = JsonSerializer.SerializeToElement(new { scope = scopeForRef });
 
                 var paginationMeta = PaginationOrchestrator.BuildPaginationMetadata(
                     allocation, requestedPage, _pageReferenceCodec,
                     "get_local_files", requestParams, effectiveBudget, null);
 
-                var manifestResult = BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
+                var manifestResult = ToolHandlerHelpers.BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
 
                 var result = new LocalReviewFilesResult
                 {
@@ -237,73 +243,6 @@ namespace REBUSS.Pure.Tools
             }).ToList();
         }
 
-        private List<PackingCandidate> BuildCandidates(List<PullRequestFileItem> fileItems, int safeBudgetTokens)
-        {
-            var candidates = new List<PackingCandidate>(fileItems.Count);
-            for (var i = 0; i < fileItems.Count; i++)
-            {
-                var fi = fileItems[i];
-                var serialized = JsonSerializer.Serialize(fi, JsonOptions);
-                var estimation = _tokenEstimator.Estimate(serialized, safeBudgetTokens);
-                var classification = _fileClassifier.Classify(fi.Path);
-
-                candidates.Add(new PackingCandidate(
-                    fi.Path,
-                    estimation.EstimatedTokens,
-                    classification.Category,
-                    fi.Additions + fi.Deletions));
-            }
-            return candidates;
-        }
-
-        private static List<PackingCandidate> SortCandidates(List<PackingCandidate> candidates)
-        {
-            var sorted = new List<PackingCandidate>(candidates);
-            sorted.Sort(PackingPriorityComparer.Instance);
-            return sorted;
-        }
-
-        private static List<PullRequestFileItem> ExtractPageFiles(
-            List<PullRequestFileItem> allFiles,
-            List<PackingCandidate> candidates,
-            PageSlice pageSlice)
-        {
-            var filesByPath = allFiles.ToDictionary(f => f.Path);
-            var pageFiles = new List<PullRequestFileItem>(pageSlice.Items.Count);
-            foreach (var item in pageSlice.Items)
-            {
-                var candidate = candidates[item.OriginalIndex];
-                if (filesByPath.TryGetValue(candidate.Path, out var fileItem))
-                    pageFiles.Add(fileItem);
-            }
-            return pageFiles;
-        }
-
-        private ContentManifestResult BuildPageManifest(
-            List<PackingCandidate> candidates,
-            PageSlice pageSlice,
-            PageAllocation allocation,
-            int safeBudgetTokens)
-        {
-            var entries = pageSlice.Items.Select(item =>
-            {
-                var candidate = candidates[item.OriginalIndex];
-                return new ManifestEntryResult
-                {
-                    Path = candidate.Path,
-                    EstimatedTokens = item.EstimatedTokens,
-                    Status = item.Status.ToString(),
-                    PriorityTier = candidate.Category.ToString()
-                };
-            }).ToList();
-
-            return new ContentManifestResult
-            {
-                Items = entries,
-                Summary = PaginationOrchestrator.BuildExtendedManifestSummary(pageSlice, allocation, safeBudgetTokens)
-            };
-        }
-
         private static PullRequestFilesSummaryResult BuildSummary(LocalReviewFiles reviewFiles)
         {
             return new PullRequestFilesSummaryResult
@@ -317,6 +256,5 @@ namespace REBUSS.Pure.Tools
                 HighPriorityFiles = reviewFiles.Summary.HighPriorityFiles
             };
         }
-
-            }
-        }
+    }
+}

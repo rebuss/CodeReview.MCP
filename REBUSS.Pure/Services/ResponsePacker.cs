@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Services.Pagination;
 
 namespace REBUSS.Pure.Services.ResponsePacking;
 
@@ -13,8 +14,8 @@ namespace REBUSS.Pure.Services.ResponsePacking;
 /// </summary>
 public sealed class ResponsePacker : IResponsePacker
 {
-    private const int BaseManifestOverhead = 100;
-    private const int PerItemManifestOverhead = 15;
+    private const int BaseManifestOverhead = PaginationConstants.BaseManifestOverhead;
+    private const int PerItemManifestOverhead = PaginationConstants.PerItemManifestOverhead;
 
     private readonly ILogger<ResponsePacker> _logger;
 

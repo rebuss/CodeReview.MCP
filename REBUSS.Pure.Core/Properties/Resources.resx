@@ -71,13 +71,4 @@
   <data name="LogStructuredDiffBuilderSuspiciousDiff" xml:space="preserve">
     <value>Suspicious diff for '{FilePath}': {HunkCount} hunks (possible generated/binary file)</value>
   </data>
-  <data name="ReviewPriorityHigh" xml:space="preserve">
-    <value>high</value>
-  </data>
-  <data name="ReviewPriorityLow" xml:space="preserve">
-    <value>low</value>
-  </data>
-  <data name="ReviewPriorityMedium" xml:space="preserve">
-    <value>medium</value>
-  </data>
-</root>
+  </root>

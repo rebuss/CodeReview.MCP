@@ -29,7 +29,7 @@ public sealed class ContextBudgetResolver : IContextBudgetResolver
         var (totalBudget, source) = ResolveTotalBudget(explicitTokens, modelIdentifier, opts, warnings);
         totalBudget = ApplyGatewayCap(totalBudget, opts, warnings);
 
-        _logger.LogDebug($"GatewayMaxTokens={opts.GatewayMaxTokens}, totalBudget={totalBudget}");
+        _logger.LogDebug("GatewayMaxTokens={GatewayMaxTokens}, totalBudget={TotalBudget}", opts.GatewayMaxTokens, totalBudget);
 
         totalBudget = ApplyGuardrails(totalBudget, source, opts, warnings);
 

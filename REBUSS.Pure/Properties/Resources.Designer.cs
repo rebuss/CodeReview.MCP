@@ -889,6 +889,33 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to Allocated {TotalItems} items across {TotalPages} pages, budget={Budget}.
+        /// </summary>
+        internal static string LogPageAllocatorAllocated {
+            get {
+                return ResourceManager.GetString("LogPageAllocatorAllocated", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Budget {Budget} below minimum {Minimum}.
+        /// </summary>
+        internal static string LogPageAllocatorBudgetBelowMinimum {
+            get {
+                return ResourceManager.GetString("LogPageAllocatorBudgetBelowMinimum", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Empty candidates, returning single empty page.
+        /// </summary>
+        internal static string LogPageAllocatorEmptyCandidates {
+            get {
+                return ResourceManager.GetString("LogPageAllocatorEmptyCandidates", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Copied {0} instruction file(s) to {1}.
         /// </summary>
         internal static string MsgCopiedInstructions {

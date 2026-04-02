@@ -13,6 +13,7 @@ using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
@@ -94,20 +95,24 @@ namespace REBUSS.Pure.Tools
 
                 var pageSlice = allocation.Pages[pageNumber.Value - 1];
 
-                // 2. Fetch diffs only for files on this page (per-file — inherently efficient)
-                var pageFiles = new List<StructuredFileChange>();
-                var pageCandidateIndices = new List<int>();
-                foreach (var item in pageSlice.Items)
+                // 2. Fetch diffs for page files in parallel (each call spawns an independent git process)
+                var diffTasks = pageSlice.Items
+                    .Select(item => (
+                        Index: item.OriginalIndex,
+                        Task: _localProvider.GetFileDiffAsync(
+                            candidates[item.OriginalIndex].Path, parsedScope, cancellationToken)))
+                    .ToList();
+
+                await Task.WhenAll(diffTasks.Select(d => d.Task));
+
+                var pageFiles = new List<StructuredFileChange>(diffTasks.Count);
+                var pageCandidateIndices = new List<int>(diffTasks.Count);
+                foreach (var (index, task) in diffTasks)
                 {
-                    var candidate = candidates[item.OriginalIndex];
-                    pageCandidateIndices.Add(item.OriginalIndex);
-
-                    var fileDiff = await _localProvider.GetFileDiffAsync(
-                        candidate.Path, parsedScope, cancellationToken);
-
-                    var fileChange = fileDiff.Files.FirstOrDefault();
+                    pageCandidateIndices.Add(index);
+                    var fileChange = task.Result.Files.FirstOrDefault();
                     if (fileChange != null)
-                        pageFiles.Add(MapToStructuredFileChange(fileChange));
+                        pageFiles.Add(FileTokenMeasurement.MapToStructured(fileChange));
                 }
 
                 // 3. Build category breakdown
@@ -168,30 +173,6 @@ namespace REBUSS.Pure.Tools
                     file.Additions + file.Deletions));
             }
             return candidates;
-        }
-
-        private static StructuredFileChange MapToStructuredFileChange(FileChange f)
-        {
-            return new StructuredFileChange
-            {
-                Path = f.Path,
-                ChangeType = f.ChangeType,
-                SkipReason = f.SkipReason,
-                Additions = f.Additions,
-                Deletions = f.Deletions,
-                Hunks = f.Hunks.Select(h => new StructuredHunk
-                {
-                    OldStart = h.OldStart,
-                    OldCount = h.OldCount,
-                    NewStart = h.NewStart,
-                    NewCount = h.NewCount,
-                    Lines = h.Lines.Select(l => new StructuredLine
-                    {
-                        Op = l.Op.ToString(),
-                        Text = l.Text
-                    }).ToList()
-                }).ToList()
-            };
         }
 
         private static Dictionary<string, int> BuildCategoryBreakdown(

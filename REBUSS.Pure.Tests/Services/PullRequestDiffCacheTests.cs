@@ -244,4 +244,59 @@ public class PullRequestDiffCacheTests
         Assert.Same(diff, second);
         await _inner.Received(1).GetDiffAsync(42, Arg.Any<CancellationToken>());
     }
+
+    // --- Concurrent deduplication ---
+
+    [Fact]
+    public async Task GetOrFetchDiffAsync_ConcurrentCacheMiss_FetchesOnlyOnce()
+    {
+        var tcs = new TaskCompletionSource<PullRequestDiff>();
+        _inner.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(tcs.Task);
+
+        var task1 = _cache.GetOrFetchDiffAsync(42);
+        var task2 = _cache.GetOrFetchDiffAsync(42);
+
+        tcs.SetResult(SampleDiff);
+
+        var result1 = await task1;
+        var result2 = await task2;
+
+        Assert.Same(SampleDiff, result1);
+        Assert.Same(SampleDiff, result2);
+        await _inner.Received(1).GetDiffAsync(42, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetOrFetchDiffAsync_ConcurrentCacheMiss_FailurePropagesToAllWaiters()
+    {
+        var tcs = new TaskCompletionSource<PullRequestDiff>();
+        _inner.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(tcs.Task);
+
+        var task1 = _cache.GetOrFetchDiffAsync(42);
+        var task2 = _cache.GetOrFetchDiffAsync(42);
+
+        tcs.SetException(new PullRequestNotFoundException("Not found"));
+
+        await Assert.ThrowsAsync<PullRequestNotFoundException>(() => task1);
+        await Assert.ThrowsAsync<PullRequestNotFoundException>(() => task2);
+        await _inner.Received(1).GetDiffAsync(42, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetOrFetchDiffAsync_ConcurrentCacheMiss_FailureAllowsRetry()
+    {
+        var tcs = new TaskCompletionSource<PullRequestDiff>();
+        _inner.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(tcs.Task);
+
+        var task1 = _cache.GetOrFetchDiffAsync(42);
+        tcs.SetException(new PullRequestNotFoundException("Not found"));
+        await Assert.ThrowsAsync<PullRequestNotFoundException>(() => task1);
+
+        // After failure, the in-flight entry is evicted — next call retries
+        _inner.GetDiffAsync(42, Arg.Any<CancellationToken>()).Returns(SampleDiff);
+        var result = await _cache.GetOrFetchDiffAsync(42);
+
+        Assert.Same(SampleDiff, result);
+        await _inner.Received(2).GetDiffAsync(42, Arg.Any<CancellationToken>());
+    }
 }

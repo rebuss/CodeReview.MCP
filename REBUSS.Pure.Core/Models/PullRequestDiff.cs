@@ -23,6 +23,13 @@ namespace REBUSS.Pure.Core.Models
     /// <summary>
     /// Represents a single file change in a PR.
     /// </summary>
+    /// <remarks>
+    /// This class is <b>not</b> thread-safe. Diff providers mutate <see cref="Hunks"/>,
+    /// <see cref="SkipReason"/>, <see cref="Additions"/>, and <see cref="Deletions"/> inside
+    /// <see cref="System.Threading.Tasks.Parallel.ForEachAsync{TSource}"/>. This is safe only
+    /// because each iteration receives a distinct instance — do not share a single
+    /// <see cref="FileChange"/> across concurrent operations.
+    /// </remarks>
     public class FileChange
     {
         public string Path { get; set; } = string.Empty;

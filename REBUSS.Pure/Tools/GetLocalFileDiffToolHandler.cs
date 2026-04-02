@@ -9,6 +9,7 @@ using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
 using System.Text.Json;
 using REBUSS.Pure.Core.Models;
 
@@ -142,21 +143,9 @@ namespace REBUSS.Pure.Tools
                 }).ToList()
             }).ToList();
 
-            // Estimate tokens per file and build candidates
-            var candidates = new List<PackingCandidate>(fileChanges.Count);
-            for (var i = 0; i < fileChanges.Count; i++)
-            {
-                var fc = fileChanges[i];
-                var serialized = JsonSerializer.Serialize(fc, JsonOptions);
-                var estimation = _tokenEstimator.Estimate(serialized, safeBudgetTokens);
-                var classification = _fileClassifier.Classify(fc.Path);
-
-                candidates.Add(new PackingCandidate(
-                    fc.Path,
-                    estimation.EstimatedTokens,
-                    classification.Category,
-                    fc.Additions + fc.Deletions));
-            }
+            var candidates = ToolHandlerHelpers.BuildCandidates(
+                fileChanges, safeBudgetTokens, _tokenEstimator, _fileClassifier,
+                fc => fc.Path, fc => fc.Additions + fc.Deletions);
 
             var decision = _packer.Pack(candidates, safeBudgetTokens);
 
@@ -172,7 +161,7 @@ namespace REBUSS.Pure.Tools
                         break;
 
                     case PackingItemStatus.Partial:
-                        packedFiles.Add(TruncateHunks(fileChanges[i], item.BudgetForPartial ?? 0, safeBudgetTokens));
+                        packedFiles.Add(ToolHandlerHelpers.TruncateHunks(fileChanges[i], item.BudgetForPartial ?? 0, safeBudgetTokens, _tokenEstimator));
                         break;
                 }
             }
@@ -184,39 +173,5 @@ namespace REBUSS.Pure.Tools
                 Manifest = ContentManifestResult.From(decision.Manifest)
             };
         }
-
-        private StructuredFileChange TruncateHunks(StructuredFileChange file, int budgetForPartial, int safeBudgetTokens)
-        {
-            var truncated = new StructuredFileChange
-            {
-                Path = file.Path,
-                ChangeType = file.ChangeType,
-                SkipReason = file.SkipReason,
-                Additions = file.Additions,
-                Deletions = file.Deletions,
-                Hunks = new List<StructuredHunk>()
-            };
-
-            var usedTokens = 0;
-            foreach (var hunk in file.Hunks)
-            {
-                var serialized = JsonSerializer.Serialize(hunk, JsonOptions);
-                var estimation = _tokenEstimator.Estimate(serialized, safeBudgetTokens);
-
-                if (usedTokens + estimation.EstimatedTokens > budgetForPartial)
-                    break;
-
-                truncated.Hunks.Add(hunk);
-                usedTokens += estimation.EstimatedTokens;
-            }
-
-            if (truncated.Hunks.Count < file.Hunks.Count)
-            {
-                truncated.SkipReason = string.Format(Resources.ErrorPartiallyIncludedHunks, truncated.Hunks.Count, file.Hunks.Count);
-            }
-
-            return truncated;
-        }
-
-            }
-        }
+    }
+}

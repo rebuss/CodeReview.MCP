@@ -14,6 +14,7 @@ using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Models;
+using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
@@ -107,7 +108,7 @@ namespace REBUSS.Pure.Tools
 
                     if (prNumber != null)
                     {
-                        var prJsonElement = JsonDocument.Parse($"{prNumber}").RootElement;
+                        var prJsonElement = JsonSerializer.SerializeToElement(prNumber);
                         var paramError = PaginationOrchestrator.ValidateParameterMatch(
                             resolution.DecodedParams, "prNumber", prJsonElement);
                         if (paramError != null)
@@ -137,8 +138,10 @@ namespace REBUSS.Pure.Tools
                 }
 
                 var fileChanges = BuildFileChanges(diff);
-                var candidates = BuildCandidates(fileChanges, effectiveBudget);
-                var sortedCandidates = SortCandidates(candidates);
+                var candidates = ToolHandlerHelpers.BuildCandidates(
+                    fileChanges, effectiveBudget, _tokenEstimator, _fileClassifier,
+                    fc => fc.Path, fc => fc.Additions + fc.Deletions);
+                var sortedCandidates = ToolHandlerHelpers.SortCandidates(candidates);
 
                 PageAllocation allocation;
                 try
@@ -156,7 +159,10 @@ namespace REBUSS.Pure.Tools
 
                 var pageSlice = allocation.Pages[requestedPage - 1];
 
-                var packedFiles = ExtractPageFiles(fileChanges, sortedCandidates, pageSlice, effectiveBudget);
+                var packedFiles = ToolHandlerHelpers.ExtractPageFiles(
+                    fileChanges, sortedCandidates, pageSlice,
+                    fc => fc.Path,
+                    (fc, budget) => ToolHandlerHelpers.TruncateHunks(fc, budget, effectiveBudget, _tokenEstimator));
 
                 StalenessWarningResult? staleness = null;
                 if (metadataTask != null)
@@ -180,13 +186,13 @@ namespace REBUSS.Pure.Tools
                     }
                 }
 
-                var requestParams = JsonDocument.Parse($"{{\"prNumber\":{effectivePrNumber}}}").RootElement;
+                var requestParams = JsonSerializer.SerializeToElement(new { prNumber = effectivePrNumber });
 
                 var paginationMeta = PaginationOrchestrator.BuildPaginationMetadata(
                     allocation, requestedPage, _pageReferenceCodec,
                     "get_pr_diff", requestParams, effectiveBudget, currentFingerprint);
 
-                var manifestResult = BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
+                var manifestResult = ToolHandlerHelpers.BuildPageManifest(sortedCandidates, pageSlice, allocation, effectiveBudget);
 
                 var structured = new StructuredDiffResult
                 {
@@ -243,97 +249,14 @@ namespace REBUSS.Pure.Tools
             }).ToList();
         }
 
-        private List<PackingCandidate> BuildCandidates(List<StructuredFileChange> fileChanges, int safeBudgetTokens)
-        {
-            var candidates = new List<PackingCandidate>(fileChanges.Count);
-            for (var i = 0; i < fileChanges.Count; i++)
-            {
-                var fc = fileChanges[i];
-                var serialized = JsonSerializer.Serialize(fc, JsonOptions);
-                var estimation = _tokenEstimator.Estimate(serialized, safeBudgetTokens);
-                var classification = _fileClassifier.Classify(fc.Path);
-
-                candidates.Add(new PackingCandidate(
-                    fc.Path,
-                    estimation.EstimatedTokens,
-                    classification.Category,
-                    fc.Additions + fc.Deletions));
-            }
-            return candidates;
-        }
-
-        private static List<PackingCandidate> SortCandidates(List<PackingCandidate> candidates)
-        {
-            var sorted = new List<PackingCandidate>(candidates);
-            sorted.Sort(PackingPriorityComparer.Instance);
-            return sorted;
-        }
-
-        // --- Page extraction ---
-
-        private List<StructuredFileChange> ExtractPageFiles(
-            List<StructuredFileChange> allFiles,
-            List<PackingCandidate> candidates,
-            PageSlice pageSlice,
-            int safeBudgetTokens)
-        {
-            var filesByPath = allFiles.ToDictionary(f => f.Path);
-            var pageFiles = new List<StructuredFileChange>(pageSlice.Items.Count);
-            foreach (var item in pageSlice.Items)
-            {
-                var candidate = candidates[item.OriginalIndex];
-                if (!filesByPath.TryGetValue(candidate.Path, out var fileChange))
-                    continue;
-
-                if (item.Status == PackingItemStatus.Partial)
-                {
-                    pageFiles.Add(TruncateHunks(fileChange, item.BudgetForPartial ?? 0, safeBudgetTokens));
-                }
-                else
-                {
-                    pageFiles.Add(fileChange);
-                }
-            }
-            return pageFiles;
-        }
-
-        // --- Manifest builders ---
-
-        private ContentManifestResult BuildPageManifest(
-            List<PackingCandidate> candidates,
-            PageSlice pageSlice,
-            PageAllocation allocation,
-            int safeBudgetTokens)
-        {
-            var entries = new List<ManifestEntryResult>();
-            foreach (var item in pageSlice.Items)
-            {
-                var candidate = candidates[item.OriginalIndex];
-                entries.Add(new ManifestEntryResult
-                {
-                    Path = candidate.Path,
-                    EstimatedTokens = item.EstimatedTokens,
-                    Status = item.Status.ToString(),
-                    PriorityTier = candidate.Category.ToString()
-                });
-            }
-
-            var summary = PaginationOrchestrator.BuildExtendedManifestSummary(
-                pageSlice, allocation, safeBudgetTokens);
-
-            return new ContentManifestResult
-            {
-                Items = entries,
-                Summary = summary
-            };
-        }
-
         // --- Result builders (F003 path) ---
 
         private string BuildPackedResult(int prNumber, PullRequestDiff diff, int safeBudgetTokens)
         {
             var fileChanges = BuildFileChanges(diff);
-            var candidates = BuildCandidates(fileChanges, safeBudgetTokens);
+            var candidates = ToolHandlerHelpers.BuildCandidates(
+                fileChanges, safeBudgetTokens, _tokenEstimator, _fileClassifier,
+                fc => fc.Path, fc => fc.Additions + fc.Deletions);
 
             var decision = _packer.Pack(candidates, safeBudgetTokens);
 
@@ -348,7 +271,7 @@ namespace REBUSS.Pure.Tools
                         break;
 
                     case PackingItemStatus.Partial:
-                        packedFiles.Add(TruncateHunks(fileChanges[i], item.BudgetForPartial ?? 0, safeBudgetTokens));
+                        packedFiles.Add(ToolHandlerHelpers.TruncateHunks(fileChanges[i], item.BudgetForPartial ?? 0, safeBudgetTokens, _tokenEstimator));
                         break;
                 }
             }
@@ -362,39 +285,5 @@ namespace REBUSS.Pure.Tools
 
             return JsonSerializer.Serialize(structured, JsonOptions);
         }
-
-        private StructuredFileChange TruncateHunks(StructuredFileChange file, int budgetForPartial, int safeBudgetTokens)
-        {
-            var truncated = new StructuredFileChange
-            {
-                Path = file.Path,
-                ChangeType = file.ChangeType,
-                SkipReason = file.SkipReason,
-                Additions = file.Additions,
-                Deletions = file.Deletions,
-                Hunks = new List<StructuredHunk>()
-            };
-
-            var usedTokens = 0;
-            foreach (var hunk in file.Hunks)
-            {
-                var serialized = JsonSerializer.Serialize(hunk, JsonOptions);
-                var estimation = _tokenEstimator.Estimate(serialized, safeBudgetTokens);
-
-                if (usedTokens + estimation.EstimatedTokens > budgetForPartial)
-                    break;
-
-                truncated.Hunks.Add(hunk);
-                usedTokens += estimation.EstimatedTokens;
-            }
-
-            if (truncated.Hunks.Count < file.Hunks.Count)
-            {
-                truncated.SkipReason = string.Format(Resources.ErrorPartiallyIncludedHunks, truncated.Hunks.Count, file.Hunks.Count);
-            }
-
-            return truncated;
-        }
-
-            }
-        }
+    }
+}

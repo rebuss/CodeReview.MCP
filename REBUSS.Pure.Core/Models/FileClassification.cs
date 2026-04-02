@@ -1,5 +1,3 @@
-using REBUSS.Pure.Core.Properties;
-
 namespace REBUSS.Pure.Core.Models
 {
     /// <summary>
@@ -12,7 +10,7 @@ namespace REBUSS.Pure.Core.Models
         public bool IsGenerated { get; init; }
         public bool IsTestFile { get; init; }
         public FileCategory Category { get; init; }
-        public string ReviewPriority { get; init; } = Resources.ReviewPriorityMedium;
+        public string ReviewPriority { get; init; } = ReviewPriorities.Medium;
     }
 
     /// <summary>

@@ -95,32 +95,5 @@ namespace REBUSS.Pure.Core.Properties {
                 return ResourceManager.GetString("LogStructuredDiffBuilderSuspiciousDiff", resourceCulture);
             }
         }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to high.
-        /// </summary>
-        internal static string ReviewPriorityHigh {
-            get {
-                return ResourceManager.GetString("ReviewPriorityHigh", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to low.
-        /// </summary>
-        internal static string ReviewPriorityLow {
-            get {
-                return ResourceManager.GetString("ReviewPriorityLow", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to medium.
-        /// </summary>
-        internal static string ReviewPriorityMedium {
-            get {
-                return ResourceManager.GetString("ReviewPriorityMedium", resourceCulture);
-            }
-        }
     }
 }

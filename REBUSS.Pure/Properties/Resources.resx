@@ -335,6 +335,15 @@
   <data name="LogMcpWorkspaceRootProviderUnexpandedVariable" xml:space="preserve">
     <value>CLI --repo value '{Path}' looks like an unexpanded variable (e.g. from VS Code on a non-VS Code client). Ignoring it — MCP roots or localRepoPath will be used instead.</value>
   </data>
+  <data name="LogPageAllocatorAllocated" xml:space="preserve">
+    <value>Allocated {TotalItems} items across {TotalPages} pages, budget={Budget}</value>
+  </data>
+  <data name="LogPageAllocatorBudgetBelowMinimum" xml:space="preserve">
+    <value>Budget {Budget} below minimum {Minimum}</value>
+  </data>
+  <data name="LogPageAllocatorEmptyCandidates" xml:space="preserve">
+    <value>Empty candidates, returning single empty page</value>
+  </data>
   <data name="MsgCopiedInstructions" xml:space="preserve">
     <value>Copied {0} instruction file(s) to {1}</value>
   </data>

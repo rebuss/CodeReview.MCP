@@ -1,5 +1,3 @@
-using REBUSS.Pure.Core.Properties;
-
 namespace REBUSS.Pure.Core.Models
 {
     /// <summary>
@@ -26,7 +24,7 @@ namespace REBUSS.Pure.Core.Models
         public bool IsBinary { get; set; }
         public bool IsGenerated { get; set; }
         public bool IsTestFile { get; set; }
-        public string ReviewPriority { get; set; } = Resources.ReviewPriorityMedium;
+        public string ReviewPriority { get; set; } = ReviewPriorities.Medium;
     }
 
     /// <summary>

@@ -522,6 +522,23 @@ gh auth login
 
 ---
 
+## Known Limitations
+
+### Azure DevOps — zero line counts affect pagination quality
+
+The Azure DevOps iteration-changes API does not return per-file line counts.
+`Additions`, `Deletions`, and `Changes` are always **zero** for files fetched
+through `AzureDevOpsFilesProvider`. The pagination system compensates with a
+flat fallback estimate (`PaginationConstants.FallbackEstimateWhenLinecountsUnknown = 300` tokens per file), but this means every file — whether a one-line config
+tweak or a 500-line rewrite — receives the same budget estimate. Consequently,
+page sizes can be uneven: pages dominated by small files will finish under
+budget while pages with large files may exceed expectations.
+
+This does **not** affect GitHub-backed reviews, where the API provides accurate
+per-file line counts.
+
+---
+
 ## 📄 License
 
 MIT

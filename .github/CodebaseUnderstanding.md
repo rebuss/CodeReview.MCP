@@ -73,7 +73,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Shared\IStructuredDiffBuilder.cs` | Interface: produces `List<DiffHunk>` | `DiffHunk` |
 | `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
 | `REBUSS.Pure.Core\Shared\IFileClassifier.cs` | Interface: file classifier | `FileClassification` |
-| `REBUSS.Pure.Core\Shared\FileClassifier.cs` | Classifies files by path/extension | `IFileClassifier`, `FileClassification`, `FileCategory` |
+| `REBUSS.Pure.Core\Shared\FileClassifier.cs` | Classifies files by path/extension; review priorities via `ReviewPriorities` constants | `IFileClassifier`, `FileClassification`, `FileCategory`, `ReviewPriorities` |
 
 ### Core exceptions (REBUSS.Pure.Core\Exceptions)
 
@@ -173,7 +173,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role |
 |---|---|
 | `REBUSS.Pure.GitHub\Api\IGitHubApiClient.cs` | Interface: GitHub REST API v3 client (PR details, files, commits, file content at ref); all methods accept optional `CancellationToken` |
-| `REBUSS.Pure.GitHub\Api\GitHubApiClient.cs` | HTTP client for GitHub REST API; base URL `https://api.github.com/`; supports pagination (`GetPaginatedArrayAsync`, max 10 pages); raw file content via `Accept: application/vnd.github.raw+json` header; `GetFileContentAtRefAsync` returns `null` only for 404, throws on other non-success; all methods propagate `CancellationToken` to `HttpClient` calls |
+| `REBUSS.Pure.GitHub\Api\GitHubApiClient.cs` | HTTP client for GitHub REST API; base URL `https://api.github.com/`; supports pagination (`GetPaginatedArrayAsync`, max 10 pages); raw file content via `Accept: application/vnd.github.raw+json` header; `GetFileContentAtRefAsync` returns `null` only for 404, throws on other non-success; `LogRateLimitHeaders` called from all HTTP paths (`GetStringAsync`, `GetPaginatedArrayAsync`, `GetFileContentAtRefAsync`) — logs warning on `Retry-After` or low remaining quota; all methods propagate `CancellationToken` to `HttpClient` calls |
 
 ### GitHub provider � Parsers (REBUSS.Pure.GitHub\Parsers)
 
@@ -243,19 +243,19 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role | Depends on |
 |---|---|---|
 | `REBUSS.Pure\Services\PackingPriorityComparer.cs` | Compares `PackingCandidate` items: FileCategory asc, TotalChanges desc, Path asc | `PackingCandidate` |
-| `REBUSS.Pure\Services\ResponsePacker.cs` | Greedy priority-based packing: sorts candidates, includes until budget exhausted, first oversized gets Partial | `IResponsePacker`, `PackingPriorityComparer`, `ILogger<ResponsePacker>` |
+| `REBUSS.Pure\Services\ResponsePacker.cs` | Greedy priority-based packing: sorts candidates, includes until budget exhausted, first oversized gets Partial; manifest overhead constants sourced from `PaginationConstants` | `IResponsePacker`, `PackingPriorityComparer`, `PaginationConstants`, `ILogger<ResponsePacker>` |
 
 ### PR Diff Cache (REBUSS.Pure\Services) — Feature 005
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure\Services\PullRequestDiffCache.cs` | Session-scoped `ConcurrentDictionary<int, PullRequestDiff>` cache; eliminates duplicate API calls between metadata and content handlers; staleness detection — when `knownHeadCommitId` is provided and differs from cached `LastSourceCommitId`, the entry is evicted and re-fetched; failed fetches are not cached; thread-safe via `ConcurrentDictionary` + `TryAdd` (no overwrite on race) | `IPullRequestDiffCache`, `IPullRequestDataProvider`, `ILogger<PullRequestDiffCache>` |
+| `REBUSS.Pure\Services\PullRequestDiffCache.cs` | Session-scoped cache with in-flight deduplication; concurrent cache misses for the same PR are coalesced via `ConcurrentDictionary<int, Lazy<Task<PullRequestDiff>>>` so only one fetch is issued; completed results stored in a separate `ConcurrentDictionary<int, PullRequestDiff>`; staleness detection — when `knownHeadCommitId` differs from cached `LastSourceCommitId`, both cache and in-flight entries are evicted; failed fetches are not cached (in-flight entry removed via value-aware `TryRemove`) | `IPullRequestDiffCache`, `IPullRequestDataProvider`, `ILogger<PullRequestDiffCache>` |
 
 ### Pagination (REBUSS.Pure\Services\Pagination) — Feature 004
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure\Services\PageAllocator.cs` | Strict sequential page allocator: fills pages until budget exhausted, oversized items get Partial status | `IPageAllocator`, `PageAllocation`, `PageSlice`, `PageSliceItem`, `PackingItemStatus` |
+| `REBUSS.Pure\Services\PageAllocator.cs` | Strict sequential page allocator: fills pages until budget exhausted, oversized items get Partial status; log templates sourced from `Resources` constants | `IPageAllocator`, `PageAllocation`, `PageSlice`, `PageSliceItem`, `PackingItemStatus`, `Resources` |
 | `REBUSS.Pure\Services\PageReferenceCodec.cs` | Base64url JSON codec with compact keys (t/r/b/p/f) for page reference tokens | `IPageReferenceCodec`, `PageReferenceData` |
 | `REBUSS.Pure\Services\PaginationConstants.cs` | Static constants: PaginationOverhead=150, BaseManifestOverhead=100, PerItemManifestOverhead=15, MinimumBudgetForPagination=265, FallbackEstimateWhenLinecountsUnknown=300 | — |
 | `REBUSS.Pure\Services\PaginationOrchestrator.cs` | Internal static helper: validation, page resolution, param matching, staleness detection, metadata building | `PageReferenceData`, `PageAllocation`, `PaginationConstants`, `PaginationMetadataResult`, `StalenessWarningResult` |
@@ -264,21 +264,22 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure\Tools\GetPullRequestDiffToolHandler.cs` | `[McpServerToolType]` `get_pr_diff` — returns structured JSON with per-file hunks; F004 integration: dual F003/F004 paths, pageReference resume, staleness detection, pageNumber access; prNumber now optional when pageReference is provided; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `StructuredDiffResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
+| `REBUSS.Pure\Tools\GetPullRequestDiffToolHandler.cs` | `[McpServerToolType]` `get_pr_diff` — returns structured JSON with per-file hunks; F004 integration: dual F003/F004 paths, pageReference resume, staleness detection, pageNumber access; prNumber now optional when pageReference is provided; delegates candidate building, sorting, page extraction, manifest construction, and hunk truncation to `ToolHandlerHelpers`; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `StructuredDiffResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
 | `REBUSS.Pure\Tools\GetFileDiffToolHandler.cs` | `[McpServerToolType]` `get_file_diff` — returns structured JSON for a single file; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IPullRequestDataProvider`, `StructuredDiffResult` models |
 | `REBUSS.Pure\Tools\GetPullRequestMetadataToolHandler.cs` | `[McpServerToolType]` `get_pr_metadata` — returns PR metadata JSON; extended with optional `modelName`/`maxTokens` params to compute `contentPaging`; Feature 005: replaced `GetFilesAsync + BuildStatBasedCandidates` with `IPullRequestDiffCache.GetOrFetchDiffAsync + FileTokenMeasurement.BuildCandidatesFromDiff` for actual diff-based token measurement; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException` for errors | `IPullRequestDataProvider`, `IPullRequestDiffCache`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `PullRequestMetadataResult` models |
 | `REBUSS.Pure\Tools\GetPullRequestContentToolHandler.cs` | `[McpServerToolType]` `get_pr_content` — returns paginated diff content for a single page of a PR; Feature 005: replaced `IPullRequestDataProvider` with `IPullRequestDiffCache` for diff retrieval; uses `FileTokenMeasurement.BuildCandidatesFromDiff` for actual diff-based token measurement instead of stat-based estimation; SDK attribute-based registration | `IPullRequestDiffCache`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `PullRequestContentPageResult`, `ContentPageSummary` models |
-| `REBUSS.Pure\Tools\GetLocalContentToolHandler.cs` | `[McpServerToolType]` `get_local_content` — returns paginated diff content for a single page of local changes; stat-based page allocation, per-file diff fetch (only page files); SDK attribute-based registration | `ILocalReviewProvider`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `LocalContentPageResult`, `ContentPageSummary` models |
-| `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `[McpServerToolType]` `get_pr_files` — returns classified file list JSON; F004 integration: same pagination pattern as get_pr_diff; prNumber now optional when pageReference is provided; SDK attribute-based registration, throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `PullRequestFilesResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
+| `REBUSS.Pure\Tools\GetLocalContentToolHandler.cs` | `[McpServerToolType]` `get_local_content` — returns paginated diff content for a single page of local changes; stat-based page allocation, parallel per-file diff fetch via `Task.WhenAll` (only page files); uses `FileTokenMeasurement.MapToStructured` for file mapping; SDK attribute-based registration | `ILocalReviewProvider`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `FileTokenMeasurement`, `LocalContentPageResult`, `ContentPageSummary` models |
+| `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `[McpServerToolType]` `get_pr_files` — returns classified file list JSON; F004 integration: same pagination pattern as get_pr_diff; prNumber now optional when pageReference is provided; delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PullRequestFilesResult` models, `PaginationMetadataResult`, `StalenessWarningResult` |
 | `REBUSS.Pure\Tools\GetFileContentAtRefToolHandler.cs` | `[McpServerToolType]` `get_file_content_at_ref` — returns file content JSON; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IFileContentDataProvider`, `FileContentAtRefResult` model |
-| `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — lists locally changed files with classification; F004 integration: pagination support but no staleness (null fingerprint); SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `LocalReviewFilesResult` model, `PaginationMetadataResult` |
-| `REBUSS.Pure\Tools\GetLocalFileDiffToolHandler.cs` | `[McpServerToolType]` `get_local_file_diff` — returns structured diff for a single local file; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `ILocalReviewProvider`, `IResponsePacker`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `StructuredDiffResult` models |
+| `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — lists locally changed files with classification; F004 integration: pagination support but no staleness (null fingerprint); delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `LocalReviewFilesResult` model, `PaginationMetadataResult` |
+| `REBUSS.Pure\Tools\GetLocalFileDiffToolHandler.cs` | `[McpServerToolType]` `get_local_file_diff` — returns structured diff for a single local file; delegates candidate building and hunk truncation to `ToolHandlerHelpers`; SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `ILocalReviewProvider`, `IResponsePacker`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `ToolHandlerHelpers`, `StructuredDiffResult` models |
 
 ### Tool shared helpers (REBUSS.Pure\Tools\Shared)
 
 | File | Role | Depends on |
 |---|---|---|
 | `REBUSS.Pure\Tools\Shared\FileTokenMeasurement.cs` | Static internal helper (Feature 005): `BuildCandidatesFromDiff` serializes each `FileChange` to structured JSON and measures actual token cost via `ITokenEstimator.EstimateTokenCount`; `MapToStructured` converts domain `FileChange` → `StructuredFileChange` output model (line op char→string mapping); uses `JsonSerializerOptions` with CamelCase, indented, null-ignoring | `PullRequestDiff`, `ITokenEstimator`, `IFileClassifier`, `PackingCandidate`, `StructuredFileChange` |
+| `REBUSS.Pure\Tools\Shared\ToolHandlerHelpers.cs` | Static internal helper: shared pagination/packing methods extracted from tool handlers — `SortCandidates` (priority sort), `BuildCandidates<T>` (generic serialize→estimate→classify), `ExtractPageFiles<T>` (simple and partial-aware overloads), `BuildPageManifest` (manifest DTO from page slice), `TruncateHunks` (budget-limited hunk inclusion) | `PackingPriorityComparer`, `ITokenEstimator`, `IFileClassifier`, `PackingCandidate`, `PageSlice`, `PageAllocation`, `PaginationOrchestrator`, `StructuredFileChange`, `ContentManifestResult`, `ManifestEntryResult` |
 
 ### Tool output models (REBUSS.Pure\Tools\Models)
 
@@ -448,7 +449,7 @@ global mode writes to `~/.mcp.json` (Visual Studio) and `%APPDATA%\Code\User\mcp
 | `REBUSS.Pure.Tests\Services\PageAllocatorTests.cs` | `PageAllocator` (Feature 004) — 14 tests: single/multi-page allocation, oversized items, empty input, determinism, scale |
 | `REBUSS.Pure.Tests\Services\PageReferenceCodecTests.cs` | `PageReferenceCodec` (Feature 004) — 11 tests: round-trip encoding, null fingerprint, malformed input, safety |
 | `REBUSS.Pure.Tests\Services\PaginationOrchestratorTests.cs` | `PaginationOrchestrator` (Feature 004) — 18 tests: validation, page resolution, param matching, staleness detection, metadata building |
-| `REBUSS.Pure.Tests\Services\PullRequestDiffCacheTests.cs` | `PullRequestDiffCache` (Feature 005) — 12 tests: cache miss fetches from provider, cache hit returns same instance, different PRs cached independently, provider exceptions propagate (not cached), failed fetches retried on second call, cancellation token passthrough, staleness detection (commit match → cache hit, commit mismatch → evict + re-fetch, null known commit → no eviction, null cached commit → no eviction, case-insensitive comparison) |
+| `REBUSS.Pure.Tests\Services\PullRequestDiffCacheTests.cs` | `PullRequestDiffCache` (Feature 005) — 15 tests: cache miss fetches from provider, cache hit returns same instance, different PRs cached independently, provider exceptions propagate (not cached), failed fetches retried on second call, cancellation token passthrough, staleness detection (commit match → cache hit, commit mismatch → evict + re-fetch, null known commit → no eviction, null cached commit → no eviction, case-insensitive comparison), concurrent deduplication (concurrent miss fetches once, failure propagates to all waiters, failure allows retry) |
 | `REBUSS.Pure.Tests\Tools\Shared\FileTokenMeasurementTests.cs` | `FileTokenMeasurement` (Feature 005) — 18 tests: `BuildCandidatesFromDiff` (correct count/paths/tokens/classifications/total changes, empty diffs, skipped files), `MapToStructured` (path, changeType, skipReason, additions/deletions, hunks, line op char→string, null skipReason) |
 | `REBUSS.Pure.Tests\Logging\FileLoggerProviderTests.cs` | `FileLoggerProvider` — daily rotation, file naming, write content, timestamp, retention/deletion, roll-over, non-log file safety |
 | `REBUSS.Pure.Tests\Integration\EndToEndTests.cs` | Integration: DI-constructed handler → mocked provider → structured JSON result; tests happy path and PR-not-found error |
@@ -492,10 +493,12 @@ global mode writes to `~/.mcp.json` (Visual Studio) and `%APPDATA%\Code\User\mcp
 
 ```
 PullRequestDiff (+ FileChange, DiffHunk, DiffLine)
-  ? AzureDevOpsDiffProvider [AzureDevOps]      (produces: populates FileChange.Hunks/Additions/Deletions/SkipReason)
+  NOTE: FileChange is NOT thread-safe. Diff providers mutate Hunks/SkipReason/Additions/Deletions
+        inside Parallel.ForEachAsync — safe only because each iteration owns a distinct instance.
+  ? AzureDevOpsDiffProvider [AzureDevOps]      (produces: populates FileChange.Hunks/Additions/Deletions/SkipReason via Parallel.ForEachAsync)
   ? AzureDevOpsFilesProvider [AzureDevOps]      (consumes: reads FileChange.Path, .ChangeType from iteration-changes API; line counts are zero)
   ? AzureDevOpsScmClient [AzureDevOps]          (delegates: passes through from diff/files providers)
-  ? GitHubDiffProvider [GitHub]                 (produces: populates FileChange.Hunks/Additions/Deletions/SkipReason)
+  ? GitHubDiffProvider [GitHub]                 (produces: populates FileChange.Hunks/Additions/Deletions/SkipReason via Parallel.ForEachAsync)
   ? GitHubFilesProvider [GitHub]                (consumes: reads FileChange from PR files API; uses .Additions, .Deletions)
   ? GitHubScmClient [GitHub]                    (delegates: passes through from diff/files providers)
   ? LocalReviewProvider [Pure]                   (produces for GetFileDiffAsync; consumes FileChange for files listing)
@@ -564,7 +567,7 @@ IScmClient / IPullRequestDataProvider / IFileContentDataProvider [Core interface
   ? AnalysisInput [Core]                           (carries IFileContentDataProvider for on-demand content fetching)
 
 IPullRequestDiffCache [Core interface]
-  ? PullRequestDiffCache [Pure]                    (implements: ConcurrentDictionary cache keyed by PR number, delegates to IPullRequestDataProvider on miss; staleness detection via LastSourceCommitId comparison when knownHeadCommitId is provided)
+  ? PullRequestDiffCache [Pure]                    (implements: ConcurrentDictionary cache + Lazy<Task> in-flight dedup keyed by PR number, delegates to IPullRequestDataProvider on miss; concurrent misses coalesced; staleness detection via LastSourceCommitId comparison when knownHeadCommitId is provided)
   ? GetPullRequestMetadataToolHandler [Pure]       (consumes: fetches diff for diff-based token measurement in contentPaging; passes metadata.LastMergeSourceCommitId for staleness detection)
   ? GetPullRequestContentToolHandler [Pure]        (consumes: fetches diff for page allocation and content rendering; no staleness check — trusts prior metadata validation)
 

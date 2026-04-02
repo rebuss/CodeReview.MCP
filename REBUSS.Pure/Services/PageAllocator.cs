@@ -3,6 +3,7 @@ using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Properties;
 
 namespace REBUSS.Pure.Services.Pagination;
 
@@ -26,14 +27,14 @@ public sealed class PageAllocator : IPageAllocator
         // Empty candidates (per Q21): return 1 page with 0 items — consistent shape
         if (sortedCandidates.Count == 0)
         {
-            _logger.LogDebug("[PageAllocator] Empty candidates, returning single empty page");
+            _logger.LogDebug(Resources.LogPageAllocatorEmptyCandidates);
             return BuildEmptyAllocation(safeBudgetTokens);
         }
 
         if (safeBudgetTokens < PaginationConstants.MinimumBudgetForPagination)
         {
             _logger.LogWarning(
-                "[PageAllocator] Budget {Budget} below minimum {Minimum}",
+                Resources.LogPageAllocatorBudgetBelowMinimum,
                 safeBudgetTokens, PaginationConstants.MinimumBudgetForPagination);
             throw new BudgetTooSmallException(
                 $"Token budget ({safeBudgetTokens}) is too small for pagination. " +
@@ -113,7 +114,7 @@ public sealed class PageAllocator : IPageAllocator
             TotalItems: sortedCandidates.Count);
 
         _logger.LogInformation(
-            "[PageAllocator] Allocated {TotalItems} items across {TotalPages} pages, budget={Budget}",
+            Resources.LogPageAllocatorAllocated,
             allocation.TotalItems, allocation.TotalPages, safeBudgetTokens);
 
         return allocation;

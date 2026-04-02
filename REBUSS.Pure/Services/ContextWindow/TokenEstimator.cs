@@ -27,19 +27,7 @@ public sealed class TokenEstimator : ITokenEstimator
 
     public TokenEstimationResult Estimate(string serializedContent, int safeBudgetTokens)
     {
-        if (string.IsNullOrEmpty(serializedContent))
-            return new TokenEstimationResult(EstimatedTokens: 0, PercentageUsed: 0.0, FitsWithinBudget: true);
-
-        var charsPerToken = _options.Value.CharsPerToken;
-        if (charsPerToken <= 0)
-        {
-            _logger.LogWarning(
-                "Invalid CharsPerToken value ({CharsPerToken}); falling back to default {Default}",
-                charsPerToken, DefaultCharsPerToken);
-            charsPerToken = DefaultCharsPerToken;
-        }
-
-        var estimatedTokens = (int)Math.Ceiling(serializedContent.Length / charsPerToken);
+        var estimatedTokens = EstimateTokenCount(serializedContent);
 
         var percentageUsed = safeBudgetTokens > 0
             ? (double)estimatedTokens / safeBudgetTokens * 100.0
@@ -63,7 +51,12 @@ public sealed class TokenEstimator : ITokenEstimator
 
         var charsPerToken = _options.Value.CharsPerToken;
         if (charsPerToken <= 0)
+        {
+            _logger.LogWarning(
+                "Invalid CharsPerToken value ({CharsPerToken}); falling back to default {Default}",
+                charsPerToken, DefaultCharsPerToken);
             charsPerToken = DefaultCharsPerToken;
+        }
 
         return (int)Math.Ceiling(serializedContent.Length / charsPerToken);
     }
