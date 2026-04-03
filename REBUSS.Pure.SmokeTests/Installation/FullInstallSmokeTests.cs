@@ -79,7 +79,7 @@ public class FullInstallSmokeTests : IAsyncLifetime
         Assert.True(initResult.ExitCode == 0,
             $"init failed (exit {initResult.ExitCode}). stdout: {initResult.StdOut}\nstderr: {initResult.StdErr}");
         Assert.True(repo.FileExists(Path.Combine(".vscode", "mcp.json")));
-        Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "review-pr.md")));
+        Assert.True(repo.FileExists(Path.Combine(".github", "prompts", "review-pr.prompt.md")));
 
         // Verify the config points to the installed tool
         var config = repo.ReadFile(Path.Combine(".vscode", "mcp.json"));
