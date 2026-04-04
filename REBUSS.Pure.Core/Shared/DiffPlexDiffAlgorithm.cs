@@ -8,14 +8,15 @@ namespace REBUSS.Pure.Core.Shared;
 /// </summary>
 public class DiffPlexDiffAlgorithm : IDiffAlgorithm
 {
-    private readonly Differ _differ = new();
-
     public IReadOnlyList<DiffEdit> ComputeEdits(string[] oldLines, string[] newLines)
     {
+        // Create a fresh Differ per call to avoid sharing mutable state across concurrent requests.
+        var differ = new Differ();
+
         var oldText = string.Join('\n', oldLines);
         var newText = string.Join('\n', newLines);
 
-        var diffResult = _differ.CreateLineDiffs(oldText, newText, ignoreWhitespace: false);
+        var diffResult = differ.CreateLineDiffs(oldText, newText, ignoreWhitespace: false);
 
         var edits = new List<DiffEdit>(oldLines.Length + newLines.Length);
         int oldIdx = 0;

@@ -8,6 +8,25 @@ namespace REBUSS.Pure.SmokeTests.Infrastructure;
 public static class ToolCallResponseExtensions
 {
     /// <summary>
+    /// Extracts the tool result <c>content[0].text</c> as plain text.
+    /// Throws if the response indicates an error.
+    /// </summary>
+    public static string GetToolText(this JsonDocument response)
+    {
+        var result = response.RootElement.GetProperty("result");
+
+        if (result.TryGetProperty("isError", out var isError) && isError.GetBoolean())
+        {
+            var errorText = result.TryGetProperty("content", out var ec)
+                ? ec[0].GetProperty("text").GetString() ?? "unknown"
+                : "unknown";
+            throw new InvalidOperationException($"Tool returned error: {errorText}");
+        }
+
+        return result.GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+    }
+
+    /// <summary>
     /// Extracts the tool result <c>content[0].text</c> as a parsed <see cref="JsonElement"/>.
     /// Throws if the response indicates an error.
     /// </summary>
