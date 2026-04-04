@@ -17,13 +17,12 @@ public static class ToolCallResponseExtensions
 
         if (result.TryGetProperty("isError", out var isError) && isError.GetBoolean())
         {
-            var errorText = result.TryGetProperty("content", out var ec)
-                ? ec[0].GetProperty("text").GetString() ?? "unknown"
-                : "unknown";
+            var errorText = TryGetFirstText(result) ?? "unknown";
             throw new InvalidOperationException($"Tool returned error: {errorText}");
         }
 
-        return result.GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+        return TryGetFirstText(result)
+            ?? throw new InvalidOperationException("Tool response has no text content.");
     }
 
     /// <summary>
@@ -36,13 +35,12 @@ public static class ToolCallResponseExtensions
 
         if (result.TryGetProperty("isError", out var isError) && isError.GetBoolean())
         {
-            var errorText = result.TryGetProperty("content", out var ec)
-                ? ec[0].GetProperty("text").GetString() ?? "unknown"
-                : "unknown";
+            var errorText = TryGetFirstText(result) ?? "unknown";
             throw new InvalidOperationException($"Tool returned error: {errorText}");
         }
 
-        var text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
+        var text = TryGetFirstText(result)
+            ?? throw new InvalidOperationException("Tool response has no text content to parse as JSON.");
         return JsonDocument.Parse(text).RootElement;
     }
 
@@ -61,8 +59,21 @@ public static class ToolCallResponseExtensions
     public static string GetToolErrorMessage(this JsonDocument response)
     {
         var result = response.RootElement.GetProperty("result");
-        if (result.TryGetProperty("content", out var content))
-            return content[0].GetProperty("text").GetString() ?? string.Empty;
-        return string.Empty;
+        return TryGetFirstText(result) ?? string.Empty;
+    }
+
+    private static string? TryGetFirstText(JsonElement result)
+    {
+        if (!result.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            return null;
+
+        if (content.GetArrayLength() == 0)
+            return null;
+
+        var first = content[0];
+        if (!first.TryGetProperty("text", out var textElement))
+            return null;
+
+        return textElement.GetString();
     }
 }

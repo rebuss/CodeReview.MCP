@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using REBUSS.Pure.SmokeTests.Expectations;
 using REBUSS.Pure.SmokeTests.Infrastructure;
 
@@ -52,8 +53,10 @@ public class AdoFilesContractTests
 
         foreach (var (path, expectedStatus) in AdoTestExpectations.FileStatuses)
         {
-            Assert.Contains(path, content);
-            Assert.Contains(expectedStatus, content, StringComparison.OrdinalIgnoreCase);
+            var rowPattern = new Regex(
+                $@"^\s+{Regex.Escape(path)}\s+{Regex.Escape(expectedStatus)}\s+\+\s*\d+\s+-\s*\d+\s+(low|medium|high)\b",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            Assert.Matches(rowPattern, content);
         }
     }
 
@@ -66,8 +69,13 @@ public class AdoFilesContractTests
             "get_pr_files", new { prNumber = TestSettings.AdoPrNumber });
         var content = response.GetToolText();
 
-        Assert.Contains("+", content);
-        Assert.Contains("-", content);
+        foreach (var path in AdoTestExpectations.FilePaths)
+        {
+            var rowPattern = new Regex(
+                $@"^\s+{Regex.Escape(path)}\s+\w+\s+\+\s*\d+\s+-\s*\d+\s+(low|medium|high)\b",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            Assert.Matches(rowPattern, content);
+        }
     }
 
     [SkippableFact]
@@ -104,11 +112,13 @@ public class AdoFilesContractTests
             "get_pr_files", new { prNumber = TestSettings.AdoPrNumber });
         var content = response.GetToolText();
 
-        Assert.True(
-            content.Contains(" low", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains(" medium", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains(" high", StringComparison.OrdinalIgnoreCase),
-            "Expected at least one review-priority marker in output.");
+        foreach (var path in AdoTestExpectations.FilePaths)
+        {
+            var priorityPattern = new Regex(
+                $@"^\s+{Regex.Escape(path)}\s+\w+\s+\+\s*\d+\s+-\s*\d+\s+(low|medium|high)\b",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            Assert.Matches(priorityPattern, content);
+        }
     }
 
     [SkippableFact]
@@ -120,7 +130,7 @@ public class AdoFilesContractTests
             "get_pr_files", new { prNumber = TestSettings.AdoPrNumber });
         var content = response.GetToolText();
 
-        Assert.DoesNotContain("binary", content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("generated", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("[binary", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("[generated", content, StringComparison.OrdinalIgnoreCase);
     }
 }
