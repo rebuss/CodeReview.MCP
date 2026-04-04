@@ -2,9 +2,9 @@ using REBUSS.Pure.Core.Shared;
 
 namespace REBUSS.Pure.Core.Tests.Shared;
 
-public class LcsDiffAlgorithmTests
+public class DiffPlexDiffAlgorithmTests
 {
-    private readonly IDiffAlgorithm _algorithm = new LcsDiffAlgorithm();
+    private readonly IDiffAlgorithm _algorithm = new DiffPlexDiffAlgorithm();
 
     [Fact]
     public void ComputeEdits_EmptyInputs_ReturnsEmptyList()
