@@ -123,6 +123,16 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 4. **Wire up** → add `case` in `Program.DetectProvider` + `ConfigureBusinessServices` switch
 5. **Tests** → new `REBUSS.Pure.{Provider}.Tests` project
 
+### 5.8 Add a new diff enricher (`IDiffEnricher`)
+1. **Class** → implement `IDiffEnricher` in `REBUSS.Pure.RoslynProcessor` (or appropriate project)
+2. **Order** → assign `Order` property: `100` = before/after context, `200` = structural changes, `300` = future multi-language (tree-sitter)
+3. **CanEnrich** → synchronous gate (no I/O); return `false` to skip for non-applicable diffs
+4. **EnrichAsync** → transform the diff string; return original diff unchanged on failure (graceful fallback)
+5. **DI** → `services.AddSingleton<IDiffEnricher, YourEnricher>()` in `Program.ConfigureBusinessServices`
+6. **Shared logic** → use `DiffSourceResolver` to extract before/after source code (handles repo download wait, path resolution, size limits)
+7. **Tests** → unit tests in the corresponding test project; test `CanEnrich` applicability + enrichment output + fallback behavior
+8. **No changes** → `CompositeCodeProcessor` auto-discovers all `IDiffEnricher` via `IEnumerable<IDiffEnricher>` and chains them in `Order` sequence. Tool handlers are unaffected.
+
 ## 6. Configuration & Auth Quick Reference
 
 | Priority | Config source |

@@ -153,7 +153,10 @@ namespace REBUSS.Pure
             services.AddSingleton<IDiffAlgorithm, DiffPlexDiffAlgorithm>();
             services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
             services.AddSingleton<IFileClassifier, FileClassifier>();
-            services.AddSingleton<ICodeProcessor, RoslynCodeProcessor>();
+            services.AddSingleton<DiffSourceResolver>();
+            services.AddSingleton<IDiffEnricher, BeforeAfterEnricher>();         // Order=100
+            services.AddSingleton<IDiffEnricher, StructuralChangeEnricher>();    // Order=200
+            services.AddSingleton<ICodeProcessor, CompositeCodeProcessor>();
 
             // Context Window Awareness
             services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));

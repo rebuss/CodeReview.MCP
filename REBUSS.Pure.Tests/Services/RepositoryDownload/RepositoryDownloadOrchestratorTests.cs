@@ -21,6 +21,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
         _orchestrator = new RepositoryDownloadOrchestrator(
             _archiveProvider,
             _lifetime,
+            Array.Empty<IRepositoryReadyHandler>(),
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
     }
 
@@ -199,6 +200,148 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
         // No exception should be thrown
         var state = _orchestrator.GetState();
         Assert.Equal(DownloadStatus.NotStarted, state.Status);
+    }
+
+    [Fact]
+    public async Task TriggerDownload_OnSuccess_CallsAllReadyHandlers()
+    {
+        var handler1 = Substitute.For<IRepositoryReadyHandler>();
+        var handler2 = Substitute.For<IRepositoryReadyHandler>();
+        handler1.OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+        handler2.OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var destPath = callInfo.ArgAt<string>(1);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                CreateMinimalZip(destPath);
+                return Task.CompletedTask;
+            });
+
+        var orchestrator = new RepositoryDownloadOrchestrator(
+            _archiveProvider, _lifetime, new[] { handler1, handler2 },
+            NullLogger<RepositoryDownloadOrchestrator>.Instance);
+
+        orchestrator.TriggerDownloadAsync(42, "abc123");
+        await orchestrator.GetExtractedPathAsync();
+        await Task.Delay(200); // Allow fire-and-forget handlers to complete
+
+        await handler1.Received(1).OnRepositoryReadyAsync(Arg.Any<string>(), 42, Arg.Any<CancellationToken>());
+        await handler2.Received(1).OnRepositoryReadyAsync(Arg.Any<string>(), 42, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TriggerDownload_OnFailure_DoesNotCallReadyHandlers()
+    {
+        var handler = Substitute.For<IRepositoryReadyHandler>();
+
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Network error"));
+
+        var orchestrator = new RepositoryDownloadOrchestrator(
+            _archiveProvider, _lifetime, new[] { handler },
+            NullLogger<RepositoryDownloadOrchestrator>.Instance);
+
+        orchestrator.TriggerDownloadAsync(42, "abc123");
+        await Task.Delay(300);
+
+        await handler.DidNotReceive().OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TriggerDownload_HandlerThrows_OtherHandlersStillCalled()
+    {
+        var handler1 = Substitute.For<IRepositoryReadyHandler>();
+        var handler2 = Substitute.For<IRepositoryReadyHandler>();
+        handler1.OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("handler1 failed"));
+        handler2.OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var destPath = callInfo.ArgAt<string>(1);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                CreateMinimalZip(destPath);
+                return Task.CompletedTask;
+            });
+
+        var orchestrator = new RepositoryDownloadOrchestrator(
+            _archiveProvider, _lifetime, new[] { handler1, handler2 },
+            NullLogger<RepositoryDownloadOrchestrator>.Instance);
+
+        orchestrator.TriggerDownloadAsync(42, "abc123");
+        await orchestrator.GetExtractedPathAsync();
+        await Task.Delay(300);
+
+        await handler2.Received(1).OnRepositoryReadyAsync(Arg.Any<string>(), 42, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TriggerDownload_NoHandlers_CompletesNormally()
+    {
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var destPath = callInfo.ArgAt<string>(1);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                CreateMinimalZip(destPath);
+                return Task.CompletedTask;
+            });
+
+        var orchestrator = new RepositoryDownloadOrchestrator(
+            _archiveProvider, _lifetime, Array.Empty<IRepositoryReadyHandler>(),
+            NullLogger<RepositoryDownloadOrchestrator>.Instance);
+
+        orchestrator.TriggerDownloadAsync(42, "abc123");
+        var path = await orchestrator.GetExtractedPathAsync();
+
+        var state = orchestrator.GetState();
+        Assert.Equal(DownloadStatus.Ready, state.Status);
+    }
+
+    [Fact]
+    public async Task TriggerDownload_NewPrWhileHandlerRunning_HandlerCompletesOrFails()
+    {
+        var handlerStarted = new TaskCompletionSource();
+        var handlerContinue = new TaskCompletionSource();
+        var handler = Substitute.For<IRepositoryReadyHandler>();
+        handler.OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                handlerStarted.SetResult();
+                await handlerContinue.Task;
+            });
+
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var destPath = callInfo.ArgAt<string>(1);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                CreateMinimalZip(destPath);
+                return Task.CompletedTask;
+            });
+
+        var orchestrator = new RepositoryDownloadOrchestrator(
+            _archiveProvider, _lifetime, new[] { handler },
+            NullLogger<RepositoryDownloadOrchestrator>.Instance);
+
+        // Start first PR
+        orchestrator.TriggerDownloadAsync(42, "abc123");
+        await orchestrator.GetExtractedPathAsync();
+        await handlerStarted.Task; // Handler is running
+
+        // Start new PR while handler is still running — should not throw
+        orchestrator.TriggerDownloadAsync(99, "def456");
+        handlerContinue.SetResult(); // Let handler finish
+
+        await Task.Delay(300);
+        var state = orchestrator.GetState();
+        Assert.Equal(99, state.PrNumber);
     }
 
     private static void CreateMinimalZip(string path)

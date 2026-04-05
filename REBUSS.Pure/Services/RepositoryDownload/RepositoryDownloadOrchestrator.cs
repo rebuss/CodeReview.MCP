@@ -15,7 +15,9 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
     internal static readonly string TempRootPrefix = "rebuss-repo-";
 
     private readonly IRepositoryArchiveProvider _archiveProvider;
+    private readonly IEnumerable<IRepositoryReadyHandler> _readyHandlers;
     private readonly ILogger<RepositoryDownloadOrchestrator> _logger;
+    private readonly CancellationToken _shutdownToken;
     private readonly object _lock = new();
     private readonly string _instanceDir;
 
@@ -25,10 +27,13 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
     public RepositoryDownloadOrchestrator(
         IRepositoryArchiveProvider archiveProvider,
         IHostApplicationLifetime lifetime,
+        IEnumerable<IRepositoryReadyHandler> readyHandlers,
         ILogger<RepositoryDownloadOrchestrator> logger)
     {
         _archiveProvider = archiveProvider;
+        _readyHandlers = readyHandlers;
         _logger = logger;
+        _shutdownToken = lifetime.ApplicationStopping;
         _instanceDir = Path.Combine(Path.GetTempPath(), $"{TempRootPrefix}{Environment.ProcessId}");
 
         lifetime.ApplicationStopping.Register(OnShutdown);
@@ -145,6 +150,23 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
             }
 
             _logger.LogInformation("Repository ready for PR #{PrNumber} at {ExtractDir}", prNumber, extractDir);
+
+            foreach (var handler in _readyHandlers)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await handler.OnRepositoryReadyAsync(extractDir, prNumber, _shutdownToken);
+                    }
+                    catch (OperationCanceledException) { /* shutdown — OK */ }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Repository ready handler {Handler} failed for PR #{PrNumber}",
+                            handler.GetType().Name, prNumber);
+                    }
+                }, _shutdownToken);
+            }
         }
         catch (OperationCanceledException)
         {

@@ -66,6 +66,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\IResponsePacker.cs` | Response packing contract | `IResponsePacker` — `Pack(IReadOnlyList<PackingCandidate>, int)` → `PackingDecision` |
 | `REBUSS.Pure.Core\IPageAllocator.cs` | Deterministic page allocation contract (Feature 004) | `IPageAllocator` — `Allocate(sortedCandidates, safeBudgetTokens)` → `PageAllocation` |
 | `REBUSS.Pure.Core\IPageReferenceCodec.cs` | Base64url page reference encode/decode contract (Feature 004) | `IPageReferenceCodec` — `Encode(PageReferenceData)` → `string`, `TryDecode(string)` → `PageReferenceData?` |
+| `REBUSS.Pure.Core\IRepositoryReadyHandler.cs` | Post-download notification contract: invoked by `RepositoryDownloadOrchestrator` after successful extraction; fire-and-forget via `Task.Run` | `IRepositoryReadyHandler` — `OnRepositoryReadyAsync(string repoPath, int prNumber, CancellationToken ct)` |
 
 ### Core shared logic(REBUSS.Pure.Core\Shared)
 
@@ -77,6 +78,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Shared\IStructuredDiffBuilder.cs` | Interface: produces `List<DiffHunk>` | `DiffHunk` |
 | `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
 | `REBUSS.Pure.Core\Shared\ICodeProcessor.cs` | Interface: async diff processing pipeline hook for enriching/transforming diffs at specific stages | `ICodeProcessor` — `AddBeforeAfterContext(string diff, CancellationToken ct) → Task<string>` |
+| `REBUSS.Pure.Core\Shared\IDiffEnricher.cs` | Interface: a unit of diff enrichment with ordering and applicability check; chained by `CompositeCodeProcessor` | `IDiffEnricher` — `Order`, `CanEnrich(string)`, `EnrichAsync(string, CancellationToken)` |
 | `REBUSS.Pure.Core\Shared\IFileClassifier.cs` | Interface: file classifier | `FileClassification` |
 | `REBUSS.Pure.Core\Shared\FileClassifier.cs` | Classifies files by path/extension; normalizes paths with leading `/` for pattern matching; review priorities via `ReviewPriorities` constants | `IFileClassifier`, `FileClassification`, `FileCategory`, `ReviewPriorities` |
 
@@ -227,7 +229,11 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure.RoslynProcessor\RoslynCodeProcessor.cs` | `ICodeProcessor` implementation: enriches C# diffs with Roslyn-based before/after context; waits for repo download via `IRepositoryDownloadOrchestrator`; classifies changes as Semantic/Structural/Cosmetic | `ICodeProcessor`, `IRepositoryDownloadOrchestrator`, `BeforeAfterAnalyzer`, `DiffParser`, `RepositoryFileResolver` |
+| `REBUSS.Pure.RoslynProcessor\DiffSourceResolver.cs` | Shared source resolver: extracts before/after source code from downloaded repo for a given diff; handles download wait, path resolution, size limits, before-code reconstruction | `IRepositoryDownloadOrchestrator`, `DiffParser`, `RepositoryFileResolver` |
+| `REBUSS.Pure.RoslynProcessor\BeforeAfterEnricher.cs` | `IDiffEnricher` (Order=100): enriches C# diffs with before/after context lines using Roslyn syntax analysis | `DiffSourceResolver`, `BeforeAfterAnalyzer`, `DiffParser` |
+| `REBUSS.Pure.RoslynProcessor\StructuralChangeEnricher.cs` | `IDiffEnricher` (Order=200): detects and annotates structural C# changes (signature changes, added/removed members/types, base type changes) | `DiffSourceResolver`, `StructuralChangeDetector` |
+| `REBUSS.Pure.RoslynProcessor\StructuralChangeDetector.cs` | Static syntax-only detector: compares before/after syntax trees, returns list of structural changes | `Microsoft.CodeAnalysis.CSharp` |
+| `REBUSS.Pure.RoslynProcessor\StructuralChange.cs` | `StructuralChange` record + `StructuralChangeKind` enum: model for detected structural differences | — |
 | `REBUSS.Pure.RoslynProcessor\ContextDecision.cs` | Context level enum: None (cosmetic), Minimal (structural, 3 lines), Full (semantic, 10 lines) | — |
 | `REBUSS.Pure.RoslynProcessor\BeforeAfterAnalyzer.cs` | Static Roslyn-based analyzer: compares before/after C# syntax trees, classifies changes into ContextDecision | `Microsoft.CodeAnalysis.CSharp` |
 | `REBUSS.Pure.RoslynProcessor\DiffParser.cs` | Static diff parser: extracts file path and hunk info from formatted diffs, rebuilds diffs with context lines | `ParsedHunk` |
@@ -251,6 +257,12 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure\Services\LocalReview\ILocalReviewProvider.cs` | Interface: lists local files + diffs; defines `LocalReviewFiles` model | `PullRequestDiff`, `PullRequestFileInfo`, `PullRequestFilesSummary` |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewProvider.cs` | Orchestrates git client + diff builder + file classifier | `IWorkspaceRootProvider` (from Core), `ILocalGitClient`, `IStructuredDiffBuilder`, `IFileClassifier`, domain models |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewExceptions.cs` | `LocalRepositoryNotFoundException`, `LocalFileNotFoundException`, `GitCommandException` | � |
+
+### Diff enrichment pipeline (REBUSS.Pure\Services)
+
+| File | Role | Depends on |
+|---|---|---|
+| `REBUSS.Pure\Services\CompositeCodeProcessor.cs` | `ICodeProcessor` implementation: chains all registered `IDiffEnricher` implementations in ascending `Order`; logs and skips on failure | `ICodeProcessor`, `IEnumerable<IDiffEnricher>` |
 
 ### Context Window Awareness (REBUSS.Pure\Services\ContextWindow)
 
@@ -763,7 +775,10 @@ services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
 services.AddSingleton<IDiffAlgorithm, DiffPlexDiffAlgorithm>();
 services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
 services.AddSingleton<IFileClassifier, FileClassifier>();
-services.AddSingleton<ICodeProcessor, RoslynCodeProcessor>();
+services.AddSingleton<DiffSourceResolver>();
+services.AddSingleton<IDiffEnricher, BeforeAfterEnricher>();         // Order=100
+services.AddSingleton<IDiffEnricher, StructuralChangeEnricher>();    // Order=200
+services.AddSingleton<ICodeProcessor, CompositeCodeProcessor>();
 
 // Context Window Awareness
 services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
