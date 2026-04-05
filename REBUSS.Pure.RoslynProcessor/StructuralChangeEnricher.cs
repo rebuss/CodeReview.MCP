@@ -39,7 +39,7 @@ public partial class StructuralChangeEnricher : IDiffEnricher
 
     public bool CanEnrich(string diff)
     {
-        return diff.Contains(".cs") && !diff.Contains("skipped) ===");
+        return DiffLanguageDetector.IsCSharp(diff) && !DiffLanguageDetector.IsSkipped(diff);
     }
 
     public async Task<string> EnrichAsync(string diff, CancellationToken ct = default)

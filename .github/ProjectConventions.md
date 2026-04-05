@@ -125,8 +125,8 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 
 ### 5.8 Add a new diff enricher (`IDiffEnricher`)
 1. **Class** → implement `IDiffEnricher` in `REBUSS.Pure.RoslynProcessor` (or appropriate project)
-2. **Order** → assign `Order` property: `100` = before/after context, `200` = structural changes, `300` = future multi-language (tree-sitter)
-3. **CanEnrich** → synchronous gate (no I/O); return `false` to skip for non-applicable diffs
+2. **Order** → assign `Order` property: `100` = before/after context, `150` = scope annotations, `200` = structural changes, `250` = dependency changes, `300` = call sites
+3. **CanEnrich** → use `DiffLanguageDetector.IsCSharp(diff) && !DiffLanguageDetector.IsSkipped(diff)` for C#-specific enrichers; synchronous gate (no I/O)
 4. **EnrichAsync** → transform the diff string; return original diff unchanged on failure (graceful fallback)
 5. **DI** → `services.AddSingleton<IDiffEnricher, YourEnricher>()` in `Program.ConfigureBusinessServices`
 6. **Shared logic** → use `DiffSourceResolver` to extract before/after source code (handles repo download wait, path resolution, size limits)

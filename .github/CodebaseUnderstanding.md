@@ -79,6 +79,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
 | `REBUSS.Pure.Core\Shared\ICodeProcessor.cs` | Interface: async diff processing pipeline hook for enriching/transforming diffs at specific stages | `ICodeProcessor` — `AddBeforeAfterContext(string diff, CancellationToken ct) → Task<string>` |
 | `REBUSS.Pure.Core\Shared\IDiffEnricher.cs` | Interface: a unit of diff enrichment with ordering and applicability check; chained by `CompositeCodeProcessor` | `IDiffEnricher` — `Order`, `CanEnrich(string)`, `EnrichAsync(string, CancellationToken)` |
+| `REBUSS.Pure.Core\Shared\DiffLanguage.cs` | `DiffLanguage` enum (13 languages + Unknown) + `DiffLanguageDetector` static class: centralized language detection from diff headers; used by all enrichers for `CanEnrich` | `DiffLanguageDetector` — `Detect(string)`, `IsCSharp(string)`, `IsSkipped(string)` |
 | `REBUSS.Pure.Core\Shared\IFileClassifier.cs` | Interface: file classifier | `FileClassification` |
 | `REBUSS.Pure.Core\Shared\FileClassifier.cs` | Classifies files by path/extension; normalizes paths with leading `/` for pattern matching; review priorities via `ReviewPriorities` constants | `IFileClassifier`, `FileClassification`, `FileCategory`, `ReviewPriorities` |
 
@@ -231,9 +232,18 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 |---|---|---|
 | `REBUSS.Pure.RoslynProcessor\DiffSourceResolver.cs` | Shared source resolver: extracts before/after source code from downloaded repo for a given diff; handles download wait, path resolution, size limits, before-code reconstruction | `IRepositoryDownloadOrchestrator`, `DiffParser`, `RepositoryFileResolver` |
 | `REBUSS.Pure.RoslynProcessor\BeforeAfterEnricher.cs` | `IDiffEnricher` (Order=100): enriches C# diffs with before/after context lines using Roslyn syntax analysis | `DiffSourceResolver`, `BeforeAfterAnalyzer`, `DiffParser` |
+| `REBUSS.Pure.RoslynProcessor\ScopeAnnotatorEnricher.cs` | `IDiffEnricher` (Order=150): annotates each hunk header with enclosing scope `[scope: Class.Method(Params)]` | `DiffSourceResolver`, `ScopeResolver`, `DiffParser` |
+| `REBUSS.Pure.RoslynProcessor\ScopeResolver.cs` | Static scope resolver: finds enclosing member/type/namespace for a line number in a syntax tree | `Microsoft.CodeAnalysis.CSharp` |
 | `REBUSS.Pure.RoslynProcessor\StructuralChangeEnricher.cs` | `IDiffEnricher` (Order=200): detects and annotates structural C# changes (signature changes, added/removed members/types, base type changes) | `DiffSourceResolver`, `StructuralChangeDetector` |
 | `REBUSS.Pure.RoslynProcessor\StructuralChangeDetector.cs` | Static syntax-only detector: compares before/after syntax trees, returns list of structural changes | `Microsoft.CodeAnalysis.CSharp` |
 | `REBUSS.Pure.RoslynProcessor\StructuralChange.cs` | `StructuralChange` record + `StructuralChangeKind` enum: model for detected structural differences | — |
+| `REBUSS.Pure.RoslynProcessor\UsingsChangeEnricher.cs` | `IDiffEnricher` (Order=250): detects added/removed `using` directives and inserts `[dependency-changes]` block | `DiffSourceResolver`, `UsingsChangeDetector` |
+| `REBUSS.Pure.RoslynProcessor\UsingsChangeDetector.cs` | Static detector: extracts and compares `using` directives from before/after C# source | `Microsoft.CodeAnalysis.CSharp` |
+| `REBUSS.Pure.RoslynProcessor\UsingChange.cs` | `UsingChange` record + `UsingChangeKind` enum: model for using directive changes | — |
+| `REBUSS.Pure.RoslynProcessor\CallSiteEnricher.cs` | `IDiffEnricher` (Order=300): discovers where changed members are used in the repo and inserts `[call-sites]` block | `IRepositoryDownloadOrchestrator`, `CallSiteScanner`, `CallSiteTargetExtractor` |
+| `REBUSS.Pure.RoslynProcessor\CallSiteScanner.cs` | Scans repo C# files for identifier references using Roslyn syntax-tree matching; pre-filters with string Contains | `Microsoft.CodeAnalysis.CSharp` |
+| `REBUSS.Pure.RoslynProcessor\CallSiteTargetExtractor.cs` | Static: extracts search targets from `[structural-changes]` block or heuristic fallback from diff `+` lines | — |
+| `REBUSS.Pure.RoslynProcessor\CallSiteResult.cs` | Records: `CallSiteTarget`, `CallSiteTargetKind`, `CallSiteResult`, `CallSiteLocation` | — |
 | `REBUSS.Pure.RoslynProcessor\ContextDecision.cs` | Context level enum: None (cosmetic), Minimal (structural, 3 lines), Full (semantic, 10 lines) | — |
 | `REBUSS.Pure.RoslynProcessor\BeforeAfterAnalyzer.cs` | Static Roslyn-based analyzer: compares before/after C# syntax trees, classifies changes into ContextDecision | `Microsoft.CodeAnalysis.CSharp` |
 | `REBUSS.Pure.RoslynProcessor\DiffParser.cs` | Static diff parser: extracts file path and hunk info from formatted diffs, rebuilds diffs with context lines | `ParsedHunk` |
@@ -777,7 +787,11 @@ services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
 services.AddSingleton<IFileClassifier, FileClassifier>();
 services.AddSingleton<DiffSourceResolver>();
 services.AddSingleton<IDiffEnricher, BeforeAfterEnricher>();         // Order=100
+services.AddSingleton<IDiffEnricher, ScopeAnnotatorEnricher>();      // Order=150
 services.AddSingleton<IDiffEnricher, StructuralChangeEnricher>();    // Order=200
+services.AddSingleton<IDiffEnricher, UsingsChangeEnricher>();        // Order=250
+services.AddSingleton<CallSiteScanner>();
+services.AddSingleton<IDiffEnricher, CallSiteEnricher>();            // Order=300
 services.AddSingleton<ICodeProcessor, CompositeCodeProcessor>();
 
 // Context Window Awareness

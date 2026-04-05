@@ -155,7 +155,11 @@ namespace REBUSS.Pure
             services.AddSingleton<IFileClassifier, FileClassifier>();
             services.AddSingleton<DiffSourceResolver>();
             services.AddSingleton<IDiffEnricher, BeforeAfterEnricher>();         // Order=100
+            services.AddSingleton<IDiffEnricher, ScopeAnnotatorEnricher>();      // Order=150
             services.AddSingleton<IDiffEnricher, StructuralChangeEnricher>();    // Order=200
+            services.AddSingleton<IDiffEnricher, UsingsChangeEnricher>();        // Order=250
+            services.AddSingleton<CallSiteScanner>();
+            services.AddSingleton<IDiffEnricher, CallSiteEnricher>();            // Order=300
             services.AddSingleton<ICodeProcessor, CompositeCodeProcessor>();
 
             // Context Window Awareness
