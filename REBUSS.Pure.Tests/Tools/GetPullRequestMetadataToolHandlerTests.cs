@@ -21,6 +21,7 @@ public class GetPullRequestMetadataToolHandlerTests
     private readonly IFileClassifier _fileClassifier = Substitute.For<IFileClassifier>();
     private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
     private readonly IPullRequestDiffCache _diffCache = Substitute.For<IPullRequestDiffCache>();
+    private readonly IRepositoryDownloadOrchestrator _downloadOrchestrator = Substitute.For<IRepositoryDownloadOrchestrator>();
     private readonly GetPullRequestMetadataToolHandler _handler;
 
     private static readonly FullPullRequestMetadata SampleMetadata = new()
@@ -110,6 +111,7 @@ public class GetPullRequestMetadataToolHandlerTests
             _fileClassifier,
             _pageAllocator,
             _diffCache,
+            _downloadOrchestrator,
             NullLogger<GetPullRequestMetadataToolHandler>.Instance);
     }
 
@@ -213,6 +215,58 @@ public class GetPullRequestMetadataToolHandlerTests
         await _handler.ExecuteAsync(prNumber: 42, modelName: "gpt-4o");
 
         await _diffCache.Received(1).GetOrFetchDiffAsync(42, Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    // --- Repository download (base branch) ---
+
+    [Fact]
+    public async Task ExecuteAsync_TriggersDownload_WithTargetCommitId()
+    {
+        await _handler.ExecuteAsync(prNumber: 42);
+
+        _downloadOrchestrator.Received(1).TriggerDownloadAsync(42, "def456");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FallsBackToSourceCommitId_WhenTargetIsNull()
+    {
+        var metadataWithoutTarget = new FullPullRequestMetadata
+        {
+            PullRequestId = 42,
+            Title = "Fix",
+            Description = "Desc",
+            Status = "active",
+            LastMergeSourceCommitId = "abc123",
+            LastMergeTargetCommitId = "",
+            CommitShas = new List<string> { "abc123" }
+        };
+        _dataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(metadataWithoutTarget);
+
+        await _handler.ExecuteAsync(prNumber: 42);
+
+        _downloadOrchestrator.Received(1).TriggerDownloadAsync(42, "abc123");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotTriggerDownload_WhenBothCommitIdsEmpty()
+    {
+        var metadataNoCommits = new FullPullRequestMetadata
+        {
+            PullRequestId = 42,
+            Title = "Fix",
+            Description = "Desc",
+            Status = "active",
+            LastMergeSourceCommitId = "",
+            LastMergeTargetCommitId = "",
+            CommitShas = new List<string>()
+        };
+        _dataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(metadataNoCommits);
+
+        await _handler.ExecuteAsync(prNumber: 42);
+
+        _downloadOrchestrator.DidNotReceive().TriggerDownloadAsync(Arg.Any<int>(), Arg.Any<string>());
     }
 
     // --- Error handling ---

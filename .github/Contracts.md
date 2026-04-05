@@ -37,9 +37,7 @@ Wire format example (diff tool, 2 files + manifest):
 | `get_pr_files` (F003, non-paginated) | `[file_list_block, manifest_block]` |
 | `get_pr_files` / `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
 | `get_pr_metadata` | `[metadata_block]` (single block) |
-| `get_file_content_at_ref` | `[content_block]` (single block) |
-
-> **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, `FileContentAtRefResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
+> **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
 
 ## 2. Error Contracts
 
@@ -71,7 +69,6 @@ catch (Exception ex)
 
 Error messages by tool:
 - `get_pr_files` / `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR ..."`
-- `get_file_content_at_ref`: `"File not found: ..."`, `"Error retrieving file content: ..."`
 - `get_local_files`: `"Repository not found: ..."`, `"Git command failed: ..."`
 - `get_pr_content`: `"Missing required parameter: prNumber"`, `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Pull Request not found: ..."`, `"Error retrieving PR content: ..."`
 - `get_local_content`: `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Error retrieving local content: ..."`
@@ -124,33 +121,6 @@ Since the migration to the **ModelContextProtocol SDK v1.2.0**, tool input schem
 | Nullable with default (`string? scope = null`) | Optional parameter | `"scope": { "type": "string" }` — **not** in `required` |
 | `[Description("...")]` on parameter | `"description"` field | `"prNumber": { "type": "integer", "description": "The PR number/ID" }` |
 | `CancellationToken` parameter | **Not exposed** | Auto-injected by SDK, invisible in schema |
-| `@ref` (C# keyword escape) | `"ref"` in JSON | C# `string @ref` → schema property `"ref"` |
-
-### Example: auto-generated schema for `get_file_content_at_ref`
-
-C# signature:
-```csharp
-[McpServerTool(Name = "get_file_content_at_ref")]
-public async Task<string> ExecuteAsync(
-    [Description("The repository-relative path of the file")] string path,
-    [Description("The Git ref to fetch the file at: a commit SHA, branch, or tag")] string @ref,
-    CancellationToken cancellationToken = default)
-```
-
-Auto-generated JSON Schema:
-```json
-{
-  "name": "get_file_content_at_ref",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "path": { "type": "string", "description": "The repository-relative path of the file" },
-      "ref": { "type": "string", "description": "The Git ref to fetch the file at: a commit SHA, branch, or tag" }
-    },
-    "required": ["path", "ref"]
-  }
-}
-```
 
 > **Migration note:** Previously, each tool handler implemented a `GetToolDefinition()` method that returned a hand-crafted `Tool` object with the schema. Now the SDK infers the schema from the method signature. The contract is equivalent, but the source of truth is the C# method signature rather than a manual JSON definition.
 
@@ -250,41 +220,7 @@ Budget: 750/140000 tokens (1%)
 
 ---
 
-### 4.3 `get_file_content_at_ref`
-
-#### Input
-
-Auto-generated from `GetFileContentAtRefToolHandler.ExecuteAsync` signature. Both parameters are non-nullable, making them required. Note: `@ref` (C# keyword escape) maps to `ref` in the JSON schema.
-
-| Parameter | C# Type | Required | Description |
-|---|---|---|---|
-| `path` | `string` | ✅ | The repository-relative path of the file |
-| `ref` | `string` | ✅ | The Git ref to fetch the file at: a commit SHA, branch name, or tag |
-
-#### Output — plain text (single `TextContentBlock`)
-
-```
-=== src/Cache/CacheService.cs @ abc123def456 ===
-using System;
-
-namespace Cache...
-```
-
-For binary files:
-
-```
-=== docs/logo.png @ abc123def456 ===
-[binary file, size: 4096 bytes, encoding: base64]
-```
-
-| Part | Notes |
-|---|---|
-| Header line | `=== {path} @ {ref} ===` |
-| Body | Raw file content for text files; `[binary file, ...]` for binary; `[file content not available]` if content is null |
-
----
-
-### 4.4 `get_local_files`
+### 4.3 `get_local_files`
 
 #### Input
 
@@ -328,7 +264,7 @@ Summary: 1 source, 1 test | High priority: 1
 
 ---
 
-### 4.5 `get_pr_content`
+### 4.4 `get_pr_content`
 
 #### Input
 
@@ -370,7 +306,7 @@ Error messages: `"Missing required parameter: prNumber"`, `"prNumber must be gre
 
 ---
 
-### 4.6 `get_local_content`
+### 4.5 `get_local_content`
 
 #### Input
 
@@ -419,7 +355,6 @@ These C# classes are used internally by `PlainTextFormatter`, `ToolHandlerHelper
 | **status** (PR files) | `"add"`, `"edit"`, `"delete"`, `"rename"` | Same mapping as changeType for PR tools |
 | **status** (local files) | `"added"`, `"modified"`, `"removed"`, `"renamed"` | Local: `MapStatus(char)` — git status codes |
 | **op** (diff line) | `"+"`, `"-"`, `" "` | `DiffLine.Op.ToString()` — char to string |
-| **encoding** (file content) | `"utf-8"`, `"base64"` | Text vs binary files |
 | **reviewPriority** | `"high"`, `"medium"`, `"low"` | `FileClassifier.DetermineReviewPriority(category)` |
 | **scope** (local tools) | `"working-tree"`, `"staged"`, `"<branch-name>"` | `LocalReviewScope.Parse(string?)` |
 | **fileCategory** (internal) | Source, Test, Config, Docs, Binary, Generated | `FileCategory` enum — mapped to summary counts, not directly in output |

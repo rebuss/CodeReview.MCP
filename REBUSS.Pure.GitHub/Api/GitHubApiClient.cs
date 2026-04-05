@@ -103,6 +103,29 @@ public class GitHubApiClient : IGitHubApiClient
         return content;
     }
 
+    public async Task DownloadRepositoryZipToFileAsync(string commitRef, string destinationPath, CancellationToken cancellationToken = default)
+    {
+        var url = $"repos/{_options.Owner}/{_options.RepositoryName}/zipball/{Uri.EscapeDataString(commitRef)}";
+
+        _logger.LogDebug("Downloading repository ZIP at ref {CommitRef}", commitRef);
+
+        var sw = Stopwatch.StartNew();
+        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        LogRateLimitHeaders(response, "DownloadRepositoryZip");
+        response.EnsureSuccessStatusCode();
+
+        await using var httpStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await httpStream.CopyToAsync(fileStream, cancellationToken);
+
+        sw.Stop();
+        var fileSize = new FileInfo(destinationPath).Length;
+        _logger.LogDebug(
+            "Repository ZIP downloaded: {FileSize} bytes, {ElapsedMs}ms",
+            fileSize, sw.ElapsedMilliseconds);
+    }
+
     private void LogRateLimitHeaders(HttpResponseMessage response, string context)
     {
         var remaining = response.Headers.TryGetValues(Resources.GitHubRateLimitRemainingHeader, out var remValues)

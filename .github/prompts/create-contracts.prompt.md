@@ -36,7 +36,6 @@ Read the `GetToolDefinition()` method from **every** tool handler. Extract the e
 - `REBUSS.Pure/Tools/GetPullRequestMetadataToolHandler.cs`
 - `REBUSS.Pure/Tools/GetPullRequestFilesToolHandler.cs`
 - `REBUSS.Pure/Tools/GetPullRequestContentToolHandler.cs`
-- `REBUSS.Pure/Tools/GetFileContentAtRefToolHandler.cs`
 - `REBUSS.Pure/Tools/GetLocalChangesFilesToolHandler.cs`
 - `REBUSS.Pure/Tools/GetLocalContentToolHandler.cs`
 
@@ -48,7 +47,6 @@ Read **every** output model file. Document every property: name (as it appears i
 - `REBUSS.Pure/Tools/Models/StructuredDiffResult.cs` — used by `get_pr_content`, `get_local_content`
 - `REBUSS.Pure/Tools/Models/PullRequestMetadataResult.cs` — used by `get_pr_metadata`
 - `REBUSS.Pure/Tools/Models/PullRequestFilesResult.cs` — used by `get_pr_files` (also reused by `get_local_files`)
-- `REBUSS.Pure/Tools/Models/FileContentAtRefResult.cs` — used by `get_file_content_at_ref`
 - `REBUSS.Pure/Tools/Models/LocalReviewFilesResult.cs` — used by `get_local_files`
 
 ### Step 4: Understand the serialization pipeline (dual-config)
@@ -81,7 +79,6 @@ Read the mapping/result-building methods in tool handlers and the assertions in 
 - `REBUSS.Pure/Tools/GetPullRequestContentToolHandler.cs` — `BuildStructuredResult` method: how domain model maps to DTO
 - `REBUSS.Pure/Tools/GetPullRequestMetadataToolHandler.cs` — `BuildMetadataResult` method: `MaxDescriptionLength` truncation, `isDraft` mapping
 - `REBUSS.Pure/Tools/GetPullRequestFilesToolHandler.cs` — `BuildResult` method: how file classification maps to output
-- `REBUSS.Pure/Tools/GetFileContentAtRefToolHandler.cs` — `ExecuteAsync`: direct mapping, `encoding` field ("utf-8" vs "base64")
 - `REBUSS.Pure.Tests/Tools/GetPullRequestContentToolHandlerTests.cs` — JSON assertions: what fields are expected, what's omitted
 - `REBUSS.Pure.SmokeTests/Expectations/GitHubTestExpectations.cs` — expected values for contract tests
 - `REBUSS.Pure.SmokeTests/Expectations/AdoTestExpectations.cs` — expected values for contract tests
@@ -171,19 +168,7 @@ Line op values: "+", "-", " " (context). Additions/deletions counts.]
 
 ---
 
-### 3.4 `get_file_content_at_ref`
-
-#### Input
-[Table: path (required) + ref (required)]
-
-#### Output
-[Full JSON example. encoding: "utf-8" or "base64". 
-content: null when binary+base64 not supported (check actual behavior).
-size: byte count of content.]
-
----
-
-### 3.5 `get_local_files`
+### 3.4 `get_local_files`
 
 #### Input
 [Table: scope (optional, default "working-tree"). Document all scope values.]
@@ -195,7 +180,7 @@ Reuses PullRequestFileItem and PullRequestFilesSummaryResult.]
 
 ---
 
-### 3.6 `get_local_content`
+### 3.5 `get_local_content`
 
 #### Input
 [Table: pageNumber (required) + scope (optional, default "working-tree")]

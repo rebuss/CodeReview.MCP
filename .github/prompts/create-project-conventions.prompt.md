@@ -27,7 +27,7 @@ Read these to extract the actual patterns (don't guess from docs — verify from
 - `REBUSS.Pure/Program.cs` — composition root: `ConfigureBusinessServices`, `DetectProvider`, `BuildCliConfigOverrides`, `ResolvePatTarget`
 - `REBUSS.Pure.AzureDevOps/ServiceCollectionExtensions.cs` — DI registration pattern for a provider
 - `REBUSS.Pure.GitHub/ServiceCollectionExtensions.cs` — same pattern, GitHub variant
-- `REBUSS.Pure.Core/IScmClient.cs` — the core abstraction: `IScmClient`, `IPullRequestDataProvider`, `IFileContentDataProvider`
+- `REBUSS.Pure.Core/IScmClient.cs` — the core abstraction: `IScmClient`, `IPullRequestDataProvider`, `IRepositoryArchiveProvider`
 - `REBUSS.Pure/Tools/GetPullRequestDiffToolHandler.cs` — reference MCP tool: `[McpServerToolType]` class, `[McpServerTool]` method, `[Description]` attributes (the MCP SDK handles tool discovery and JSON-RPC dispatch)
 - `REBUSS.Pure.Core/Analysis/IReviewAnalyzer.cs` — pluggable analyzer interface
 - `REBUSS.Pure.Core/Analysis/ReviewContextOrchestrator.cs` — analyzer pipeline orchestration
@@ -89,7 +89,7 @@ One provider per process (selected by DetectProvider).]
 - async all the way, CancellationToken propagation
 - CLI output to stderr (stdout reserved for MCP stdio JSON-RPC)
 - Error handling: custom exceptions → caught in tool handler → ToolResult.IsError = true
-- DI: constructor injection, singletons, interface forwarding for IScmClient/IPullRequestDataProvider/IFileContentDataProvider
+- DI: constructor injection, singletons, interface forwarding for IScmClient/IPullRequestDataProvider/IRepositoryArchiveProvider
 - Logging: Microsoft.Extensions.Logging, stderr + file]
 
 ## 4. Testing Conventions

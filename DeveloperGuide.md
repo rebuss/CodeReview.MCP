@@ -291,7 +291,6 @@ Or via environment variable: `ContextWindow__GatewayMaxTokens=0`
 | `get_pr_metadata(prNumber, [modelName], [maxTokens])` | Returns PR metadata. Pass `modelName` or `maxTokens` to also receive `contentPaging` — total page count and per-page file breakdown for use with `get_pr_content` |
 | `get_pr_content(prNumber, pageNumber, [modelName], [maxTokens])` | Returns diff content for a specific page of the PR. Call `get_pr_metadata` with budget params first to discover the total page count |
 | `get_pr_files(prNumber, [pageReference])` | Returns classified list of changed files with per-file stats and review priority; supports pagination via `pageReference` |
-| `get_file_content_at_ref(path, ref)` | Returns full file content at a specific commit/branch/tag |
 
 ### Local Self-Review Tools (no authentication needed)
 
@@ -317,7 +316,6 @@ Or via environment variable: `ContextWindow__GatewayMaxTokens=0`
 ```
 get_pr_metadata(prNumber, modelName)          ← discovers total pages via contentPaging
   → loop: get_pr_content(prNumber, page, modelName)  ← one page at a time until hasMorePages = false
-    → get_file_content_at_ref(path, ref)      ← only when diff context is insufficient
 ```
 
 ### Self-Review — paginated (recommended)

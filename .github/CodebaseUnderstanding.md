@@ -10,10 +10,12 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | Project | Path | Purpose |
 |---|---|---|
-| REBUSS.Pure.Core | `REBUSS.Pure.Core\\REBUSS.Pure.Core.csproj` | Domain model library (.NET 10): models, interfaces (`IScmClient`, `IPullRequestDataProvider`, `IFileContentDataProvider`, `IWorkspaceRootProvider`, `IPullRequestDiffCache`), shared diff/classification logic (DiffPlex-based diff algorithm), analysis pipeline, exceptions |
+| REBUSS.Pure.Core | `REBUSS.Pure.Core\\REBUSS.Pure.Core.csproj` | Domain model library (.NET 10): models, interfaces (`IScmClient`, `IPullRequestDataProvider`, `IRepositoryArchiveProvider`, `IWorkspaceRootProvider`, `IPullRequestDiffCache`), shared diff/classification logic (DiffPlex-based diff algorithm), analysis pipeline, exceptions |
 | REBUSS.Pure.AzureDevOps | `REBUSS.Pure.AzureDevOps\REBUSS.Pure.AzureDevOps.csproj` | Azure DevOps provider library (.NET 10): `AzureDevOpsScmClient` facade, fine-grained providers, parsers, API client, configuration/auth; references `REBUSS.Pure.Core` |
 | REBUSS.Pure.GitHub | `REBUSS.Pure.GitHub\REBUSS.Pure.GitHub.csproj` | GitHub provider library (.NET 10): `GitHubScmClient` facade, fine-grained providers, parsers, REST API v3 client, configuration/auth (Bearer PAT); references `REBUSS.Pure.Core` |
-| REBUSS.Pure | `REBUSS.Pure\REBUSS.Pure.csproj` | MCP server (console app, .NET 10; NuGet package `CodeReview.MCP`, command `rebuss-pure`); references `REBUSS.Pure.Core`, `REBUSS.Pure.AzureDevOps`, and `REBUSS.Pure.GitHub`; uses `ModelContextProtocol` SDK v1.2.0 + `Microsoft.Extensions.Hosting` v10.0.5 for MCP server hosting; contains tool handlers (attribute-based `[McpServerToolType]`/`[McpServerTool]`), local review pipeline, CLI |
+| REBUSS.Pure.RoslynProcessor | `REBUSS.Pure.RoslynProcessor\REBUSS.Pure.RoslynProcessor.csproj` | Roslyn-based code processor (.NET 10): implements `ICodeProcessor` with Roslyn syntax analysis for before/after context enrichment; references `REBUSS.Pure.Core`, `Microsoft.CodeAnalysis.CSharp` |
+| REBUSS.Pure.RoslynProcessor.Tests | `REBUSS.Pure.RoslynProcessor.Tests\REBUSS.Pure.RoslynProcessor.Tests.csproj` | Unit tests for RoslynProcessor (xUnit, NSubstitute); references `REBUSS.Pure.RoslynProcessor`, `REBUSS.Pure.Core` |
+| REBUSS.Pure | `REBUSS.Pure\REBUSS.Pure.csproj` | MCP server (console app, .NET 10; NuGet package `CodeReview.MCP`, command `rebuss-pure`); references `REBUSS.Pure.Core`, `REBUSS.Pure.AzureDevOps`, `REBUSS.Pure.GitHub`, and `REBUSS.Pure.RoslynProcessor`; uses `ModelContextProtocol` SDK v1.2.0 + `Microsoft.Extensions.Hosting` v10.0.5 for MCP server hosting; contains tool handlers (attribute-based `[McpServerToolType]`/`[McpServerTool]`), local review pipeline, CLI |
 | REBUSS.Pure.Core.Tests | `REBUSS.Pure.Core.Tests\REBUSS.Pure.Core.Tests.csproj` | Unit tests for Core (xUnit, NSubstitute); references `REBUSS.Pure.Core` |
 | REBUSS.Pure.AzureDevOps.Tests | `REBUSS.Pure.AzureDevOps.Tests\REBUSS.Pure.AzureDevOps.Tests.csproj` | Unit tests for Azure DevOps provider (xUnit, NSubstitute); references `REBUSS.Pure.AzureDevOps`, `REBUSS.Pure.Core` |
 | REBUSS.Pure.GitHub.Tests | `REBUSS.Pure.GitHub.Tests\REBUSS.Pure.GitHub.Tests.csproj` | Unit tests for GitHub provider (xUnit, NSubstitute); references `REBUSS.Pure.GitHub`, `REBUSS.Pure.Core` |
@@ -34,7 +36,6 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Models\IterationInfo.cs` | Iteration commit SHAs | `IterationInfo` (record) | AzureDevOpsDiffProvider, AzureDevOpsMetadataProvider, IterationInfoParser |
 | `REBUSS.Pure.Core\Models\FileClassification.cs` | File classification result | `FileClassification`, `FileCategory` (enum) | FileClassifier, AzureDevOpsFilesProvider, AzureDevOpsDiffProvider, LocalReviewProvider |
 | `REBUSS.Pure.Core\Models\PullRequestFiles.cs` | File list result models | `PullRequestFiles`, `PullRequestFileInfo`, `PullRequestFilesSummary` | AzureDevOpsFilesProvider, GetPullRequestFilesToolHandler, LocalReviewProvider, GetLocalChangesFilesToolHandler |
-| `REBUSS.Pure.Core\Models\FileContent.cs` | File content result | `FileContent` | AzureDevOpsFileContentProvider, GitHubFileContentProvider, GetFileContentAtRefToolHandler |
 | `REBUSS.Pure.Core\Models\BudgetSource.cs` | Budget resolution source enum | `BudgetSource` (enum: `Explicit`, `Registry`, `Default`) | ContextBudgetResolver |
 | `REBUSS.Pure.Core\Models\BudgetResolutionResult.cs` | Budget resolution result | `BudgetResolutionResult` (sealed record) | ContextBudgetResolver, ContextBudgetMetadata composition |
 | `REBUSS.Pure.Core\Models\TokenEstimationResult.cs` | Token estimation result | `TokenEstimationResult` (sealed record) | TokenEstimator, ContextBudgetMetadata composition |
@@ -49,12 +50,15 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Models\PageAllocation.cs` | Sealed record (Feature 004): complete allocation across pages (Pages, TotalPages, TotalItems) | `PageAllocation` (sealed record, namespace `REBUSS.Pure.Core.Models.Pagination`) | IPageAllocator return type, tool handlers |
 | `REBUSS.Pure.Core\Models\ContentManifest.cs` | Domain manifest | `ContentManifest` (sealed record) | PackingDecision |
 | `REBUSS.Pure.Core\Models\PackingDecision.cs` | Full packing result | `PackingDecision` (sealed record) | IResponsePacker return type |
+| `REBUSS.Pure.Core\Models\RepositoryDownloadState.cs` | Repository download lifecycle state | `DownloadStatus` (enum), `RepositoryDownloadState` (Status, ExtractedPath, ErrorMessage, PrNumber, CommitRef, DownloadTask) | RepositoryDownloadOrchestrator |
 
 ### Core interfaces (REBUSS.Pure.Core)
 
 | File | Role | Key types |
 |---|---|---|
-| `REBUSS.Pure.Core\IScmClient.cs` | Unified SCM client contract | `IScmClient` (extends `IPullRequestDataProvider` + `IFileContentDataProvider`), `IPullRequestDataProvider`, `IFileContentDataProvider` |
+| `REBUSS.Pure.Core\IScmClient.cs` | Unified SCM client contract | `IScmClient` (extends `IPullRequestDataProvider` + `IRepositoryArchiveProvider`), `IPullRequestDataProvider` |
+| `REBUSS.Pure.Core\IRepositoryArchiveProvider.cs` | Repository archive download contract | `IRepositoryArchiveProvider` — `DownloadRepositoryZipAsync(string commitRef, string destinationPath, CancellationToken ct)` |
+| `REBUSS.Pure.Core\IRepositoryDownloadOrchestrator.cs` | Repository download lifecycle contract (moved from REBUSS.Pure to Core to avoid circular reference) | `IRepositoryDownloadOrchestrator` — `TriggerDownloadAsync`, `GetState`, `GetExtractedPathAsync` |
 | `REBUSS.Pure.Core\IWorkspaceRootProvider.cs` | Workspace/repository root resolution contract | `IWorkspaceRootProvider` � `SetCliRepositoryPath`, `SetRoots`, `GetRootUris`, `ResolveRepositoryRoot` |
 | `REBUSS.Pure.Core\IContextBudgetResolver.cs` | Context window budget resolution contract | `IContextBudgetResolver` — `Resolve(int?, string?)` → `BudgetResolutionResult` |
 | `REBUSS.Pure.Core\ITokenEstimator.cs` | Token estimation contract (schema-independent) | `ITokenEstimator` — `Estimate(string, int)` → `TokenEstimationResult`, `EstimateFromStats(int, int)` → `int`, `EstimateTokenCount(string)` → `int` (Feature 005: direct token count from serialized content) |
@@ -72,6 +76,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Shared\DiffPlexDiffAlgorithm.cs` | Myers-based diff algorithm backed by DiffPlex NuGet library; uses a `private static readonly Differ` instance (thread-safe, shared); throws `InvalidOperationException` for invariant violations (context gap mismatch, trailing line count mismatch) | `IDiffAlgorithm`, `DiffEdit`, `DiffPlex.Differ` |
 | `REBUSS.Pure.Core\Shared\IStructuredDiffBuilder.cs` | Interface: produces `List<DiffHunk>` | `DiffHunk` |
 | `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
+| `REBUSS.Pure.Core\Shared\ICodeProcessor.cs` | Interface: async diff processing pipeline hook for enriching/transforming diffs at specific stages | `ICodeProcessor` — `AddBeforeAfterContext(string diff, CancellationToken ct) → Task<string>` |
 | `REBUSS.Pure.Core\Shared\IFileClassifier.cs` | Interface: file classifier | `FileClassification` |
 | `REBUSS.Pure.Core\Shared\FileClassifier.cs` | Classifies files by path/extension; normalizes paths with leading `/` for pattern matching; review priorities via `ReviewPriorities` constants | `IFileClassifier`, `FileClassification`, `FileCategory`, `ReviewPriorities` |
 
@@ -81,7 +86,6 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 |---|---|
 | `REBUSS.Pure.Core\Exceptions\PullRequestNotFoundException.cs` | PR not found (404) |
 | `REBUSS.Pure.Core\Exceptions\FileNotFoundInPullRequestException.cs` | File not in PR |
-| `REBUSS.Pure.Core\Exceptions\FileContentNotFoundException.cs` | File content not found at ref |
 | `REBUSS.Pure.Core\Exceptions\BudgetTooSmallException.cs` | Token budget too small for pagination; thrown by `PageAllocator.Allocate` when `safeBudgetTokens` is below `PaginationConstants.MinimumBudgetForPagination` |
 
 ### Resources (REBUSS.Pure.Core\Properties)
@@ -95,7 +99,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure.Core\Analysis\AnalysisInput.cs` | All data available to analyzers for a single review | `PullRequestDiff`, `FullPullRequestMetadata`, `PullRequestFiles`, `IFileContentDataProvider` |
+| `REBUSS.Pure.Core\Analysis\AnalysisInput.cs` | All data available to analyzers for a single review | `PullRequestDiff`, `FullPullRequestMetadata`, `PullRequestFiles` |
 | `REBUSS.Pure.Core\Analysis\AnalysisSection.cs` | One section of review context output | � |
 | `REBUSS.Pure.Core\Analysis\ReviewContext.cs` | Aggregated output from all analyzers | `AnalysisSection` |
 | `REBUSS.Pure.Core\Analysis\IReviewAnalyzer.cs` | Pluggable analysis feature interface | `AnalysisInput`, `AnalysisSection` |
@@ -152,14 +156,14 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.AzureDevOps\Providers\AzureDevOpsDiffProvider.cs` | Orchestrates fetching PR data + building diffs; fetches file diffs in parallel via `Parallel.ForEachAsync` (max 15 concurrent) with per-file base/target content fetched via `Task.WhenAll`; populates `PullRequestDiff.LastSourceCommitId` from iteration's target commit for cache staleness detection | `IAzureDevOpsApiClient`, `IStructuredDiffBuilder`, `IFileClassifier`, parsers, `PullRequestDiff`, `FileChange`, `DiffHunk` |
 | `REBUSS.Pure.AzureDevOps\Providers\AzureDevOpsMetadataProvider.cs` | Fetches full PR metadata from multiple endpoints | `IAzureDevOpsApiClient`, parsers, `FullPullRequestMetadata` |
 | `REBUSS.Pure.AzureDevOps\Providers\AzureDevOpsFilesProvider.cs` | Fetches classified file list directly from iteration-changes API (no diff fetching); calls `IAzureDevOpsApiClient` → `IIterationInfoParser.ParseLast` → `IFileChangesParser.Parse` → `IFileClassifier.Classify`; `Additions`/`Deletions`/`Changes` are always 0 because the ADO iteration-changes API does not return line counts — consumers must treat zeros as "unavailable" (see `IPullRequestDataProvider.GetFilesAsync` remarks) | `IAzureDevOpsApiClient`, `IFileChangesParser`, `IIterationInfoParser`, `IFileClassifier` |
-| `REBUSS.Pure.AzureDevOps\Providers\AzureDevOpsFileContentProvider.cs` | Fetches file content at specific Git ref | `IAzureDevOpsApiClient`, `FileContent` |
+| `REBUSS.Pure.AzureDevOps\Providers\AzureDevOpsRepositoryArchiveProvider.cs` | Downloads repository as ZIP archive via Azure DevOps Items API | `IAzureDevOpsApiClient`, `IRepositoryArchiveProvider` |
 
 ### Azure DevOps provider � SCM facade (REBUSS.Pure.AzureDevOps)
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure.AzureDevOps\AzureDevOpsScmClient.cs` | `IScmClient` facade: delegates to fine-grained providers, enriches metadata with `WebUrl`/`RepositoryFullName` | `AzureDevOpsDiffProvider`, `AzureDevOpsMetadataProvider`, `AzureDevOpsFilesProvider`, `AzureDevOpsFileContentProvider`, `AzureDevOpsOptions` |
-| `REBUSS.Pure.AzureDevOps\ServiceCollectionExtensions.cs` | `AddAzureDevOpsProvider(IConfiguration)`: registers all Azure DevOps DI services including interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IFileContentDataProvider` | All Azure DevOps types above |
+| `REBUSS.Pure.AzureDevOps\AzureDevOpsScmClient.cs` | `IScmClient` facade: delegates to fine-grained providers, enriches metadata with `WebUrl`/`RepositoryFullName` | `AzureDevOpsDiffProvider`, `AzureDevOpsMetadataProvider`, `AzureDevOpsFilesProvider`, `AzureDevOpsRepositoryArchiveProvider`, `AzureDevOpsOptions` |
+| `REBUSS.Pure.AzureDevOps\ServiceCollectionExtensions.cs` | `AddAzureDevOpsProvider(IConfiguration)`: registers all Azure DevOps DI services including interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IRepositoryArchiveProvider` | All Azure DevOps types above |
 
 ### GitHub provider - Resources (REBUSS.Pure.GitHub\Properties)
 
@@ -210,14 +214,32 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.GitHub\Providers\GitHubDiffProvider.cs` | Orchestrates fetching PR data + building diffs; uses `ParseWithCommits` for single-parse metadata/SHA extraction; fetches file diffs in parallel via `Parallel.ForEachAsync` (max 15 concurrent) with per-file base/head content fetched via `Task.WhenAll`; populates `PullRequestDiff.LastSourceCommitId` from PR head commit for cache staleness detection | `IGitHubApiClient`, `IStructuredDiffBuilder`, `IFileClassifier`, parsers, `PullRequestDiff`, `FileChange`, `DiffHunk` |
 | `REBUSS.Pure.GitHub\Providers\GitHubMetadataProvider.cs` | Fetches full PR metadata from PR details + commits endpoints | `IGitHubApiClient`, `IGitHubPullRequestParser`, `FullPullRequestMetadata` |
 | `REBUSS.Pure.GitHub\Providers\GitHubFilesProvider.cs` | Fetches classified file list directly from PR files API (no diff fetching); calls `IGitHubApiClient.GetPullRequestFilesAsync` → `IGitHubFileChangesParser.Parse` → `IFileClassifier.Classify`; populates additions/deletions from API response | `IGitHubApiClient`, `IGitHubFileChangesParser`, `IFileClassifier` |
-| `REBUSS.Pure.GitHub\Providers\GitHubFileContentProvider.cs` | Fetches file content at specific Git ref; detects binary via null byte | `IGitHubApiClient`, `FileContent` |
+| `REBUSS.Pure.GitHub\Providers\GitHubRepositoryArchiveProvider.cs` | Downloads repository as ZIP archive via GitHub zipball API | `IGitHubApiClient`, `IRepositoryArchiveProvider` |
 
 ### GitHub provider � SCM facade (REBUSS.Pure.GitHub)
 
 | File | Role | Depends on |
 |---|---|---|
-| `REBUSS.Pure.GitHub\GitHubScmClient.cs` | `IScmClient` facade: delegates to fine-grained providers, enriches metadata with `WebUrl` (`https://github.com/{owner}/{repo}/pull/{n}`) and `RepositoryFullName` (`{owner}/{repo}`) | `GitHubDiffProvider`, `GitHubMetadataProvider`, `GitHubFilesProvider`, `GitHubFileContentProvider`, `GitHubOptions` |
-| `REBUSS.Pure.GitHub\ServiceCollectionExtensions.cs` | `AddGitHubProvider(IConfiguration)`: registers all GitHub DI services including options, validator, remote detector, config store, post-configure, auth handler, HTTP client with resilience, parsers, providers, facade + interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IFileContentDataProvider` | All GitHub types above |
+| `REBUSS.Pure.GitHub\GitHubScmClient.cs` | `IScmClient` facade: delegates to fine-grained providers, enriches metadata with `WebUrl` (`https://github.com/{owner}/{repo}/pull/{n}`) and `RepositoryFullName` (`{owner}/{repo}`) | `GitHubDiffProvider`, `GitHubMetadataProvider`, `GitHubFilesProvider`, `GitHubRepositoryArchiveProvider`, `GitHubOptions` |
+| `REBUSS.Pure.GitHub\ServiceCollectionExtensions.cs` | `AddGitHubProvider(IConfiguration)`: registers all GitHub DI services including options, validator, remote detector, config store, post-configure, auth handler, HTTP client with resilience, parsers, providers, facade + interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IRepositoryArchiveProvider` | All GitHub types above |
+
+### Roslyn code processor (REBUSS.Pure.RoslynProcessor)
+
+| File | Role | Depends on |
+|---|---|---|
+| `REBUSS.Pure.RoslynProcessor\RoslynCodeProcessor.cs` | `ICodeProcessor` implementation: enriches C# diffs with Roslyn-based before/after context; waits for repo download via `IRepositoryDownloadOrchestrator`; classifies changes as Semantic/Structural/Cosmetic | `ICodeProcessor`, `IRepositoryDownloadOrchestrator`, `BeforeAfterAnalyzer`, `DiffParser`, `RepositoryFileResolver` |
+| `REBUSS.Pure.RoslynProcessor\ContextDecision.cs` | Context level enum: None (cosmetic), Minimal (structural, 3 lines), Full (semantic, 10 lines) | — |
+| `REBUSS.Pure.RoslynProcessor\BeforeAfterAnalyzer.cs` | Static Roslyn-based analyzer: compares before/after C# syntax trees, classifies changes into ContextDecision | `Microsoft.CodeAnalysis.CSharp` |
+| `REBUSS.Pure.RoslynProcessor\DiffParser.cs` | Static diff parser: extracts file path and hunk info from formatted diffs, rebuilds diffs with context lines | `ParsedHunk` |
+| `REBUSS.Pure.RoslynProcessor\RepositoryFileResolver.cs` | Static file resolver: detects nested ZIP root directory, resolves diff paths to filesystem paths | — |
+
+### Repository download (REBUSS.Pure\Services\RepositoryDownload)
+
+| File | Role | Depends on |
+|---|---|---|
+| `REBUSS.Pure\Services\RepositoryDownload\IRepositoryDownloadOrchestrator.cs` | Interface: manages download lifecycle (deduplication, state tracking, background execution) | `RepositoryDownloadState` |
+| `REBUSS.Pure\Services\RepositoryDownload\RepositoryDownloadOrchestrator.cs` | Orchestrates background ZIP download, extraction, and cleanup; singleton with mutable state; uses PID-based temp directory naming; registers shutdown cleanup via `IHostApplicationLifetime.ApplicationStopping` | `IRepositoryArchiveProvider`, `IHostApplicationLifetime`, `System.IO.Compression.ZipFile` |
+| `REBUSS.Pure\Services\RepositoryDownload\RepositoryCleanupService.cs` | `IHostedService`: scans for orphaned `rebuss-repo-*` temp directories on startup; extracts PID from directory name and checks if process is running; deletes orphaned directories and ZIP files | `RepositoryDownloadOrchestrator.TempRootPrefix` |
 
 ### Local review pipeline (REBUSS.Pure\Services\LocalReview)
 
@@ -268,7 +290,6 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure\Tools\GetPullRequestContentToolHandler.cs` | `[McpServerToolType]` `get_pr_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); Feature 005: replaced `IPullRequestDataProvider` with `IPullRequestDiffCache` for diff retrieval; uses `FileTokenMeasurement.BuildCandidatesFromDiff` for actual diff-based token measurement instead of stat-based estimation; SDK attribute-based registration | `IPullRequestDiffCache`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `PlainTextFormatter`, `PaginationMetadataResult`, `StalenessWarningResult` |
 | `REBUSS.Pure\Tools\GetLocalContentToolHandler.cs` | `[McpServerToolType]` `get_local_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); stat-based page allocation, parallel per-file diff fetch via `Task.WhenAll` (only page files); uses `FileTokenMeasurement.MapToStructured` for file mapping; SDK attribute-based registration | `ILocalReviewProvider`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `FileTokenMeasurement`, `PlainTextFormatter`, `PaginationMetadataResult` |
 | `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `[McpServerToolType]` `get_pr_files` — returns plain text `IEnumerable<ContentBlock>` (file list block + manifest/pagination footer); F004 integration: pagination with pageReference resume and staleness detection; prNumber now optional when pageReference is provided; delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PlainTextFormatter`, `PaginationMetadataResult`, `StalenessWarningResult` |
-| `REBUSS.Pure\Tools\GetFileContentAtRefToolHandler.cs` | `[McpServerToolType]` `get_file_content_at_ref` — returns plain text `IEnumerable<ContentBlock>` (single `TextContentBlock` with raw file content); SDK attribute-based registration (`[McpServerTool]`/`[Description]`), throws `McpException`/`ArgumentException` for errors | `IFileContentDataProvider` |
 | `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — returns plain text `IEnumerable<ContentBlock>` (file list block + manifest/pagination footer); F004 integration: pagination support but no staleness (null fingerprint); delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PlainTextFormatter`, `PaginationMetadataResult` |
 ### Tool shared helpers (REBUSS.Pure\Tools\Shared)
 
@@ -395,7 +416,6 @@ global mode writes to `~/.mcp.json` (Visual Studio) and `%APPDATA%\Code\User\mcp
 | `REBUSS.Pure.Core.Tests\Shared\DiffPlexDiffAlgorithmTests.cs` | `DiffPlexDiffAlgorithm` — core edit behavior + concurrent-call stability |
 | `REBUSS.Pure.AzureDevOps.Tests\Providers\AzureDevOpsDiffProviderTests.cs` | `AzureDevOpsDiffProvider` — full diff/file diff, skip behavior, `IsFullFileRewrite`, `GetSkipReason` |
 | `REBUSS.Pure.AzureDevOps.Tests\Providers\AzureDevOpsFilesProviderTests.cs` | `AzureDevOpsFilesProvider` — file list, status mapping, summary, path stripping, last iteration selection, no-iterations edge case; uses mocked `IAzureDevOpsApiClient` + real `FileChangesParser`/`IterationInfoParser` |
-| `REBUSS.Pure.AzureDevOps.Tests\Providers\AzureDevOpsFileContentProviderTests.cs` | `AzureDevOpsFileContentProvider` |
 | `REBUSS.Pure.AzureDevOps.Tests\Parsers\PullRequestMetadataParserTests.cs` | `PullRequestMetadataParser` |
 | `REBUSS.Pure.AzureDevOps.Tests\Parsers\IterationInfoParserTests.cs` | `IterationInfoParser` |
 | `REBUSS.Pure.AzureDevOps.Tests\Parsers\FileChangesParserTests.cs` | `FileChangesParser` |
@@ -411,15 +431,13 @@ global mode writes to `~/.mcp.json` (Visual Studio) and `%APPDATA%\Code\User\mcp
 | `REBUSS.Pure.GitHub.Tests\Parsers\GitHubFileChangesParserTests.cs` | `GitHubFileChangesParser` — status mapping (`added`→`add`, `removed`→`delete`, `modified`→`edit`, etc.), empty array, invalid JSON, non-array JSON |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubRemoteDetectorTests.cs` | `GitHubRemoteDetector.ParseRemoteUrl` — HTTPS (with/without `.git`), SSH, Azure DevOps/GitLab URLs return null, empty/malformed; `FindGitRepositoryRoot`, `GetCandidateDirectories` |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubConfigurationResolverTests.cs` | `GitHubConfigurationResolver` — PostConfigure precedence (user > detected > cached), fallback, caching, mixed sources, Resolve static method, workspace root integration |
-| `REBUSS.Pure.GitHub.Tests\GitHubScmClientTests.cs` | `GitHubScmClient` — provider name, facade delegation (diff/metadata/files/content), metadata enrichment (`WebUrl`, `RepositoryFullName`) |
+| `REBUSS.Pure.GitHub.Tests\GitHubScmClientTests.cs` | `GitHubScmClient` — provider name, facade delegation (diff/metadata/files/archive), metadata enrichment (`WebUrl`, `RepositoryFullName`) |
 | `REBUSS.Pure.GitHub.Tests\Providers\GitHubMetadataProviderTests.cs` | `GitHubMetadataProvider` — parsed metadata, commit SHAs, statistics, empty commits, 404 handling, invalid commits JSON |
-| `REBUSS.Pure.GitHub.Tests\Providers\GitHubFileContentProviderTests.cs` | `GitHubFileContentProvider` — content retrieval, leading slash trim, binary detection, file not found, size calculation, cancellation |
 | `REBUSS.Pure.GitHub.Tests\Providers\GitHubFilesProviderTests.cs` | `GitHubFilesProvider` — classified files, summary, empty files list, line count flow-through, missing line counts default to zero; uses mocked `IGitHubApiClient` + real `GitHubFileChangesParser` |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubChainedAuthenticationProviderTests.cs` | `GitHubChainedAuthenticationProvider` — PAT precedence, cached tokens, GitHub CLI token acquisition and caching, expired token fallback, null expiry used as valid, `InvalidateCachedToken`, `BuildAuthRequiredMessage` tests read `Resources.ErrorGitHubAuthRequired` directly |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliTokenProviderTests.cs` | `GitHubCliTokenProvider.ParseTokenResponse` — valid plain text, whitespace trimming, empty/null/whitespace returns null, `DefaultTokenLifetime` constant (24 hours) |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliProcessHelperTests.cs` | `GitHubCliProcessHelper.GetProcessStartArgs` — Windows `cmd.exe /c gh` wrapping, Linux direct `gh` invocation, custom `ghPath`; `TryFindGhCliOnWindows` |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestFilesToolHandlerTests.cs` | `GetPullRequestFilesToolHandler` — plain text output, validation (McpException), provider exceptions, packing manifest |
-| `REBUSS.Pure.Tests\Tools\GetFileContentAtRefToolHandlerTests.cs` | `GetFileContentAtRefToolHandler` — plain text output, validation (McpException), provider exceptions (McpException) |
 | `REBUSS.Pure.Tests\Tools\GetLocalChangesFilesToolHandlerTests.cs` | `GetLocalChangesFilesToolHandler` — scope parsing, plain text output, error handling (McpException), packing manifest |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestMetadataToolHandlerTests.cs` | `GetPullRequestMetadataToolHandler` — plain text output, validation (McpException), provider exceptions, +contentPaging computation (diff-based token measurement via `IPullRequestDiffCache` + `FileTokenMeasurement`, page allocation, backward compatibility without budget params), diff-cache verification test (Feature 005: replaced `_dataProvider.GetFilesAsync` mock with `_diffCache` mock, replaced `EstimateFromStats` with `EstimateTokenCount`) |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestContentToolHandlerTests.cs` | `GetPullRequestContentToolHandler` — plain text output, validation (McpException), pagination (page filtering, category breakdown, multi-page, out-of-range), PR not found error; Feature 005: replaced `_dataProvider` with `_diffCache` mock, diff-based token measurement via `EstimateTokenCount`, diff-cache and token-estimation verification tests |
@@ -458,14 +476,12 @@ global mode writes to `~/.mcp.json` (Visual Studio) and `%APPDATA%\Code\User\mcp
 | `REBUSS.Pure.SmokeTests\Expectations\AdoTestExpectations.cs` | Expected values from Azure DevOps fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Expectations\GitHubTestExpectations.cs` | Expected values from GitHub fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Protocol\InitializeProtocolTests.cs` | Protocol tests (no credentials): MCP initialize handshake — protocol version, server info, capabilities |
-| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (6), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +PaginationEnabledTools array, +2 schema assertions for F004 pagination parameters, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
+| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (5), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +PaginationEnabledTools array, +2 schema assertions for F004 pagination parameters, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoMetadataContractTests.cs` | Contract tests (ADO): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoFilesContractTests.cs` | Contract tests (ADO): `get_pr_files` plain-text output — file-count header, paths/statuses, summary/priorities, non-binary/non-generated markers |
-| `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoFileContentContractTests.cs` | Contract tests (ADO): `get_file_content_at_ref` plain-text output — content at main/branch, non-binary marker, nonexistent file error |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoNegativeContractTests.cs` | Negative tests (ADO): nonexistent PR, invalid/missing prNumber |
 | `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubMetadataContractTests.cs` | Contract tests (GitHub): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
 | `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubFilesContractTests.cs` | Contract tests (GitHub): `get_pr_files` plain-text output — file-count header, paths/statuses, summary/priorities, non-binary/non-generated markers |
-| `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubFileContentContractTests.cs` | Contract tests (GitHub): `get_file_content_at_ref` plain-text output — content at main/branch, non-binary marker, nonexistent file error |
 | `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubNegativeContractTests.cs` | Negative tests (GitHub): nonexistent PR, invalid/missing prNumber |
 
 ---
@@ -518,13 +534,6 @@ DiffEdit
   ? DiffPlexDiffAlgorithm [Core]                 (produces)
   ? StructuredDiffBuilder [Core]                  (consumes: ComputeHunks, FormatHunk)
 
-FileContent
-  ? AzureDevOpsFileContentProvider [AzureDevOps]  (produces)
-  ? AzureDevOpsScmClient [AzureDevOps]            (delegates: passes through from content provider)
-  ? GitHubFileContentProvider [GitHub]             (produces)
-  ? GitHubScmClient [GitHub]                      (delegates: passes through from content provider)
-  ? GetFileContentAtRefToolHandler [Pure]          (consumes)
-
 PullRequestFiles / PullRequestFileInfo / PullRequestFilesSummary
   ? AzureDevOpsFilesProvider [AzureDevOps]        (produces)
   ? AzureDevOpsScmClient [AzureDevOps]            (delegates: passes through from files provider)
@@ -533,14 +542,12 @@ PullRequestFiles / PullRequestFileInfo / PullRequestFilesSummary
   ? GetPullRequestFilesToolHandler [Pure]          (consumes)
   ? AnalysisInput [Core]                           (carries PullRequestFiles for analyzer pipeline)
 
-IScmClient / IPullRequestDataProvider / IFileContentDataProvider [Core interfaces]
+IScmClient / IPullRequestDataProvider / IRepositoryArchiveProvider [Core interfaces]
   ? AzureDevOpsScmClient [AzureDevOps]            (implements IScmClient; registered via interface forwarding in ServiceCollectionExtensions)
   ? GitHubScmClient [GitHub]                      (implements IScmClient; registered via interface forwarding in ServiceCollectionExtensions)
   ? ReviewContextOrchestrator [Core]               (consumes IScmClient: fetches all data for analysis)
   ? GetPullRequestMetadataToolHandler [Pure]       (consumes IPullRequestDataProvider for metadata; diff via IPullRequestDiffCache)
   ? GetPullRequestFilesToolHandler [Pure]          (consumes IPullRequestDataProvider)
-  ? GetFileContentAtRefToolHandler [Pure]          (consumes IFileContentDataProvider)
-  ? AnalysisInput [Core]                           (carries IFileContentDataProvider for on-demand content fetching)
 
 IPullRequestDiffCache [Core interface]
   ? PullRequestDiffCache [Pure]                    (implements: ConcurrentDictionary cache + Lazy<Task> in-flight dedup keyed by PR number, delegates to IPullRequestDataProvider on miss; concurrent misses coalesced; staleness detection via LastSourceCommitId comparison when knownHeadCommitId is provided)
@@ -671,13 +678,13 @@ services.AddSingleton<IFileChangesParser, FileChangesParser>();
 services.AddSingleton<AzureDevOpsDiffProvider>();
 services.AddSingleton<AzureDevOpsMetadataProvider>();
 services.AddSingleton<AzureDevOpsFilesProvider>();
-services.AddSingleton<AzureDevOpsFileContentProvider>();
+services.AddSingleton<AzureDevOpsRepositoryArchiveProvider>();
 
 // Unified SCM client facade + interface forwarding
 services.AddSingleton<AzureDevOpsScmClient>();
 services.AddSingleton<IScmClient>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
 services.AddSingleton<IPullRequestDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
-services.AddSingleton<IFileContentDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
+services.AddSingleton<IRepositoryArchiveProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
 ```
 
 ## `REBUSS.Pure.GitHub\ServiceCollectionExtensions.cs` ? `AddGitHubProvider(IConfiguration)`
@@ -710,13 +717,13 @@ services.AddSingleton<IGitHubFileChangesParser, GitHubFileChangesParser>();
 services.AddSingleton<GitHubDiffProvider>();
 services.AddSingleton<GitHubMetadataProvider>();
 services.AddSingleton<GitHubFilesProvider>();
-services.AddSingleton<GitHubFileContentProvider>();
+services.AddSingleton<GitHubRepositoryArchiveProvider>();
 
 // Unified SCM client facade + interface forwarding
 services.AddSingleton<GitHubScmClient>();
 services.AddSingleton<IScmClient>(sp => sp.GetRequiredService<GitHubScmClient>());
 services.AddSingleton<IPullRequestDataProvider>(sp => sp.GetRequiredService<GitHubScmClient>());
-services.AddSingleton<IFileContentDataProvider>(sp => sp.GetRequiredService<GitHubScmClient>());
+services.AddSingleton<IRepositoryArchiveProvider>(sp => sp.GetRequiredService<GitHubScmClient>());
 ```
 
 ## `REBUSS.Pure\Program.cs` — `RunMcpServerAsync` + `ConfigureBusinessServices`
@@ -756,6 +763,7 @@ services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
 services.AddSingleton<IDiffAlgorithm, DiffPlexDiffAlgorithm>();
 services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
 services.AddSingleton<IFileClassifier, FileClassifier>();
+services.AddSingleton<ICodeProcessor, RoslynCodeProcessor>();
 
 // Context Window Awareness
 services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
@@ -788,8 +796,12 @@ switch (provider)
 // MCP tool handlers
 // SDK-migrated handlers (registered via [McpServerToolType] attribute discovery):
 // GetPullRequestFilesToolHandler, GetLocalChangesFilesToolHandler,
-// GetPullRequestMetadataToolHandler, GetFileContentAtRefToolHandler,
-// GetPullRequestContentToolHandler, GetLocalContentToolHandler
+// GetPullRequestMetadataToolHandler, GetPullRequestContentToolHandler,
+// GetLocalContentToolHandler
+
+// Repository download orchestrator + startup cleanup
+services.AddSingleton<IRepositoryDownloadOrchestrator, RepositoryDownloadOrchestrator>();
+services.AddHostedService<RepositoryCleanupService>();
 
 // Local self-review pipeline
 services.AddSingleton<ILocalGitClient, LocalGitClient>();
@@ -831,15 +843,15 @@ services.AddSingleton<McpServer>(...);
 | **JSON naming policy** | `camelCase` via `JsonNamingPolicy.CamelCase` in tool handlers; explicit `[JsonPropertyName]` on all DTO properties |
 | **JSON null handling** | `JsonIgnoreCondition.WhenWritingNull` |
 | **Internal access** | `InternalsVisibleTo("REBUSS.Pure.Tests")` on `REBUSS.Pure`; `InternalsVisibleTo("REBUSS.Pure.Core.Tests")` on `REBUSS.Pure.Core`; `InternalsVisibleTo("REBUSS.Pure")` and `InternalsVisibleTo("REBUSS.Pure.AzureDevOps.Tests")` on `REBUSS.Pure.AzureDevOps`; `InternalsVisibleTo("REBUSS.Pure")` and `InternalsVisibleTo("REBUSS.Pure.GitHub.Tests")` on `REBUSS.Pure.GitHub` |
-| **DI pattern** | Constructor injection; all registered as singletons; interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IFileContentDataProvider` through the active provider's facade (`AzureDevOpsScmClient` or `GitHubScmClient`); provider-specific registrations via `ServiceCollectionExtensions.AddAzureDevOpsProvider()` or `ServiceCollectionExtensions.AddGitHubProvider()`; exactly one provider is registered per process based on `DetectProvider()` |
+| **DI pattern** | Constructor injection; all registered as singletons; interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IRepositoryArchiveProvider` through the active provider's facade (`AzureDevOpsScmClient` or `GitHubScmClient`); provider-specific registrations via `ServiceCollectionExtensions.AddAzureDevOpsProvider()` or `ServiceCollectionExtensions.AddGitHubProvider()`; exactly one provider is registered per process based on `DetectProvider()` |
 | **Architecture** | 8-project solution: `REBUSS.Pure.Core` (domain models, interfaces, shared logic, analysis pipeline) ? `REBUSS.Pure.AzureDevOps` (Azure DevOps provider) / `REBUSS.Pure.GitHub` (GitHub provider) ? `REBUSS.Pure` (MCP server, tool handlers, local review pipeline, CLI); test projects: `REBUSS.Pure.Core.Tests`, `REBUSS.Pure.AzureDevOps.Tests`, `REBUSS.Pure.GitHub.Tests`, `REBUSS.Pure.Tests` |
-| **Error handling** | Custom exceptions in `REBUSS.Pure.Core.Exceptions` (`PullRequestNotFoundException`, `FileNotFoundInPullRequestException`, `FileContentNotFoundException`), caught in tool handlers, returned as `ToolResult.IsError = true` |
+| **Error handling** | Custom exceptions in `REBUSS.Pure.Core.Exceptions` (`PullRequestNotFoundException`, `FileNotFoundInPullRequestException`), caught in tool handlers, returned as `ToolResult.IsError = true` |
 | **Logging** | `Microsoft.Extensions.Logging`, stderr output via console provider, file logging via `FileLoggerProvider` |
 | **Comments** | XML doc on public types/methods; no inline comments unless complex |
 | **Naming** | Standard C# conventions; private fields prefixed with `_`; interfaces prefixed with `I` |
 | **File naming** | Interface and class in same-named files (e.g., `IUnifiedDiffBuilder.cs` contains `IStructuredDiffBuilder`) � note: file names may not match type names after refactoring |
 | **CLI pattern** | `CliArgumentParser` for parsing, `ICliCommand` for commands; CLI output goes to `Console.Error` (stdout reserved for MCP stdio) |
-| **Provider pattern** | Fine-grained providers (e.g. `AzureDevOpsDiffProvider`, `GitHubDiffProvider`) are concrete classes registered directly; the SCM facade (`AzureDevOpsScmClient` or `GitHubScmClient`) implements `IScmClient` and delegates to them; tool handlers depend on narrow `IPullRequestDataProvider`/`IFileContentDataProvider` interfaces from Core |
+| **Provider pattern** | Fine-grained providers (e.g. `AzureDevOpsDiffProvider`, `GitHubDiffProvider`) are concrete classes registered directly; the SCM facade (`AzureDevOpsScmClient` or `GitHubScmClient`) implements `IScmClient` and delegates to them; tool handlers depend on narrow `IPullRequestDataProvider` interface from Core |
 | **Provider registration** | Each provider encapsulates its DI registrations as an extension method: `AddAzureDevOpsProvider(IConfiguration)` in `REBUSS.Pure.AzureDevOps` and `AddGitHubProvider(IConfiguration)` in `REBUSS.Pure.GitHub`; `Program.cs` calls exactly one based on `DetectProvider()` |
 
 ---

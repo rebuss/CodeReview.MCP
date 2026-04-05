@@ -14,7 +14,6 @@ public class ToolsListProtocolTests
     [
         "get_pr_metadata",
         "get_pr_files",
-        "get_file_content_at_ref",
         "get_local_files",
         "get_pr_content",
         "get_local_content"
@@ -43,14 +42,14 @@ public class ToolsListProtocolTests
     }
 
     [Fact]
-    public async Task ToolsList_ReturnsAllSixTools()
+    public async Task ToolsList_ReturnsAllFiveTools()
     {
         var response = await _fixture.Server.SendToolsListAsync();
         var tools = response.RootElement
             .GetProperty("result")
             .GetProperty("tools");
 
-        Assert.Equal(6, tools.GetArrayLength());
+        Assert.Equal(5, tools.GetArrayLength());
     }
 
     [Fact]

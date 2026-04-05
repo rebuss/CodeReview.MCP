@@ -22,6 +22,7 @@ namespace REBUSS.Pure.Tools
         private readonly ITokenEstimator _tokenEstimator;
         private readonly IFileClassifier _fileClassifier;
         private readonly IPageAllocator _pageAllocator;
+        private readonly ICodeProcessor _codeProcessor;
         private readonly ILogger<GetPullRequestContentToolHandler> _logger;
 
         public GetPullRequestContentToolHandler(
@@ -30,6 +31,7 @@ namespace REBUSS.Pure.Tools
             ITokenEstimator tokenEstimator,
             IFileClassifier fileClassifier,
             IPageAllocator pageAllocator,
+            ICodeProcessor codeProcessor,
             ILogger<GetPullRequestContentToolHandler> logger)
         {
             _diffCache = diffCache;
@@ -37,6 +39,7 @@ namespace REBUSS.Pure.Tools
             _tokenEstimator = tokenEstimator;
             _fileClassifier = fileClassifier;
             _pageAllocator = pageAllocator;
+            _codeProcessor = codeProcessor;
             _logger = logger;
         }
 
@@ -93,7 +96,7 @@ namespace REBUSS.Pure.Tools
 
                 var blocks = new List<ContentBlock>(pageFiles.Count + 1);
                 foreach (var f in pageFiles)
-                    blocks.Add(new TextContentBlock { Text = PlainTextFormatter.FormatFileDiff(f) });
+                    blocks.Add(new TextContentBlock { Text = await _codeProcessor.AddBeforeAfterContext(PlainTextFormatter.FormatFileDiff(f), cancellationToken) });
 
                 blocks.Add(new TextContentBlock
                 {

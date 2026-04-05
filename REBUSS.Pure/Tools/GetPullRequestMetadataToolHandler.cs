@@ -30,6 +30,7 @@ namespace REBUSS.Pure.Tools
         private readonly IFileClassifier _fileClassifier;
         private readonly IPageAllocator _pageAllocator;
         private readonly IPullRequestDiffCache _diffCache;
+        private readonly IRepositoryDownloadOrchestrator _downloadOrchestrator;
         private readonly ILogger<GetPullRequestMetadataToolHandler> _logger;
 
         public GetPullRequestMetadataToolHandler(
@@ -39,6 +40,7 @@ namespace REBUSS.Pure.Tools
             IFileClassifier fileClassifier,
             IPageAllocator pageAllocator,
             IPullRequestDiffCache diffCache,
+            IRepositoryDownloadOrchestrator downloadOrchestrator,
             ILogger<GetPullRequestMetadataToolHandler> logger)
         {
             _metadataProvider = metadataProvider;
@@ -47,6 +49,7 @@ namespace REBUSS.Pure.Tools
             _fileClassifier = fileClassifier;
             _pageAllocator = pageAllocator;
             _diffCache = diffCache;
+            _downloadOrchestrator = downloadOrchestrator;
             _logger = logger;
         }
 
@@ -74,6 +77,13 @@ namespace REBUSS.Pure.Tools
                 var sw = Stopwatch.StartNew();
 
                 var metadata = await _metadataProvider.GetMetadataAsync(prNumber.Value, cancellationToken);
+
+                // Trigger background repository download of the base/target branch (fire-and-forget)
+                var downloadCommitRef = !string.IsNullOrEmpty(metadata.LastMergeTargetCommitId)
+                    ? metadata.LastMergeTargetCommitId
+                    : metadata.LastMergeSourceCommitId;
+                if (!string.IsNullOrEmpty(downloadCommitRef))
+                    _downloadOrchestrator.TriggerDownloadAsync(prNumber.Value, downloadCommitRef);
 
                 (int TotalPages, int TotalFiles, int BudgetPerPage, IReadOnlyList<(int Page, int Count)> ByPage)? paging = null;
                 if (modelName != null || maxTokens != null)

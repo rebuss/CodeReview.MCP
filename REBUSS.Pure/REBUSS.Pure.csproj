@@ -69,6 +69,7 @@
     <ProjectReference Include="..\REBUSS.Pure.Core\REBUSS.Pure.Core.csproj" />
     <ProjectReference Include="..\REBUSS.Pure.AzureDevOps\REBUSS.Pure.AzureDevOps.csproj" />
     <ProjectReference Include="..\REBUSS.Pure.GitHub\REBUSS.Pure.GitHub.csproj" />
+    <ProjectReference Include="..\REBUSS.Pure.RoslynProcessor\REBUSS.Pure.RoslynProcessor.csproj" />
   </ItemGroup>
 
 </Project>

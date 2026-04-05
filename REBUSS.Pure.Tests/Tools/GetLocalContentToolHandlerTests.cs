@@ -19,6 +19,7 @@ public class GetLocalContentToolHandlerTests
     private readonly ITokenEstimator _tokenEstimator = Substitute.For<ITokenEstimator>();
     private readonly IFileClassifier _fileClassifier = Substitute.For<IFileClassifier>();
     private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
+    private readonly ICodeProcessor _codeProcessor = Substitute.For<ICodeProcessor>();
     private readonly GetLocalContentToolHandler _handler;
 
     private static readonly LocalReviewFiles SampleLocalFiles = new()
@@ -84,12 +85,16 @@ public class GetLocalContentToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Returns(new PageAllocation(new[] { pageSlice }, 1, 2));
 
+        _codeProcessor.AddBeforeAfterContext(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(callInfo.Arg<string>()));
+
         _handler = new GetLocalContentToolHandler(
             _localProvider,
             _budgetResolver,
             _tokenEstimator,
             _fileClassifier,
             _pageAllocator,
+            _codeProcessor,
             NullLogger<GetLocalContentToolHandler>.Instance);
     }
 

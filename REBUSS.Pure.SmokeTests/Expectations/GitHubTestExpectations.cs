@@ -30,7 +30,4 @@ public static class GitHubTestExpectations
     public const int CalculatorDeletions = 0;            // ← update after creating fixture
     public const int LoggerAdditions = 0;                // ← update after creating fixture
 
-    // --- get_file_content_at_ref ---
-    public const string OriginalCodeFragment = "public double Negate";    // ← update after creating fixture
-    public const string ModifiedCodeFragment = "public double Percentage";    // ← update after creating fixture
 }

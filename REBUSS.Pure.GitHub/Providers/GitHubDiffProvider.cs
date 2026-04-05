@@ -255,7 +255,11 @@ public class GitHubDiffProvider
         if (oldLineCount < FullRewriteMinLineCount && newLineCount < FullRewriteMinLineCount)
             return false;
 
-        return !hunks.SelectMany(h => h.Lines).Any(l => l.Op == ' ');
+        var allLines = hunks.SelectMany(h => h.Lines);
+        var deletions = allLines.Count(l => l.Op == '-');
+        var additions = allLines.Count(l => l.Op == '+');
+
+        return deletions == oldLineCount && additions == newLineCount;
     }
 
     private static PullRequestDiff BuildDiff(

@@ -161,24 +161,6 @@ internal static class PlainTextFormatter
         return sb.ToString().TrimEnd();
     }
 
-    // ─── File content at ref ──────────────────────────────────────────────────────
-
-    public static string FormatFileContent(FileContent f)
-    {
-        ArgumentNullException.ThrowIfNull(f);
-        var sb = new StringBuilder();
-        sb.AppendLine($"=== {f.Path} @ {f.Ref} ===");
-
-        if (f.IsBinary)
-            sb.Append($"[binary file, size: {f.Size} bytes, encoding: {f.Encoding}]");
-        else if (f.Content != null)
-            sb.Append(f.Content);
-        else
-            sb.Append("[file content not available]");
-
-        return sb.ToString();
-    }
-
     // ─── Pagination block ─────────────────────────────────────────────────────────
 
     /// <summary>

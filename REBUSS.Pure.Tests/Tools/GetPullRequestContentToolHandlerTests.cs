@@ -20,6 +20,7 @@ public class GetPullRequestContentToolHandlerTests
     private readonly ITokenEstimator _tokenEstimator = Substitute.For<ITokenEstimator>();
     private readonly IFileClassifier _fileClassifier = Substitute.For<IFileClassifier>();
     private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
+    private readonly ICodeProcessor _codeProcessor = Substitute.For<ICodeProcessor>();
     private readonly GetPullRequestContentToolHandler _handler;
 
     private static readonly PullRequestDiff SampleDiff = new()
@@ -91,12 +92,16 @@ public class GetPullRequestContentToolHandlerTests
         _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
             .Returns(new PageAllocation(new[] { pageSlice }, 1, 3));
 
+        _codeProcessor.AddBeforeAfterContext(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(callInfo.Arg<string>()));
+
         _handler = new GetPullRequestContentToolHandler(
             _diffCache,
             _budgetResolver,
             _tokenEstimator,
             _fileClassifier,
             _pageAllocator,
+            _codeProcessor,
             NullLogger<GetPullRequestContentToolHandler>.Instance);
     }
 

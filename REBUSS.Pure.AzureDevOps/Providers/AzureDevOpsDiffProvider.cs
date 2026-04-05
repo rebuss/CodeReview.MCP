@@ -257,8 +257,8 @@ namespace REBUSS.Pure.AzureDevOps.Providers
         }
 
         /// <summary>
-        /// Detects a full-file rewrite: both contents are non-trivial but the diff
-        /// contains zero context (unchanged) lines, indicating every line changed.
+        /// Detects a full-file rewrite: both contents are non-trivial but every line
+        /// in the file was changed (deletions == old line count and additions == new line count).
         /// </summary>
         internal static bool IsFullFileRewrite(string? baseContent, string? targetContent, List<DiffHunk> hunks)
         {
@@ -274,7 +274,11 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             if (oldLineCount < FullRewriteMinLineCount && newLineCount < FullRewriteMinLineCount)
                 return false;
 
-            return !hunks.SelectMany(h => h.Lines).Any(l => l.Op == ' ');
+            var allLines = hunks.SelectMany(h => h.Lines);
+            var deletions = allLines.Count(l => l.Op == '-');
+            var additions = allLines.Count(l => l.Op == '+');
+
+            return deletions == oldLineCount && additions == newLineCount;
         }
 
         private static PullRequestDiff BuildDiff(

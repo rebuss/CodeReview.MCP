@@ -19,6 +19,8 @@ using GitHubNames = REBUSS.Pure.GitHub.Names;
 using ResponsePacking = REBUSS.Pure.Services.ResponsePacking;
 using Pagination = REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Properties;
+using REBUSS.Pure.RoslynProcessor;
+using REBUSS.Pure.Services.RepositoryDownload;
 
 namespace REBUSS.Pure
 {
@@ -151,6 +153,7 @@ namespace REBUSS.Pure
             services.AddSingleton<IDiffAlgorithm, DiffPlexDiffAlgorithm>();
             services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
             services.AddSingleton<IFileClassifier, FileClassifier>();
+            services.AddSingleton<ICodeProcessor, RoslynCodeProcessor>();
 
             // Context Window Awareness
             services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
@@ -179,6 +182,10 @@ namespace REBUSS.Pure
                     services.AddAzureDevOpsProvider(configuration);
                     break;
             }
+
+            // Repository download orchestrator + startup cleanup
+            services.AddSingleton<IRepositoryDownloadOrchestrator, RepositoryDownloadOrchestrator>();
+            services.AddHostedService<RepositoryCleanupService>();
 
             // Local self-review pipeline
             services.AddSingleton<ILocalGitClient, LocalGitClient>();

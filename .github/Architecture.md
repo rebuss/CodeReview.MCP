@@ -113,12 +113,11 @@ Each SCM provider follows a layered architecture:
 IScmClient (facade)
   ├── DiffProvider      → API client → Parser → StructuredDiffBuilder → FileChange[]
   ├── MetadataProvider  → API client → Parser → FullPullRequestMetadata
-  ├── FilesProvider     → API client → Parser → FileClassifier → PullRequestFiles  (no diff fetching)
-  └── FileContentProvider → API client → FileContent
+  └── FilesProvider     → API client → Parser → FileClassifier → PullRequestFiles  (no diff fetching)
 ```
 
 **WHY this decomposition:**
-- **SRP** — each provider handles one concern (diff, metadata, files, content).
+- **SRP** — each provider handles one concern (diff, metadata, files).
 - **Testability** — providers can be tested with real parsers and mocked API client,
   without instantiating the full facade.
 - **Performance** — `FilesProvider` calls lightweight file-list APIs directly (e.g.,
@@ -131,18 +130,18 @@ provider-agnostic fields (`WebUrl`, `RepositoryFullName`) derived from options.
 
 ### Interface Forwarding & Narrow Dependencies
 
-`IScmClient` extends `IPullRequestDataProvider` + `IFileContentDataProvider`.
+`IScmClient` extends `IPullRequestDataProvider` + `IRepositoryArchiveProvider`.
 `ServiceCollectionExtensions` registers the concrete facade as three interfaces:
 
 ```csharp
 services.AddSingleton<AzureDevOpsScmClient>();
 services.AddSingleton<IScmClient>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
 services.AddSingleton<IPullRequestDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
-services.AddSingleton<IFileContentDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
+services.AddSingleton<IRepositoryArchiveProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
 ```
 
 **WHY:** tool handlers depend on narrow interfaces (`IPullRequestDataProvider` or
-`IFileContentDataProvider`), not the full `IScmClient`. This means:
+`IRepositoryArchiveProvider`), not the full `IScmClient`. This means:
 - Tool handlers don't know which SCM provider is active
 - They can be tested by mocking only the narrow interface
 - Adding a new provider doesn't affect tool handler code at all
@@ -354,7 +353,37 @@ Register `IReviewAnalyzer` in DI. `ReviewContextOrchestrator` discovers all
 implementations via `IEnumerable<IReviewAnalyzer>` — no changes to the orchestrator
 needed. See recipe 5.4 in `ProjectConventions.md`.
 
-## 6. Local Review Pipeline
+## 6. Repository Download Pipeline
+
+### Trigger
+
+When `get_pr_metadata` is called, the handler fires a background download via
+`IRepositoryDownloadOrchestrator.TriggerDownloadAsync(prNumber, commitRef)`.
+This is fire-and-forget — the metadata response returns immediately without waiting.
+
+### Download Flow
+
+```
+get_pr_metadata → MetadataHandler
+  → _downloadOrchestrator.TriggerDownloadAsync(prNumber, commitRef)
+    → Background Task.Run:
+      1. IRepositoryArchiveProvider.DownloadRepositoryZipAsync(commitRef, zipPath)
+         (Azure DevOps: Items API ?$format=zip | GitHub: /zipball/{ref})
+      2. ZipFile.ExtractToDirectory(zipPath, extractDir)
+      3. Delete ZIP immediately
+      4. State = Ready, ExtractedPath = extractDir
+```
+
+### Lifecycle
+
+- **Deduplication**: Same PR + same commit = no-op. Different PR = cancel old, start new.
+- **Shutdown**: `IHostApplicationLifetime.ApplicationStopping` triggers cleanup of
+  `rebuss-repo-{pid}/` directory.
+- **Startup**: `RepositoryCleanupService` (`IHostedService`) scans for orphaned
+  `rebuss-repo-*` directories, extracts PID from name, deletes if process not running.
+- **Temporary storage**: `{Path.GetTempPath()}/rebuss-repo-{Environment.ProcessId}/`
+
+## 7. Local Review Pipeline
 
 ### Scope Model
 
@@ -400,7 +429,7 @@ deleted file), the `GitCommandException` is caught and `null` is returned.
 The resolved content strings are fed to `IStructuredDiffBuilder.Build` which
 produces `DiffHunk[]` using `LcsDiffAlgorithm` (LCS-based line diff).
 
-## 7. Design Decisions & Rationale
+## 8. Design Decisions & Rationale
 
 - **Singletons everywhere:** services are stateless (state lives in options and
   config stores). `HttpClient` instances are expensive to create and should be

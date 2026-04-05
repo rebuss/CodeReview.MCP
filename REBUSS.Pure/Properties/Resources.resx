@@ -80,9 +80,6 @@
   <data name="ErrorFatalMessage" xml:space="preserve">
     <value>[{0}] FATAL: {1}: {2}</value>
   </data>
-  <data name="ErrorFileNotFound" xml:space="preserve">
-    <value>File not found: {0}</value>
-  </data>
   <data name="ErrorFileNotFoundAmongLocalChanges" xml:space="preserve">
     <value>File '{0}' not found among local changes (scope: {1})</value>
   </data>
@@ -104,14 +101,8 @@
   <data name="ErrorMissingRequiredPageNumber" xml:space="preserve">
     <value>Missing required parameter: pageNumber</value>
   </data>
-  <data name="ErrorMissingRequiredPath" xml:space="preserve">
-    <value>Missing required parameter: path</value>
-  </data>
   <data name="ErrorMissingRequiredPrNumber" xml:space="preserve">
     <value>Missing required parameter: prNumber</value>
-  </data>
-  <data name="ErrorMissingRequiredRef" xml:space="preserve">
-    <value>Missing required parameter: ref</value>
   </data>
   <data name="ErrorNoGitRepositoryRoot" xml:space="preserve">
     <value>No git repository root could be resolved. Set a repository path via --repo, MCP roots, or the localRepoPath configuration.</value>
@@ -139,9 +130,6 @@
   </data>
   <data name="ErrorRetrievingFileDiff" xml:space="preserve">
     <value>Error retrieving file diff: {0}</value>
-  </data>
-  <data name="ErrorRetrievingFileContent" xml:space="preserve">
-    <value>Error retrieving file content: {0}</value>
   </data>
   <data name="ErrorRetrievingLocalContent" xml:space="preserve">
     <value>Error retrieving local content: {0}</value>
@@ -178,18 +166,6 @@
   </data>
   <data name="GitRevParseVerifyHead" xml:space="preserve">
     <value>rev-parse --verify HEAD</value>
-  </data>
-  <data name="LogGetFileContentAtRefCompleted" xml:space="preserve">
-    <value>[get_file_content_at_ref] Completed: path='{Path}', ref='{Ref}', {Size} bytes, binary={IsBinary}, {ResponseLength} chars, {ElapsedMs}ms</value>
-  </data>
-  <data name="LogGetFileContentAtRefEntry" xml:space="preserve">
-    <value>[get_file_content_at_ref] Entry: path='{Path}', ref='{Ref}'</value>
-  </data>
-  <data name="LogGetFileContentAtRefError" xml:space="preserve">
-    <value>[get_file_content_at_ref] Error (path='{Path}', ref='{Ref}')</value>
-  </data>
-  <data name="LogGetFileContentAtRefNotFound" xml:space="preserve">
-    <value>[get_file_content_at_ref] File content not found (path='{Path}', ref='{Ref}')</value>
   </data>
   <data name="LogGetLocalContentCompleted" xml:space="preserve">
     <value>[get_local_content] Completed: page {Page}/{TotalPages}, {FileCount} files, {Ms}ms</value>

@@ -25,7 +25,4 @@ public static class AdoTestExpectations
         ["src/Logger.cs"] = "added"
     };
 
-    // --- get_file_content_at_ref ---
-    public const string OriginalCodeFragment = "public class Calculator";
-    public const string ModifiedCodeFragment = "Negate";
 }

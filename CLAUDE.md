@@ -54,7 +54,7 @@ REBUSS.Pure.AzureDevOps    REBUSS.Pure.GitHub   (SCM providers)
 REBUSS.Pure                                      (MCP server app)
 ```
 
-**Provider pattern:** `IScmClient` facade → fine-grained providers (`DiffProvider`, `MetadataProvider`, `FilesProvider`, `FileContentProvider`) → parsers → API client. Exactly **one provider per process**, selected at startup by `Program.DetectProvider()`.
+**Provider pattern:** `IScmClient` facade → fine-grained providers (`DiffProvider`, `MetadataProvider`, `FilesProvider`, `RepositoryArchiveProvider`) → parsers → API client. Exactly **one provider per process**, selected at startup by `Program.DetectProvider()`.
 
 **MCP tool pattern:** plain C# classes with `[McpServerToolType]`/`[McpServerTool]` attributes. Discovered automatically by `WithToolsFromAssembly()` — no manual registration. Return `Task<IEnumerable<ContentBlock>>` (plain text via `PlainTextFormatter`). Throw `McpException` for errors.
 
@@ -70,7 +70,7 @@ REBUSS.Pure                                      (MCP server app)
 | Tool output | Plain text `IEnumerable<ContentBlock>` (`TextContentBlock` per file/section); formatted by `PlainTextFormatter`; no JSON serialization in handler output |
 | Naming | `*Provider`, `*Parser`, `*ToolHandler`, `*ScmClient`; `I*` interfaces; `_field` privates |
 | Async | `async` all the way; propagate `CancellationToken` to every I/O call |
-| DI | Constructor injection; all singletons; interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IFileContentDataProvider` |
+| DI | Constructor injection; all singletons; interface forwarding for `IScmClient`/`IPullRequestDataProvider`/`IRepositoryArchiveProvider` |
 | Errors | Custom exceptions caught in tool handlers → rethrown as `McpException` |
 | Logging | `Microsoft.Extensions.Logging`; stderr only — **stdout is reserved for MCP JSON-RPC** |
 | Child processes | Must set `RedirectStandardInput = true` + `process.StandardInput.Close()` after `Start()` |
@@ -78,14 +78,13 @@ REBUSS.Pure                                      (MCP server app)
 
 ---
 
-## MCP tools (6 total)
+## MCP tools (5 total)
 
 | Tool name | Handler | What it does |
 |---|---|---|
 | `get_pr_metadata` | `GetPullRequestMetadataToolHandler` | Returns PR metadata as plain text; optionally computes content paging info |
 | `get_pr_content` | `GetPullRequestContentToolHandler` | Returns one paginated page of PR diff content as plain text |
 | `get_pr_files` | `GetPullRequestFilesToolHandler` | Returns classified file list for a PR as plain text; supports pagination (F004) |
-| `get_file_content_at_ref` | `GetFileContentAtRefToolHandler` | Returns file content at a specific Git ref as plain text |
 | `get_local_files` | `GetLocalChangesFilesToolHandler` | Lists locally changed files with classification as plain text |
 | `get_local_content` | `GetLocalContentToolHandler` | Returns one paginated page of local diff content as plain text |
 

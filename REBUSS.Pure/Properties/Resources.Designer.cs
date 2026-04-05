@@ -124,15 +124,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to File not found: {0}.
-        /// </summary>
-        internal static string ErrorFileNotFound {
-            get {
-                return ResourceManager.GetString("ErrorFileNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to File '{0}' not found among local changes (scope: {1}).
         /// </summary>
         internal static string ErrorFileNotFoundAmongLocalChanges {
@@ -196,29 +187,11 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Missing required parameter: path.
-        /// </summary>
-        internal static string ErrorMissingRequiredPath {
-            get {
-                return ResourceManager.GetString("ErrorMissingRequiredPath", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Missing required parameter: prNumber.
         /// </summary>
         internal static string ErrorMissingRequiredPrNumber {
             get {
                 return ResourceManager.GetString("ErrorMissingRequiredPrNumber", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to Missing required parameter: ref.
-        /// </summary>
-        internal static string ErrorMissingRequiredRef {
-            get {
-                return ResourceManager.GetString("ErrorMissingRequiredRef", resourceCulture);
             }
         }
 
@@ -300,15 +273,6 @@ namespace REBUSS.Pure.Properties {
         internal static string ErrorRetrievingFileDiff {
             get {
                 return ResourceManager.GetString("ErrorRetrievingFileDiff", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to Error retrieving file content: {0}.
-        /// </summary>
-        internal static string ErrorRetrievingFileContent {
-            get {
-                return ResourceManager.GetString("ErrorRetrievingFileContent", resourceCulture);
             }
         }
 
@@ -417,42 +381,6 @@ namespace REBUSS.Pure.Properties {
         internal static string GitRevParseVerifyHead {
             get {
                 return ResourceManager.GetString("GitRevParseVerifyHead", resourceCulture)!;
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Completed: path='{Path}', ref='{Ref}', ...
-        /// </summary>
-        internal static string LogGetFileContentAtRefCompleted {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefCompleted", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Entry: path='{Path}', ref='{Ref}'.
-        /// </summary>
-        internal static string LogGetFileContentAtRefEntry {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Error (path='{Path}', ref='{Ref}').
-        /// </summary>
-        internal static string LogGetFileContentAtRefError {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] File content not found (path='{Path}', ref='{Ref}').
-        /// </summary>
-        internal static string LogGetFileContentAtRefNotFound {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefNotFound", resourceCulture);
             }
         }
 
