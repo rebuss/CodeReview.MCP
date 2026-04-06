@@ -709,15 +709,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Copied {0} instruction file(s) to {1}.
-        /// </summary>
-        internal static string MsgCopiedInstructions {
-            get {
-                return ResourceManager.GetString("MsgCopiedInstructions", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Deleted legacy prompt file: {0}.
         /// </summary>
         internal static string MsgDeletedLegacyPromptFile {

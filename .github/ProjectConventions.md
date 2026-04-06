@@ -108,7 +108,7 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 ### 5.5 Add or modify a prompt
 1. **Source** → edit/create embedded resource in `REBUSS.Pure/Cli/Prompts/{name}.md`
 2. **Deploy** → if new file, update `InitCommand.cs` to include it in the copy list
-3. Rebuild — `rebuss-pure init` **always overwrites** deployed copies in `.github/prompts/` and `.github/instructions/`
+3. Rebuild — `rebuss-pure init` **always overwrites** deployed copies in `.github/prompts/` (it does **not** touch `.github/instructions/`)
 
 ### 5.6 Add a new CLI command
 1. **Command** → `REBUSS.Pure/Cli/{Name}Command.cs` implementing `ICliCommand`

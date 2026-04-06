@@ -32,7 +32,6 @@ rebuss-pure init -g
 2. Authenticates (Azure CLI or PAT)
 3. Detects IDEs and writes `mcp.json` to the appropriate directory
 4. Copies prompt files to `.github/prompts/`
-5. Copies instruction files to `.github/instructions/` (`.instructions.md` extension)
 
 **IDE detection logic (local mode):**
 
@@ -340,17 +339,13 @@ After running `rebuss-pure init`, you get:
 ├── review-pr.prompt.md
 └── self-review.prompt.md
 
-.github/instructions/
-├── review-pr.instructions.md
-└── self-review.instructions.md
-
 # If Claude Code is detected (.claude/ or CLAUDE.md):
 .claude/.mcp.json          ← uses "mcpServers" key
 ```
 
-> **Note for contributors:** The files in `.github/prompts/` and `.github/instructions/` are **generated** by `rebuss-pure init` from embedded resources compiled into the tool (`REBUSS.Pure/Cli/Prompts/*.md`). The embedded files in `REBUSS.Pure/Cli/Prompts/` are the **source of truth**. Always edit the embedded source files — do **not** edit the deployed files directly, as `init` **always overwrites** them on every run to ensure prompt updates are deployed.
+> **Note for contributors:** The files in `.github/prompts/` are **generated** by `rebuss-pure init` from embedded resources compiled into the tool (`REBUSS.Pure/Cli/Prompts/*.md`). The embedded files in `REBUSS.Pure/Cli/Prompts/` are the **source of truth**. Always edit the embedded source files — do **not** edit the deployed files directly, as `init` **always overwrites** them on every run to ensure prompt updates are deployed. `init` does **not** create or modify `.github/instructions/` — any instruction files there are owned by you.
 
-These prompts instruct the AI agent on the review workflows. If you need to add custom rules for your repository, create **separate** files (e.g. `.github/instructions/team-rules.instructions.md`) rather than editing the deployed copies, which will be overwritten by the next `rebuss-pure init` run.
+These prompts instruct the AI agent on the review workflows. If you need to add custom rules for your repository, create your own files under `.github/instructions/` (e.g. `team-rules.instructions.md`); `init` will leave them alone.
 
 ---
 

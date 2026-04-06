@@ -10,8 +10,7 @@ namespace REBUSS.Pure.Cli;
 
 /// <summary>
 /// Generates MCP server configuration file(s) in the current Git repository
-/// and copies review prompt files to <c>.github/prompts/</c> and instruction files
-/// to <c>.github/instructions/</c> so that MCP clients
+/// and copies review prompt files to <c>.github/prompts/</c> so that MCP clients
 /// (e.g. VS Code, Visual Studio, GitHub Copilot) can launch the server and use the prompts.
 /// <para>
 /// When no <c>--pat</c> is provided, the command runs <c>az login</c> so the user
@@ -542,15 +541,12 @@ public class InitCommand : ICliCommand
     private async Task CopyPromptFilesAsync(string gitRoot, CancellationToken cancellationToken)
     {
         var promptsTargetDir = Path.Combine(gitRoot, ".github", "prompts");
-        var instructionsTargetDir = Path.Combine(gitRoot, ".github", "instructions");
         Directory.CreateDirectory(promptsTargetDir);
-        Directory.CreateDirectory(instructionsTargetDir);
 
         await DeleteLegacyPromptFilesAsync(promptsTargetDir);
 
         var assembly = Assembly.GetExecutingAssembly();
         var promptsWritten = 0;
-        var instructionsWritten = 0;
 
         foreach (var promptFileName in PromptFileNames)
         {
@@ -570,19 +566,10 @@ public class InitCommand : ICliCommand
             var promptPath = Path.Combine(promptsTargetDir, promptFileName);
             await File.WriteAllTextAsync(promptPath, content, cancellationToken);
             promptsWritten++;
-
-            // Always write to .github/instructions/ (overwrite enables instruction updates)
-            var instructionFileName = ToInstructionsFileName(promptFileName);
-            var instructionPath = Path.Combine(instructionsTargetDir, instructionFileName);
-            await File.WriteAllTextAsync(instructionPath, content, cancellationToken);
-            instructionsWritten++;
         }
 
         if (promptsWritten > 0)
             await _output.WriteLineAsync(string.Format(Resources.MsgCopiedPrompts, promptsWritten, promptsTargetDir));
-
-        if (instructionsWritten > 0)
-            await _output.WriteLineAsync(string.Format(Resources.MsgCopiedInstructions, instructionsWritten, instructionsTargetDir));
     }
 
     private async Task DeleteLegacyPromptFilesAsync(string promptsTargetDir)
@@ -598,20 +585,7 @@ public class InitCommand : ICliCommand
         }
     }
 
-    /// <summary>
-    /// Converts a prompt file name (e.g. <c>review-pr.md</c>) to the corresponding
-    /// instructions file name (e.g. <c>review-pr.instructions.md</c>).
-    /// </summary>
-    internal static string ToInstructionsFileName(string promptFileName)
-    {
-        const string promptMdSuffix = ".prompt.md";
-        var baseName = promptFileName.EndsWith(promptMdSuffix, StringComparison.OrdinalIgnoreCase)
-            ? promptFileName[..^promptMdSuffix.Length]
-            : Path.GetFileNameWithoutExtension(promptFileName);
-        return $"{baseName}.instructions.md";
-    }
-
-    /// <summary>
+/// <summary>
     /// Locates the embedded resource name for a given prompt file.
     /// The SDK may mangle hyphens to underscores depending on version,
     /// so we search by suffix with both variants.
