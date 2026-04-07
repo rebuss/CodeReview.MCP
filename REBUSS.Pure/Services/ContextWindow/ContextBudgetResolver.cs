@@ -45,6 +45,7 @@ public sealed class ContextBudgetResolver : IContextBudgetResolver
         if (source != BudgetSource.Explicit)
         {
             totalBudget = ApplyGatewayCap(totalBudget, _gatewayState.GetEffectiveCap(), warnings);
+            totalBudget = ApplyLargeContextCeiling(totalBudget, opts, warnings);
         }
 
         _logger.LogDebug("GatewayCap={GatewayCap}, totalBudget={TotalBudget}", _gatewayState.GetEffectiveCap(), totalBudget);
@@ -116,6 +117,18 @@ public sealed class ContextBudgetResolver : IContextBudgetResolver
 
         warnings.Add($"Budget {totalBudget} exceeds gateway cap {cap}; clamped to gateway limit");
         return cap;
+    }
+
+    private static int ApplyLargeContextCeiling(int totalBudget, ContextWindowOptions opts, List<string> warnings)
+    {
+        if (opts.LargeContextCeilingTokens <= 0) return totalBudget;
+        if (opts.LargeContextThresholdTokens <= 0) return totalBudget;
+        if (totalBudget <= opts.LargeContextThresholdTokens) return totalBudget;
+        if (totalBudget <= opts.LargeContextCeilingTokens) return totalBudget;
+
+        warnings.Add(
+            $"Large-context model budget {totalBudget} exceeds threshold {opts.LargeContextThresholdTokens}; capped to {opts.LargeContextCeilingTokens}");
+        return opts.LargeContextCeilingTokens;
     }
 
     private static int ApplyGuardrails(

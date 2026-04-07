@@ -9,6 +9,7 @@ using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.PrEnrichment;
+using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
@@ -32,6 +33,7 @@ namespace REBUSS.Pure.Tools
         private readonly IContextBudgetResolver _budgetResolver;
         private readonly IRepositoryDownloadOrchestrator _downloadOrchestrator;
         private readonly IPrEnrichmentOrchestrator _enrichmentOrchestrator;
+        private readonly IPageAllocator _pageAllocator;
         private readonly IOptions<WorkflowOptions> _workflowOptions;
         private readonly ILogger<GetPullRequestMetadataToolHandler> _logger;
 
@@ -40,6 +42,7 @@ namespace REBUSS.Pure.Tools
             IContextBudgetResolver budgetResolver,
             IRepositoryDownloadOrchestrator downloadOrchestrator,
             IPrEnrichmentOrchestrator enrichmentOrchestrator,
+            IPageAllocator pageAllocator,
             IOptions<WorkflowOptions> workflowOptions,
             ILogger<GetPullRequestMetadataToolHandler> logger)
         {
@@ -47,6 +50,7 @@ namespace REBUSS.Pure.Tools
             _budgetResolver = budgetResolver;
             _downloadOrchestrator = downloadOrchestrator;
             _enrichmentOrchestrator = enrichmentOrchestrator;
+            _pageAllocator = pageAllocator;
             _workflowOptions = workflowOptions;
             _logger = logger;
         }
@@ -159,10 +163,16 @@ namespace REBUSS.Pure.Tools
             try
             {
                 var result = await _enrichmentOrchestrator.WaitForEnrichmentAsync(prNumber, linkedCts.Token);
-                var byPage = result.Allocation.Pages
+
+                // Repaginate per-call against the caller's resolved safe budget. Enriched
+                // candidates are reused from the cache; only PageAllocator.Allocate re-runs.
+                // This makes the paging info reflect the per-call modelName / maxTokens
+                // instead of whatever budget the cache happened to be primed with.
+                var allocation = _pageAllocator.Allocate(result.SortedCandidates, safeBudget);
+                var byPage = allocation.Pages
                     .Select(p => (Page: p.PageNumber, Count: p.Items.Count))
                     .ToArray();
-                var paging = (result.Allocation.TotalPages, result.Allocation.TotalItems, safeBudget, (IReadOnlyList<(int Page, int Count)>)byPage);
+                var paging = (allocation.TotalPages, allocation.TotalItems, safeBudget, (IReadOnlyList<(int Page, int Count)>)byPage);
                 return new PagingFetchResult(paging, Deferred: false, Failure: null);
             }
             catch (OperationCanceledException) when (!callerCt.IsCancellationRequested)

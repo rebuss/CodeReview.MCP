@@ -7,9 +7,11 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
+using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.PrEnrichment;
+using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
@@ -29,6 +31,7 @@ namespace REBUSS.Pure.Tools
         private readonly IPullRequestDataProvider _metadataProvider;
         private readonly IContextBudgetResolver _budgetResolver;
         private readonly IPrEnrichmentOrchestrator _enrichmentOrchestrator;
+        private readonly IPageAllocator _pageAllocator;
         private readonly IOptions<WorkflowOptions> _workflowOptions;
         private readonly ILogger<GetPullRequestContentToolHandler> _logger;
 
@@ -36,12 +39,14 @@ namespace REBUSS.Pure.Tools
             IPullRequestDataProvider metadataProvider,
             IContextBudgetResolver budgetResolver,
             IPrEnrichmentOrchestrator enrichmentOrchestrator,
+            IPageAllocator pageAllocator,
             IOptions<WorkflowOptions> workflowOptions,
             ILogger<GetPullRequestContentToolHandler> logger)
         {
             _metadataProvider = metadataProvider;
             _budgetResolver = budgetResolver;
             _enrichmentOrchestrator = enrichmentOrchestrator;
+            _pageAllocator = pageAllocator;
             _workflowOptions = workflowOptions;
             _logger = logger;
         }
@@ -86,21 +91,14 @@ namespace REBUSS.Pure.Tools
                 }
 
                 // SHA discovery: if there is no existing job, ask the metadata provider for the head SHA
-                // and start one. If a job exists with a stale safeBudget, supersede it with the new budget.
+                // and start one. A budget change does NOT retrigger enrichment — pagination is recomputed
+                // per-call below from the cached enriched candidates, so the expensive Roslyn/diff work
+                // runs at most once per (prNumber, headSha).
                 if (snapshot is null)
                 {
                     var meta = await _metadataProvider.GetMetadataAsync(prNumber.Value, cancellationToken);
                     var headSha = meta.LastMergeSourceCommitId ?? string.Empty;
                     _enrichmentOrchestrator.TriggerEnrichment(prNumber.Value, headSha, safeBudget);
-                }
-                else if (snapshot.Status == PrEnrichmentStatus.Ready
-                         && snapshot.Result is { } existingResult
-                         && existingResult.SafeBudgetTokens != safeBudget)
-                {
-                    _logger.LogInformation(
-                        "PR {Pr} budget changed ({Old} -> {New}); retriggering enrichment",
-                        prNumber, existingResult.SafeBudgetTokens, safeBudget);
-                    _enrichmentOrchestrator.TriggerEnrichment(prNumber.Value, snapshot.HeadSha, safeBudget);
                 }
 
                 // Wait with our own internal timeout. The background body keeps running
@@ -121,16 +119,23 @@ namespace REBUSS.Pure.Tools
                     return BuildFriendlyStillPreparingBlocks(prNumber.Value, pageNumber.Value);
                 }
 
-                if (pageNumber > result.Allocation.TotalPages)
-                    throw new McpException(
-                        string.Format(Resources.ErrorPageNumberExceedsTotalPages, pageNumber, result.Allocation.TotalPages));
+                // Repaginate per-call against the caller's resolved safe budget. The enriched
+                // candidates and per-file enriched text are reused from the cache; only the
+                // bin-packing (PageAllocator.Allocate) re-runs. This is what makes maxTokens /
+                // modelName overrides cheap and effective on every call, fixing the bug where
+                // a stale cached page was returned byte-for-byte.
+                var allocation = _pageAllocator.Allocate(result.SortedCandidates, safeBudget);
 
-                var pageSlice = result.Allocation.Pages[pageNumber.Value - 1];
-                var blocks = BuildPageBlocks(pageSlice, pageNumber.Value, result);
+                if (pageNumber > allocation.TotalPages)
+                    throw new McpException(
+                        string.Format(Resources.ErrorPageNumberExceedsTotalPages, pageNumber, allocation.TotalPages));
+
+                var pageSlice = allocation.Pages[pageNumber.Value - 1];
+                var blocks = BuildPageBlocks(pageSlice, pageNumber.Value, allocation, result);
 
                 sw.Stop();
                 _logger.LogInformation(Resources.LogGetPrContentCompleted,
-                    prNumber, pageNumber, result.Allocation.TotalPages, pageSlice.Items.Count, sw.ElapsedMilliseconds);
+                    prNumber, pageNumber, allocation.TotalPages, pageSlice.Items.Count, sw.ElapsedMilliseconds);
 
                 return blocks;
             }
@@ -148,7 +153,7 @@ namespace REBUSS.Pure.Tools
         }
 
         private static List<ContentBlock> BuildPageBlocks(
-            Core.Models.Pagination.PageSlice pageSlice, int pageNumber, PrEnrichmentResult result)
+            PageSlice pageSlice, int pageNumber, PageAllocation allocation, PrEnrichmentResult result)
         {
             var blocks = new List<ContentBlock>(pageSlice.Items.Count + 1);
 
@@ -167,8 +172,8 @@ namespace REBUSS.Pure.Tools
             blocks.Add(new TextContentBlock
             {
                 Text = PlainTextFormatter.FormatSimplePaginationBlock(
-                    pageNumber, result.Allocation.TotalPages,
-                    pagePathsOrdered.Count, result.Allocation.TotalItems,
+                    pageNumber, allocation.TotalPages,
+                    pagePathsOrdered.Count, allocation.TotalItems,
                     pageSlice.BudgetUsed,
                     categories)
             });

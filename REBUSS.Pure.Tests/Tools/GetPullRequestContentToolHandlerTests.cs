@@ -10,6 +10,7 @@ using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Services.PrEnrichment;
+using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools;
 
 namespace REBUSS.Pure.Tests.Tools;
@@ -19,6 +20,7 @@ public class GetPullRequestContentToolHandlerTests
     private readonly IPullRequestDataProvider _metadataProvider = Substitute.For<IPullRequestDataProvider>();
     private readonly IContextBudgetResolver _budgetResolver = Substitute.For<IContextBudgetResolver>();
     private readonly IPrEnrichmentOrchestrator _orchestrator = Substitute.For<IPrEnrichmentOrchestrator>();
+    private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
     private readonly IOptions<WorkflowOptions> _workflowOptions =
         Options.Create(new WorkflowOptions { MetadataInternalTimeoutMs = 28_000, ContentInternalTimeoutMs = 28_000 });
     private readonly GetPullRequestContentToolHandler _handler;
@@ -90,13 +92,19 @@ public class GetPullRequestContentToolHandlerTests
 
         // Default: no prior snapshot — handler will trigger enrichment, then await.
         _orchestrator.TryGetSnapshot(Arg.Any<int>()).Returns((PrEnrichmentJobSnapshot?)null);
+        var defaultResult = BuildResult();
         _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(BuildResult());
+            .Returns(defaultResult);
+        // The handler now repaginates per-call. Default mock: echo back the cached
+        // single-page allocation so existing tests stay green.
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(defaultResult.Allocation);
 
         _handler = new GetPullRequestContentToolHandler(
             _metadataProvider,
             _budgetResolver,
             _orchestrator,
+            _pageAllocator,
             _workflowOptions,
             NullLogger<GetPullRequestContentToolHandler>.Instance);
     }
@@ -158,9 +166,11 @@ public class GetPullRequestContentToolHandlerTests
     }
 
     [Fact]
-    public async Task Execute_BudgetMismatch_RetriggersEnrichment()
+    public async Task Execute_BudgetMismatch_RepaginatesWithoutRetriggeringEnrichment()
     {
-        // Cached result was built for safeBudget = 70_000 but current call resolves to 140_000.
+        // Cached enrichment was primed at safeBudget = 70_000; caller now asks for 140_000.
+        // The handler MUST NOT retrigger enrichment — it must reuse the cached candidates and
+        // run a fresh pagination at the new budget.
         var staleResult = BuildResult(safeBudget: 70_000);
         _orchestrator.TryGetSnapshot(42).Returns(new PrEnrichmentJobSnapshot
         {
@@ -169,13 +179,56 @@ public class GetPullRequestContentToolHandlerTests
             Status = PrEnrichmentStatus.Ready,
             Result = staleResult,
         });
-        // The retrigger happens, and the next wait returns a fresh result.
         _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(BuildResult(safeBudget: 140_000));
+            .Returns(staleResult);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(staleResult.Allocation);
 
-        await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1, modelName: "gpt-4o");
+        await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1, modelName: "gpt-4o", maxTokens: 140_000);
 
-        _orchestrator.Received(1).TriggerEnrichment(42, "abc123", 140_000);
+        _orchestrator.DidNotReceiveWithAnyArgs().TriggerEnrichment(0, null!, 0);
+        _pageAllocator.Received().Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), 140_000);
+    }
+
+    [Fact]
+    public async Task Execute_TwoCallsDifferentBudgets_EnrichmentRunsOnce_AllocatorRunsTwice()
+    {
+        // Bug repro: priming enrichment at one budget then asking for content at a smaller
+        // budget must yield a fresh pagination, not the cached one — and must NOT re-enrich.
+        var cachedResult = BuildResult(safeBudget: 140_000);
+        _orchestrator.TryGetSnapshot(42).Returns(
+            (PrEnrichmentJobSnapshot?)null,
+            new PrEnrichmentJobSnapshot
+            {
+                PrNumber = 42,
+                HeadSha = "abc123",
+                Status = PrEnrichmentStatus.Ready,
+                Result = cachedResult,
+            });
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(cachedResult);
+
+        _budgetResolver.Resolve(140_000, null).Returns(
+            new BudgetResolutionResult(200_000, 140_000, BudgetSource.Explicit, Array.Empty<string>()));
+        _budgetResolver.Resolve(8_000, null).Returns(
+            new BudgetResolutionResult(8_000, 5_600, BudgetSource.Explicit, Array.Empty<string>()));
+
+        // Two distinct allocations to assert that the per-call budget actually drives pagination.
+        var bigAlloc = BuildResult(safeBudget: 140_000, totalPages: 1, totalItems: 3).Allocation;
+        var smallAlloc = BuildResult(safeBudget: 5_600, totalPages: 2, totalItems: 3).Allocation;
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), 140_000).Returns(bigAlloc);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), 5_600).Returns(smallAlloc);
+
+        // Call 1: cold start with the large budget (primes the cache).
+        await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1, maxTokens: 140_000);
+        // Call 2: warm path with a much smaller budget — must NOT retrigger.
+        await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1, maxTokens: 8_000);
+
+        // Cold start triggered exactly once; warm path did not retrigger.
+        _orchestrator.Received(1).TriggerEnrichment(42, "abc123", Arg.Any<int>());
+        // Allocator ran for both budgets.
+        _pageAllocator.Received(1).Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), 140_000);
+        _pageAllocator.Received(1).Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), 5_600);
     }
 
     // ─── Wait timeout — friendly status ───────────────────────────────────────
@@ -231,8 +284,10 @@ public class GetPullRequestContentToolHandlerTests
     [Fact]
     public async Task Execute_MultiPage_ReturnsRequestedPage()
     {
-        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(BuildResult(totalPages: 2, totalItems: 3));
+        var multi = BuildResult(totalPages: 2, totalItems: 3);
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(multi);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(multi.Allocation);
 
         var blocks = (await _handler.ExecuteAsync(prNumber: 42, pageNumber: 2)).ToList();
         var lastBlock = blocks.Cast<TextContentBlock>().Last().Text;
@@ -244,8 +299,10 @@ public class GetPullRequestContentToolHandlerTests
     [Fact]
     public async Task Execute_MultiPage_HasMoreOnFirstPage()
     {
-        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(BuildResult(totalPages: 2, totalItems: 3));
+        var multi = BuildResult(totalPages: 2, totalItems: 3);
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(multi);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(multi.Allocation);
 
         var blocks = (await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1)).ToList();
         var lastBlock = blocks.Cast<TextContentBlock>().Last().Text;

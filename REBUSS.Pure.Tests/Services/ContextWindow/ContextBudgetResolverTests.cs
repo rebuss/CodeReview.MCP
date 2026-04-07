@@ -21,6 +21,8 @@ public class ContextBudgetResolverTests
         int minBudgetTokens = 4_000,
         int maxBudgetTokens = 2_000_000,
         int? gatewayMaxTokens = null,
+        int largeContextThresholdTokens = 100_000,
+        int largeContextCeilingTokens = 0,
         Dictionary<string, int>? modelRegistry = null,
         ILogger<ContextBudgetResolver>? logger = null)
     {
@@ -31,6 +33,8 @@ public class ContextBudgetResolverTests
             MinBudgetTokens = minBudgetTokens,
             MaxBudgetTokens = maxBudgetTokens,
             GatewayMaxTokens = gatewayMaxTokens,
+            LargeContextThresholdTokens = largeContextThresholdTokens,
+            LargeContextCeilingTokens = largeContextCeilingTokens,
             ModelRegistry = modelRegistry ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         });
         var gatewayState = new FixedGatewayState(gatewayMaxTokens);
@@ -469,5 +473,49 @@ public class ContextBudgetResolverTests
 
         Assert.Equal(128_000, result.TotalBudgetTokens);
         Assert.Contains(result.Warnings, w => w.Contains("gateway cap"));
+    }
+
+    // ──────────────────────────────────────────────
+    // Large-context-model ceiling
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void ContextBudgetResolver_Resolve_LargeContextCeiling_CapsRegistryBudget()
+    {
+        // claude-opus-4 has 200_000 in registry → above 100_000 threshold → capped to 17_000.
+        var resolver = CreateResolver(
+            largeContextCeilingTokens: 17_000,
+            modelRegistry: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["claude-opus-4"] = 200_000 });
+
+        var result = resolver.Resolve(explicitTokens: null, modelIdentifier: "claude-opus-4");
+
+        Assert.Equal(17_000, result.TotalBudgetTokens);
+        Assert.Contains(result.Warnings, w => w.Contains("Large-context"));
+    }
+
+    [Fact]
+    public void ContextBudgetResolver_Resolve_LargeContextCeiling_DoesNotApplyToExplicitBudget()
+    {
+        // Explicit per-call maxTokens always wins.
+        var resolver = CreateResolver(largeContextCeilingTokens: 17_000);
+
+        var result = resolver.Resolve(explicitTokens: 80_000, modelIdentifier: null);
+
+        Assert.Equal(80_000, result.TotalBudgetTokens);
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("Large-context"));
+    }
+
+    [Fact]
+    public void ContextBudgetResolver_Resolve_LargeContextCeiling_LeavesSmallContextModelsUntouched()
+    {
+        // gpt-4o is 128_000 (above threshold) but well below ceiling — no warning, no clamp.
+        var resolver = CreateResolver(
+            largeContextCeilingTokens: 150_000,
+            modelRegistry: new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["gpt-4o"] = 128_000 });
+
+        var result = resolver.Resolve(explicitTokens: null, modelIdentifier: "gpt-4o");
+
+        Assert.Equal(128_000, result.TotalBudgetTokens);
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("Large-context"));
     }
 }

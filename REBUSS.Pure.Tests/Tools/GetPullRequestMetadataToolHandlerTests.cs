@@ -10,6 +10,7 @@ using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Services.PrEnrichment;
+using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools;
 
 namespace REBUSS.Pure.Tests.Tools;
@@ -20,6 +21,7 @@ public class GetPullRequestMetadataToolHandlerTests
     private readonly IContextBudgetResolver _budgetResolver = Substitute.For<IContextBudgetResolver>();
     private readonly IRepositoryDownloadOrchestrator _downloadOrchestrator = Substitute.For<IRepositoryDownloadOrchestrator>();
     private readonly IPrEnrichmentOrchestrator _enrichmentOrchestrator = Substitute.For<IPrEnrichmentOrchestrator>();
+    private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
     private readonly IOptions<WorkflowOptions> _workflowOptions =
         Options.Create(new WorkflowOptions { MetadataInternalTimeoutMs = 28_000, ContentInternalTimeoutMs = 28_000 });
     private readonly GetPullRequestMetadataToolHandler _handler;
@@ -74,15 +76,19 @@ public class GetPullRequestMetadataToolHandlerTests
             .Returns(new BudgetResolutionResult(200_000, 140_000, BudgetSource.Default, Array.Empty<string>()));
 
         // Default: orchestrator returns Ready immediately.
+        var sample = SampleEnrichmentResult();
         _enrichmentOrchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(SampleEnrichmentResult());
+            .Returns(sample);
         _enrichmentOrchestrator.TryGetSnapshot(Arg.Any<int>()).Returns((PrEnrichmentJobSnapshot?)null);
+        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(sample.Allocation);
 
         _handler = new GetPullRequestMetadataToolHandler(
             _dataProvider,
             _budgetResolver,
             _downloadOrchestrator,
             _enrichmentOrchestrator,
+            _pageAllocator,
             _workflowOptions,
             NullLogger<GetPullRequestMetadataToolHandler>.Instance);
     }
