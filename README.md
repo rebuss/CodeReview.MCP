@@ -203,24 +203,25 @@ Works **offline** — no Azure DevOps connection required.
 
 ## ⚙️ Gateway Token Limit
 
-By default, REBUSS.Pure ships with `GatewayMaxTokens` set to **128 000** in `appsettings.json`. This hard cap matches the context window limit imposed by **GitHub Copilot's proxy** and prevents `model_max_prompt_tokens_exceeded` errors — even when the model's native context window is larger (e.g. Claude's 200K).
+REBUSS.Pure paginates diff content so a single `get_pr_content` / `get_local_content` response fits inside the **per-tool-result token cap your MCP host enforces**. Different hosts have wildly different limits, so the server picks one automatically based on the `clientInfo.Name` from the MCP `initialize` handshake — **no configuration needed** for supported hosts:
 
-**If you use Claude Code, Anthropic API directly, or any other client without a gateway limit**, remove or disable this cap so you can use the model's full context window:
+| Host (`clientInfo.Name`) | Auto cap |
+|---|---|
+| Claude Code / claude.ai | **25 000** |
+| Cursor | **24 000** |
+| OpenAI Codex | **20 000** |
+| anything else / unknown | **20 000** (safe fallback) |
 
-In `appsettings.Local.json` (next to the server executable):
+**Override (only if you need a different value):** set `ContextWindow:GatewayMaxTokens` in `appsettings.Local.json` next to the server executable:
 
 ```json
 {
   "ContextWindow": {
-    "GatewayMaxTokens": null
+    "GatewayMaxTokens": 50000
   }
 }
 ```
 
-Or via environment variable:
+Or via environment variable: `ContextWindow__GatewayMaxTokens=50000`.
 
-```
-ContextWindow__GatewayMaxTokens=0
-```
-
-When `GatewayMaxTokens` is `null` or `0`, the limit is disabled and the full model-native context window from the `ModelRegistry` is used.
+When you set this value explicitly, autodetection is skipped — your value wins. Set it to `0` or `null` to disable the cap entirely (use only if your host has no per-response token limit). Per-call `maxTokens` arguments to the MCP tools also bypass the cap.

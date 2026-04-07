@@ -259,28 +259,36 @@ When provider-specific fields are not configured, the server automatically detec
 
 ### Context Window — Gateway Cap
 
-The `ContextWindow` section in `appsettings.json` includes a `GatewayMaxTokens` setting — a hard cap on the resolved token budget imposed **before** the safety margin is applied. This accounts for API gateways (e.g. GitHub Copilot proxy) that enforce a context window limit lower than the model's native capacity.
+`ContextWindow:GatewayMaxTokens` is the hard cap on the resolved per-request token budget imposed **before** the safety margin is applied. It exists because most MCP hosts enforce a per-tool-result token ceiling that is much smaller than the model's native context window — exceeding it causes the host to reject the response.
 
-**Default: `128000`** — matches GitHub Copilot's proxy limit.
+**Zero-config behavior:** the key is **not set** in `appsettings.json` by default. At runtime, REBUSS.Pure inspects the MCP `initialize` handshake's `clientInfo.Name` and picks a safe value automatically:
 
-| Platform | Recommended `GatewayMaxTokens` |
+| Detected `clientInfo.Name` | Auto cap |
 |---|---|
-| GitHub Copilot (VS Code / Visual Studio) | `128000` (default) |
-| Claude Code / Anthropic API | `null` (disabled) |
-| Cursor | `128000` (verify with your setup) |
-| Direct API access | `null` (disabled) |
+| `claude-code` / `claude-ai` / `claude.ai` | **25 000** |
+| `cursor` (any variant) | **24 000** |
+| `codex` (any variant) | **20 000** |
+| anything else / unknown / missing | **20 000** (safe fallback) |
 
-To disable the gateway cap, add to `appsettings.Local.json`:
+**Precedence (first match wins):**
+1. Explicit per-call `maxTokens` parameter — bypasses the gateway cap entirely.
+2. `ContextWindow:GatewayMaxTokens` from configuration (when set, autodetect is skipped).
+3. Autodetected value from `clientInfo.Name`.
+4. Model registry / default budget.
+
+To override the autodetected value (for example to give a custom gateway a larger budget), add to `appsettings.Local.json`:
 
 ```json
 {
   "ContextWindow": {
-    "GatewayMaxTokens": null
+    "GatewayMaxTokens": 50000
   }
 }
 ```
 
-Or via environment variable: `ContextWindow__GatewayMaxTokens=0`
+Or via environment variable: `ContextWindow__GatewayMaxTokens=50000`. To disable the cap entirely set the value to `0` or `null`.
+
+> **Behavior change:** prior to this version, the gateway cap clamped *all* budget sources including explicit `maxTokens` per call. Explicit per-call values now bypass the cap by design — callers passing `maxTokens` are treated as authoritative.
 
 ---
 

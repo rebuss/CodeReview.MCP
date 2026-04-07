@@ -8,6 +8,13 @@ namespace REBUSS.Pure.Tests.Services.ContextWindow;
 
 public class ContextBudgetResolverTests
 {
+    private sealed class FixedGatewayState : IGatewayBudgetState
+    {
+        private readonly int? _cap;
+        public FixedGatewayState(int? cap) { _cap = cap; }
+        public int? GetEffectiveCap() => _cap;
+    }
+
     private static ContextBudgetResolver CreateResolver(
         int safetyMarginPercent = 30,
         int defaultBudgetTokens = 128_000,
@@ -26,7 +33,8 @@ public class ContextBudgetResolverTests
             GatewayMaxTokens = gatewayMaxTokens,
             ModelRegistry = modelRegistry ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         });
-        return new ContextBudgetResolver(options, logger ?? Substitute.For<ILogger<ContextBudgetResolver>>());
+        var gatewayState = new FixedGatewayState(gatewayMaxTokens);
+        return new ContextBudgetResolver(options, gatewayState, logger ?? Substitute.For<ILogger<ContextBudgetResolver>>());
     }
 
     private static Dictionary<string, int> DefaultRegistry() => new(StringComparer.OrdinalIgnoreCase)
@@ -403,15 +411,17 @@ public class ContextBudgetResolverTests
     }
 
     [Fact]
-    public void ContextBudgetResolver_Resolve_GatewayCap_ClampsExplicitBudget()
+    public void ContextBudgetResolver_Resolve_GatewayCap_DoesNotClampExplicitBudget()
     {
-        var resolver = CreateResolver(gatewayMaxTokens: 128_000);
+        // Explicit per-call maxTokens is an authoritative override and bypasses
+        // the gateway cap by design — callers who pass it know what they want.
+        var resolver = CreateResolver(gatewayMaxTokens: 25_000);
 
         var result = resolver.Resolve(explicitTokens: 200_000, modelIdentifier: null);
 
-        Assert.Equal(128_000, result.TotalBudgetTokens);
+        Assert.Equal(200_000, result.TotalBudgetTokens);
         Assert.Equal(BudgetSource.Explicit, result.Source);
-        Assert.Contains(result.Warnings, w => w.Contains("gateway cap"));
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("gateway cap"));
     }
 
     [Fact]
