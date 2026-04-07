@@ -2,75 +2,105 @@
   <img src="REBUSS.Pure.png" alt="REBUSS.Pure" />
 </p>
 
-# 🚀 REBUSS.Pure – AI Code Review That Focuses Only on What Matters
+# CodeReview.MCP
 
-**Stop sending irrelevant code to AI.**  
-Send only the *right context* — and understand Pull Requests faster.
+Context-aware code review engine designed to support AI on large, real-world pull requests.
 
----
-
-## 💡 What is this?
-
-`REBUSS.Pure` is a lightweight MCP server that enables AI agents (GitHub Copilot, ChatGPT, Claude) to perform **high-signal code reviews** by providing only the context that actually matters.
-
-Instead of overwhelming the model with your entire repository, REBUSS.Pure:
-
-- 🔍 analyzes **Azure DevOps and GitHub Pull Requests**
-- 📄 provides **only relevant code changes**
-- 🧠 enables **focused code review & self-review**
-- ⚡ delivers **minimal, high-signal context**
+> AI is not the bottleneck. Context is.
 
 ---
 
-## 🎯 Why this exists
+## What this is
 
-Most AI workflows today:
+CodeReview.MCP is a server that helps AI agents perform code review on large and messy repositories.
 
-- ❌ send too much code
-- ❌ drown the model in noise
-- ❌ produce generic, low-quality feedback
-
-REBUSS.Pure changes the approach:
-
-- ✅ sends **only relevant context**
-- ✅ reduces noise, not just tokens
-- ✅ helps AI focus on **what actually matters**
-
-👉 built for **real-world code review**, not demos
+It does not compete with AI tools like Copilot or Claude Code.  
+It acts as a support layer that prepares the problem for them.
 
 ---
 
-## 🧠 Core idea
+## The problem
 
-AI doesn’t need more code.  
-It needs the *right* code.
+AI-assisted code review works well for small, clean diffs.
 
-Instead of:
+It breaks down when:
 
-```
-❌ full repo → LLM
-```
+- pull requests are large
+- repositories are complex or messy
+- context does not fit into the model window
+- too much input creates noise instead of signal
+- important dependencies are missing
 
-You get:
-
-```
-LLM → MCP → high-signal context only
-```
+In real-world systems, this is the default case.
 
 ---
 
-## ✨ Key Features
+## What this project does differently
 
-- 🔹 Azure DevOps and GitHub Pull Request integration
-- 🔹 High-signal, diff-based AI context (currently **C# only** — see [Language Support](#-language-support))
-- 🔹 Local self-review (no network required)
-- 🔹 No repo cloning needed
-- 🔹 Incremental, on-demand data access
-- 🔹 Ready-to-use review prompts
-- 🔹 Works with any MCP-compatible agent
-- 🔹 Authentication via Azure CLI, GitHub CLI (`gh auth`), or PAT
-- 🔹 Auto-detects VS Code and Visual Studio
-- 🔹 Auto-detects provider from Git remote URL
+### 1. Designed for LARGE pull requests (and messy repositories)
+
+Primary focus.
+
+- handles pull requests that exceed context window limits
+- works with multi-project and legacy-heavy repositories
+- tolerates inconsistent structure
+- does not assume clean architecture
+
+Large and messy codebases are not edge cases — they are the baseline.
+
+---
+
+### 2. Offloads the hardest part from AI
+
+This tool does the work AI is worst at:
+
+- selecting relevant context
+- structuring input
+- reducing noise
+- organizing review flow
+
+Instead of forcing the model to "figure things out",  
+CodeReview.MCP prepares the problem for it.
+
+---
+
+### 3. Context selection (not full dump)
+
+- sends only relevant fragments
+- expands context when needed
+- avoids redundancy
+
+---
+
+### 4. Token-aware processing
+
+- respects context limits
+- splits and paginates intelligently
+- keeps usage predictable
+
+---
+
+### 5. Deterministic review flow
+
+- metadata → file list → targeted analysis
+- avoids random exploration
+- enables repeatable results
+
+---
+
+## What this is NOT
+
+- not an AI model
+- not a replacement for Copilot / Claude
+- not a one-click review tool
+
+This is a control layer for AI agents.
+
+---
+
+## Core idea
+
+Better context → better reasoning → better review
 
 ---
 
@@ -102,19 +132,6 @@ REBUSS.Pure runs as a **local process** on your workstation. It does not upload,
 - **No telemetry, no tracking** — the server collects zero usage data and phones home to nobody.
 
 > **In short:** REBUSS.Pure gives AI agents *precise, scoped access* to exactly the context they need — and nothing more.
-
----
-
-## 🆚 Compared to typical AI workflows
-
-| Feature | REBUSS.Pure | Typical approach |
-|---------|-------------|------------------|
-| Context quality | High-signal | Noisy |
-| Context size | Minimal | Huge |
-| Token usage | Efficient | Wasteful |
-| Setup | 1 command | Complex |
-| Review quality | Focused | Generic |
-| Data privacy | Code stays local | Full repo sent to AI |
 
 ---
 
@@ -151,10 +168,9 @@ rebuss-pure init
 
 This will:
 
-- ✔ detect your IDE (VS Code → `.vscode/mcp.json`, Visual Studio → `.vs/mcp.json`)
+- ✔ detect your IDE (VS Code → `.vscode/mcp.json`, Visual Studio → `.vs/mcp.json`, Claude Code → `.mcp.json`)
 - ✔ generate MCP server configuration
 - ✔ copy review prompts to `.github/prompts/`
-- ✔ copy instruction files to `.github/instructions/` (for GitHub Copilot custom instructions)
 - ✔ authenticate via Azure CLI (opens browser for login) or accept a GitHub PAT
 
 ### Global mode (`-g`)
@@ -166,7 +182,7 @@ cd /path/to/your/repo
 rebuss-pure init -g
 ```
 
-This writes the MCP configuration to the **user-level** paths (`~/.vs/mcp.json` and `~/.vscode/mcp.json`) instead of the repository-local directories. The global config points `--repo` to the current repository, so it works for any workspace you open.
+This writes the MCP configuration to the **user-level** paths (`~/.vs/mcp.json`, `~/.vscode/mcp.json` and `~/.claude.json`) instead of the repository-local directories. The global config points `--repo` to the current repository, so it works for any workspace you open.
 
 > **Switching between repositories:** If you use multiple repositories, run `rebuss-pure init -g` in the target repository before switching to it. This updates the global configuration to point to the correct workspace.
 
@@ -181,7 +197,7 @@ In Copilot / AI chat:
 ```
 123 #review-pr
 ```
-or use `execute` to force tool invocation (recommended for smaller models that may not call tools autonomously):
+or use `execute` to force tool invocation:
 
 ```
 execute 123 #review-pr
