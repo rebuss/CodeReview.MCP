@@ -895,10 +895,13 @@ public class InitCommandTests
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
-        var processRunnerCalled = false;
-        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (_, _) =>
+        var scmAuthCalled = false;
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
         {
-            processRunnerCalled = true;
+            // Only flag Azure-CLI-specific auth calls — Copilot step (feature 012) legitimately
+            // invokes gh-related args regardless of --pat.
+            if (args.Contains("get-access-token") || args.Contains("az login") || args == "install-az-cli")
+                scmAuthCalled = true;
             return Task.FromResult((0, "", ""));
         };
 
@@ -910,7 +913,7 @@ public class InitCommandTests
             var exitCode = await command.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
-            Assert.False(processRunnerCalled);
+            Assert.False(scmAuthCalled);
         }
         finally
         {
@@ -926,13 +929,18 @@ public class InitCommandTests
 
         var expiresOn = DateTime.UtcNow.AddHours(1);
         var tokenJson = $"{{\"accessToken\":\"existing-token\",\"expiresOn\":\"{expiresOn:O}\"}}";
+        var azBrowserText = false;
         Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
         {
             if (args == "--version")
                 return Task.FromResult((0, "azure-cli 2.60.0", ""));
             if (args.Contains("get-access-token"))
                 return Task.FromResult((0, tokenJson, ""));
-            return Task.FromResult((-1, "", "should not be called"));
+            // Feature 012 Copilot step probes — keep the Az session assertions clean by
+            // returning a "happy path / already installed" state so the step runs silently.
+            if (args.Contains("auth status")) return Task.FromResult((0, "Logged in", ""));
+            if (args.Contains("extension list")) return Task.FromResult((0, "github/gh-copilot", ""));
+            return Task.FromResult((0, "", ""));
         };
 
         try
@@ -944,7 +952,10 @@ public class InitCommandTests
 
             Assert.Equal(0, exitCode);
             Assert.Contains("Using existing login session", output.ToString());
-            Assert.DoesNotContain("browser window", output.ToString());
+            // The Az CLI path must not trigger an Az browser login message.
+            // (A non-Az "browser" mention from the Copilot step would be scoped to GitHub CLI.)
+            Assert.DoesNotContain("Attempting Azure CLI login", output.ToString());
+            _ = azBrowserText;
         }
         finally
         {
@@ -1219,14 +1230,20 @@ public class InitCommandTests
                 return Task.FromResult((0, "azure-cli 2.60.0", ""));
             if (args.Contains("get-access-token") && callCount <= 2)
                 return Task.FromResult((-1, "", "not logged in"));
-            if (args.Contains("login"))
+            // Match Az-specific "login" only, not "gh auth login --web" from Copilot step (feature 012).
+            // Also capture only the first login so later Copilot-step login calls don't overwrite it.
+            if (args.Contains("login") && !args.Contains("auth login"))
             {
-                capturedLoginArgs = args;
+                if (string.IsNullOrEmpty(capturedLoginArgs))
+                    capturedLoginArgs = args;
                 return Task.FromResult((0, "", ""));
             }
             if (args.Contains("get-access-token"))
                 return Task.FromResult((0, tokenJson, ""));
-            return Task.FromResult((-1, "", "unexpected"));
+            // Copilot step probes — pretend everything is already set up so the step runs silently.
+            if (args.Contains("auth status")) return Task.FromResult((0, "Logged in", ""));
+            if (args.Contains("extension list")) return Task.FromResult((0, "github/gh-copilot", ""));
+            return Task.FromResult((0, "", ""));
         };
 
         try
@@ -1451,10 +1468,13 @@ public class InitCommandTests
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
 
-        var processRunnerCalled = false;
-        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (_, _) =>
+        var scmAuthCalled = false;
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
         {
-            processRunnerCalled = true;
+            // Only flag GitHub-CLI auth-specific calls — Copilot step (feature 012) legitimately
+            // invokes `gh --version`, `gh auth status`, `gh extension list` regardless of --pat.
+            if (args.Contains("auth token") || args.Contains("auth login") || args == "install-gh-cli")
+                scmAuthCalled = true;
             return Task.FromResult((0, "", ""));
         };
 
@@ -1467,7 +1487,7 @@ public class InitCommandTests
             var exitCode = await command.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
-            Assert.False(processRunnerCalled);
+            Assert.False(scmAuthCalled);
         }
         finally
         {
@@ -1830,6 +1850,152 @@ public class InitCommandTests
             Assert.Equal(0, exitCode);
             Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
             Assert.False(File.Exists(Path.Combine(tempDir, ".vs", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Feature 012 — Copilot CLI setup step integration scenarios
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_GitHubRepo_CopilotStepDetectsExistingAuth_OnlyPromptsForExtension()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var extensionInstallCalls = 0;
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            // gh already installed + authenticated with existing token
+            if (args == "--version") return Task.FromResult((0, "gh 2.0", ""));
+            if (args.Contains("auth token")) return Task.FromResult((0, "{\"token\":\"t\"}", ""));
+            if (args.Contains("auth status")) return Task.FromResult((0, "Logged in", ""));
+            // Extension missing on first look, user accepts, install succeeds
+            if (args.Contains("extension list")) return Task.FromResult((0, "", ""));
+            if (args.Contains("extension install"))
+            {
+                extensionInstallCalls++;
+                return Task.FromResult((0, "", ""));
+            }
+            if (args.Contains("copilot --version")) return Task.FromResult((0, "copilot 1.0", ""));
+            return Task.FromResult((0, "", ""));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(
+                output, tempDir, "rebuss-pure.exe", null, processRunner,
+                input: new StringReader("y\n"), detectedProvider: "GitHub");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(1, extensionInstallCalls);
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AdoRepo_CopilotStepInstallsGhAndExtension_EndToEnd()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var azVersionCalled = false;
+        var ghInstalled = false;
+        var ghAuthed = false;
+        var extensionInstalled = false;
+        var expiresOn = DateTime.UtcNow.AddHours(1);
+        var tokenJson = $"{{\"accessToken\":\"tok\",\"expiresOn\":\"{expiresOn:O}\"}}";
+
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            // Azure CLI path: already installed + existing session
+            if (args == "--version" && !azVersionCalled)
+            {
+                azVersionCalled = true;
+                return Task.FromResult((0, "azure-cli 2.60.0", ""));
+            }
+            if (args.Contains("get-access-token")) return Task.FromResult((0, tokenJson, ""));
+
+            // Copilot step: gh is missing until installed
+            if (args == "--version") return ghInstalled
+                ? Task.FromResult((0, "gh 2.0", ""))
+                : Task.FromResult((-1, "", "not found"));
+            if (args == "install-gh-cli") { ghInstalled = true; return Task.FromResult((0, "", "")); }
+            if (args.Contains("auth status")) return ghAuthed
+                ? Task.FromResult((0, "Logged in", ""))
+                : Task.FromResult((-1, "", "not authed"));
+            if (args.Contains("auth login")) { ghAuthed = true; return Task.FromResult((0, "", "")); }
+            if (args.Contains("extension list")) return Task.FromResult((0, "", ""));
+            if (args.Contains("extension install")) { extensionInstalled = true; return Task.FromResult((0, "", "")); }
+            if (args.Contains("copilot --version")) return Task.FromResult((0, "copilot 1.0", ""));
+            return Task.FromResult((0, "", ""));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(
+                output, tempDir, "rebuss-pure.exe", null, processRunner,
+                input: new StringReader("y\n"), detectedProvider: "AzureDevOps");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(ghInstalled);
+            Assert.True(ghAuthed);
+            Assert.True(extensionInstalled);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CopilotStepDeclined_InitStillSucceedsAndConfigsWritten()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+        var extensionInstallCalls = 0;
+        Func<string, CancellationToken, Task<(int, string, string)>> processRunner = (args, _) =>
+        {
+            if (args == "--version") return Task.FromResult((0, "gh 2.0", ""));
+            if (args.Contains("auth token")) return Task.FromResult((0, "{\"token\":\"t\"}", ""));
+            if (args.Contains("auth status")) return Task.FromResult((0, "Logged in", ""));
+            if (args.Contains("extension list")) return Task.FromResult((0, "", ""));
+            if (args.Contains("extension install"))
+            {
+                extensionInstallCalls++;
+                return Task.FromResult((0, "", ""));
+            }
+            return Task.FromResult((0, "", ""));
+        };
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(
+                output, tempDir, "rebuss-pure.exe", null, processRunner,
+                input: new StringReader("N\n"), detectedProvider: "GitHub");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(0, extensionInstallCalls); // user declined
+            Assert.True(File.Exists(Path.Combine(tempDir, ".vscode", "mcp.json")));
+            Assert.Contains("GITHUB COPILOT CLI NOT CONFIGURED", output.ToString());
         }
         finally
         {

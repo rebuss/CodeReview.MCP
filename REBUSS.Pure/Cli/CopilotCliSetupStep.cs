@@ -1,0 +1,265 @@
+using Microsoft.Extensions.Logging;
+using REBUSS.Pure.GitHub.Configuration;
+using REBUSS.Pure.Properties;
+
+namespace REBUSS.Pure.Cli;
+
+/// <summary>
+/// Optional setup step that runs at the end of <c>rebuss-pure init</c> and offers to install
+/// the GitHub Copilot CLI (<c>gh copilot</c> extension). Runs regardless of SCM provider or
+/// whether a <c>--pat</c> was supplied. Declining or failure is treated as a soft exit:
+/// an informational banner is written and control returns to <see cref="InitCommand"/> without
+/// throwing — the init exit code is never affected by this step (FR-011).
+/// <para>
+/// State detection is performed fresh on every invocation (no persisted decline memory,
+/// per Clarification Q1). When <c>gh</c> itself is missing, the first prompt is framed as the
+/// Copilot setup entry point and declining there skips the entire chain (Clarification Q2).
+/// </para>
+/// </summary>
+internal sealed class CopilotCliSetupStep
+{
+    private readonly TextWriter _output;
+    private readonly TextReader _input;
+    private readonly Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? _processRunner;
+    private readonly ILogger<CopilotCliSetupStep>? _logger;
+    private string? _ghCliPathOverride;
+
+    public CopilotCliSetupStep(
+        TextWriter output,
+        TextReader input,
+        Func<string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? processRunner = null,
+        string? ghCliPathOverride = null,
+        ILogger<CopilotCliSetupStep>? logger = null)
+    {
+        _output = output;
+        _input = input;
+        _processRunner = processRunner;
+        _ghCliPathOverride = ghCliPathOverride;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Runs the Copilot CLI setup flow. Never throws: any unhandled exception is logged at
+    /// <see cref="LogLevel.Warning"/> and swallowed so that <see cref="InitCommand"/> can
+    /// always return a success exit code regardless of the Copilot outcome.
+    /// </summary>
+    public async Task RunAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await RunInternalAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Copilot CLI setup step failed with an unhandled exception");
+            try { await WriteDeclineBannerAsync(); } catch { /* final fallback — swallow */ }
+        }
+    }
+
+    private async Task RunInternalAsync(CancellationToken cancellationToken)
+    {
+        await _output.WriteLineAsync();
+
+        // Step 1 — is `gh` CLI installed?
+        if (!await IsGhInstalledAsync(cancellationToken))
+        {
+            // Copilot-framed entry prompt (Clarification Q2).
+            // Declining here skips the entire chain; no later extension prompt is shown.
+            await _output.WriteLineAsync(Resources.CopilotSetup_ExplainBenefit);
+            await _output.WriteAsync(Resources.CopilotSetup_PromptInstallGhAndContinue);
+
+            if (!IsYes(ReadLine()))
+            {
+                await _output.WriteLineAsync();
+                await WriteDeclineBannerAsync();
+                _logger?.LogInformation("copilot-setup: declined-gh");
+                return;
+            }
+
+            await _output.WriteLineAsync();
+            await _output.WriteLineAsync("Installing GitHub CLI...");
+            var installExit = await RunGhCliInstallAsync(cancellationToken);
+
+            // After install, probe again. If PATH has not refreshed on Windows, try the known locations.
+            if (installExit != 0 || !await IsGhInstalledAsync(cancellationToken))
+            {
+                var found = GitHubCliProcessHelper.TryFindGhCliOnWindows();
+                if (found is not null)
+                {
+                    _ghCliPathOverride = found;
+                    await _output.WriteLineAsync($"GitHub CLI found at: {found}");
+                }
+
+                if (!await IsGhInstalledAsync(cancellationToken))
+                {
+                    await _output.WriteLineAsync("GitHub CLI installation failed or executable not found on PATH.");
+                    await WriteDeclineBannerAsync();
+                    _logger?.LogWarning("copilot-setup: failed: gh-install");
+                    return;
+                }
+            }
+
+            // Authenticate `gh` if necessary.
+            if (!await IsGhAuthenticatedAsync(cancellationToken))
+            {
+                await _output.WriteLineAsync("A browser window will open to authenticate GitHub CLI.");
+                var loginExit = await RunGhInteractiveAsync("auth login --web", cancellationToken);
+                if (loginExit != 0 || !await IsGhAuthenticatedAsync(cancellationToken))
+                {
+                    await WriteDeclineBannerAsync();
+                    _logger?.LogWarning("copilot-setup: login-failed");
+                    return;
+                }
+            }
+
+            // User already consented at the entry prompt — install extension directly (Clarification Q2).
+            await InstallExtensionAsync(cancellationToken, skipPrompt: true);
+            return;
+        }
+
+        // Step 2 — `gh` is installed. Check authentication.
+        if (!await IsGhAuthenticatedAsync(cancellationToken))
+        {
+            await _output.WriteLineAsync("GitHub CLI is installed but not authenticated. A browser window will open.");
+            var loginExit = await RunGhInteractiveAsync("auth login --web", cancellationToken);
+            if (loginExit != 0 || !await IsGhAuthenticatedAsync(cancellationToken))
+            {
+                await WriteDeclineBannerAsync();
+                _logger?.LogWarning("copilot-setup: login-failed");
+                return;
+            }
+        }
+
+        // Step 3 — is the `gh-copilot` extension already installed?
+        var extList = await RunGhCapturedAsync("extension list", cancellationToken);
+        if (extList.ExitCode == 0 &&
+            extList.StdOut.Contains("gh-copilot", StringComparison.OrdinalIgnoreCase))
+        {
+            await _output.WriteLineAsync(Resources.CopilotSetup_AlreadyInstalled);
+            _logger?.LogInformation("copilot-setup: already-installed");
+            return;
+        }
+
+        // Step 4 — extension missing. Prompt user.
+        await InstallExtensionAsync(cancellationToken, skipPrompt: false);
+    }
+
+    private async Task InstallExtensionAsync(CancellationToken cancellationToken, bool skipPrompt)
+    {
+        if (!skipPrompt)
+        {
+            await _output.WriteLineAsync(Resources.CopilotSetup_ExplainBenefit);
+            await _output.WriteAsync(Resources.CopilotSetup_PromptInstallExtension);
+
+            if (!IsYes(ReadLine()))
+            {
+                await _output.WriteLineAsync();
+                await WriteDeclineBannerAsync();
+                _logger?.LogInformation("copilot-setup: declined-extension");
+                return;
+            }
+            await _output.WriteLineAsync();
+        }
+
+        var install = await RunGhCapturedAsync("extension install github/gh-copilot", cancellationToken);
+        if (install.ExitCode != 0)
+        {
+            await _output.WriteLineAsync(Resources.CopilotSetup_InstallFailed);
+            await _output.WriteLineAsync(Resources.CopilotSetup_ManualInstallHint);
+            _logger?.LogWarning("copilot-setup: install-failed");
+            return;
+        }
+
+        var verify = await RunGhCapturedAsync("copilot --version", cancellationToken);
+        if (verify.ExitCode != 0)
+        {
+            await _output.WriteLineAsync(Resources.CopilotSetup_InstallFailed);
+            await _output.WriteLineAsync(Resources.CopilotSetup_ManualInstallHint);
+            _logger?.LogWarning("copilot-setup: install-failed (verify)");
+            return;
+        }
+
+        await _output.WriteLineAsync(Resources.CopilotSetup_InstallSuccess);
+        _logger?.LogInformation("copilot-setup: installed");
+    }
+
+    private async Task WriteDeclineBannerAsync()
+    {
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync(Resources.CopilotSetup_DeclineBannerTitle);
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync(Resources.CopilotSetup_DeclineBannerBody);
+        await _output.WriteLineAsync();
+        await _output.WriteLineAsync(Resources.CopilotSetup_ManualInstallHint);
+        await _output.WriteLineAsync("========================================");
+        await _output.WriteLineAsync();
+    }
+
+    private async Task<bool> IsGhInstalledAsync(CancellationToken cancellationToken)
+    {
+        var r = await RunGhCapturedAsync("--version", cancellationToken);
+        return r.ExitCode == 0;
+    }
+
+    private async Task<bool> IsGhAuthenticatedAsync(CancellationToken cancellationToken)
+    {
+        var r = await RunGhCapturedAsync("auth status", cancellationToken);
+        return r.ExitCode == 0;
+    }
+
+    private async Task<(int ExitCode, string StdOut, string StdErr)> RunGhCapturedAsync(
+        string arguments, CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+            return await _processRunner(arguments, cancellationToken);
+
+        var (fileName, args) = GitHubCliProcessHelper.GetProcessStartArgs(arguments, _ghCliPathOverride);
+        return await InitCommand.RunProcessAsync(fileName, args, cancellationToken);
+    }
+
+    private async Task<int> RunGhInteractiveAsync(string arguments, CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+        {
+            var r = await _processRunner(arguments, cancellationToken);
+            return r.ExitCode;
+        }
+
+        var (fileName, args) = GitHubCliProcessHelper.GetProcessStartArgs(arguments, _ghCliPathOverride);
+        return await InitCommand.RunInteractiveProcessAsync(fileName, args, cancellationToken);
+    }
+
+    private async Task<int> RunGhCliInstallAsync(CancellationToken cancellationToken)
+    {
+        if (_processRunner is not null)
+        {
+            var r = await _processRunner("install-gh-cli", cancellationToken);
+            return r.ExitCode;
+        }
+
+        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return await InitCommand.RunInteractiveProcessAsync(
+                "winget",
+                "install -e --id GitHub.cli --accept-source-agreements --accept-package-agreements",
+                cancellationToken);
+        }
+
+        return await InitCommand.RunInteractiveProcessAsync(
+            "bash",
+            "-c \"curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt update && sudo apt install gh -y\"",
+            cancellationToken);
+    }
+
+    private string? ReadLine()
+    {
+        try { return _input.ReadLine(); }
+        catch { return null; }
+    }
+
+    private static bool IsYes(string? response) =>
+        string.Equals(response?.Trim(), "y", StringComparison.OrdinalIgnoreCase);
+}

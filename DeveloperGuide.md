@@ -31,6 +31,14 @@ rebuss-pure init -g
 2. Authenticates (Azure CLI or PAT)
 3. Detects IDEs and writes `mcp.json` to the appropriate directory
 4. Copies prompt files to `.github/prompts/`
+5. **(Optional)** Offers to set up GitHub Copilot CLI (`gh copilot` extension) for the
+   summarization-resilient Copilot-powered review flow. This step runs regardless of SCM
+   provider or whether `--pat` was supplied, and is fully optional — declining, failure, or
+   a non-interactive session never changes `init`'s exit code. State is detected fresh on
+   every run, so a previous decline does not suppress the prompt on the next run. When
+   `gh` itself is missing, the first prompt is framed as Copilot setup and declining there
+   skips the entire chain (no separate extension prompt follows). To enable later without
+   re-running `init`, use: `gh extension install github/gh-copilot`.
 
 **IDE detection logic (local mode):**
 

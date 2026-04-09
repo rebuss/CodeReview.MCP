@@ -147,10 +147,27 @@ public class InitCommand : ICliCommand
         _gitHubConfigStore?.Clear();
 
         // Authenticate via the appropriate CLI flow after configs and prompts are already on disk
+        string? ghCliPathOverride = null;
         if (string.IsNullOrWhiteSpace(_pat))
         {
             var authFlow = CreateAuthFlow();
             await authFlow.RunAsync(cancellationToken);
+            if (authFlow is GitHubCliAuthFlow ghFlow)
+                ghCliPathOverride = ghFlow.GhCliPathOverride;
+        }
+
+        // GitHub Copilot CLI setup (feature 012) — runs regardless of SCM provider or --pat.
+        // This step is intentionally non-fatal: any failure or decline is soft, and the init
+        // exit code is not affected (FR-011).
+        try
+        {
+            var copilotStep = new CopilotCliSetupStep(
+                _output, _input, _processRunner, ghCliPathOverride);
+            await copilotStep.RunAsync(cancellationToken);
+        }
+        catch
+        {
+            // Defense in depth — CopilotCliSetupStep is already catch-all internally.
         }
 
         await _output.WriteLineAsync();

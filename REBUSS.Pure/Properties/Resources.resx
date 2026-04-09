@@ -299,5 +299,36 @@
   <data name="WarnEmbeddedPromptResourceNotFound" xml:space="preserve">
     <value>Warning: Embedded prompt resource not found: {0}</value>
   </data>
+  <data name="CopilotSetup_ExplainBenefit" xml:space="preserve">
+    <value>REBUSS.Pure can cooperate with GitHub Copilot CLI to provide a review flow that is resilient to IDE conversation summarization. This is optional — existing review tools work without it.</value>
+  </data>
+  <data name="CopilotSetup_PromptInstallGhAndContinue" xml:space="preserve">
+    <value>Install GitHub CLI (prerequisite) and set up GitHub Copilot CLI? [y/N]: </value>
+  </data>
+  <data name="CopilotSetup_PromptInstallExtension" xml:space="preserve">
+    <value>Install the GitHub Copilot CLI extension now? [y/N]: </value>
+  </data>
+  <data name="CopilotSetup_AlreadyInstalled" xml:space="preserve">
+    <value>GitHub Copilot CLI: already installed.</value>
+  </data>
+  <data name="CopilotSetup_InstallSuccess" xml:space="preserve">
+    <value>GitHub Copilot CLI installed successfully.</value>
+  </data>
+  <data name="CopilotSetup_InstallFailed" xml:space="preserve">
+    <value>GitHub Copilot CLI installation failed.</value>
+  </data>
+  <data name="CopilotSetup_DeclineBannerTitle" xml:space="preserve">
+    <value>  GITHUB COPILOT CLI NOT CONFIGURED</value>
+  </data>
+  <data name="CopilotSetup_DeclineBannerBody" xml:space="preserve">
+    <value>Existing REBUSS.Pure review tools are unaffected and will continue to work.
+The optional GitHub Copilot-powered review flow (resilient to IDE conversation
+summarization) will not be available until the Copilot CLI is installed.</value>
+  </data>
+  <data name="CopilotSetup_ManualInstallHint" xml:space="preserve">
+    <value>To enable it later, run:
 
+  gh extension install github/gh-copilot
+</value>
+  </data>
 </root>

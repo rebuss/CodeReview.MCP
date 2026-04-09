@@ -172,6 +172,7 @@ This will:
 - ✔ generate MCP server configuration
 - ✔ copy review prompts to `.github/prompts/`
 - ✔ authenticate via Azure CLI (opens browser for login) or accept a GitHub PAT
+- ✔ **optionally** set up GitHub Copilot CLI (`gh copilot` extension) for the enhanced, summarization-resilient review flow (declining is safe — existing tools still work)
 
 ### Global mode (`-g`)
 

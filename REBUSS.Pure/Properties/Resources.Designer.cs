@@ -779,5 +779,41 @@ namespace REBUSS.Pure.Properties {
                 return ResourceManager.GetString("WarnEmbeddedPromptResourceNotFound", resourceCulture);
             }
         }
+
+        internal static string CopilotSetup_ExplainBenefit {
+            get { return ResourceManager.GetString("CopilotSetup_ExplainBenefit", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_PromptInstallGhAndContinue {
+            get { return ResourceManager.GetString("CopilotSetup_PromptInstallGhAndContinue", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_PromptInstallExtension {
+            get { return ResourceManager.GetString("CopilotSetup_PromptInstallExtension", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_AlreadyInstalled {
+            get { return ResourceManager.GetString("CopilotSetup_AlreadyInstalled", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_InstallSuccess {
+            get { return ResourceManager.GetString("CopilotSetup_InstallSuccess", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_InstallFailed {
+            get { return ResourceManager.GetString("CopilotSetup_InstallFailed", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_DeclineBannerTitle {
+            get { return ResourceManager.GetString("CopilotSetup_DeclineBannerTitle", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_DeclineBannerBody {
+            get { return ResourceManager.GetString("CopilotSetup_DeclineBannerBody", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_ManualInstallHint {
+            get { return ResourceManager.GetString("CopilotSetup_ManualInstallHint", resourceCulture)!; }
+        }
     }
 }
