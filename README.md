@@ -14,7 +14,7 @@ Context-aware code review engine designed to support AI on large, real-world pul
 
 CodeReview.MCP is a server that helps AI agents perform code review on large and messy repositories.
 
-It does not compete with AI tools like Copilot or Claude Code.  
+It does not compete with AI tools like Github Copilot or Github Copilot CLI.  
 It acts as a support layer that prepares the problem for them.
 
 ---
@@ -91,7 +91,7 @@ CodeReview.MCP prepares the problem for it.
 ## What this is NOT
 
 - not an AI model
-- not a replacement for Copilot / Claude
+- not a replacement for Copilot
 - not a one-click review tool
 
 This is a control layer for AI agents.
@@ -168,7 +168,7 @@ rebuss-pure init
 
 This will:
 
-- ✔ detect your IDE (VS Code → `.vscode/mcp.json`, Visual Studio → `.vs/mcp.json`, Claude Code → `.mcp.json`)
+- ✔ detect your IDE (VS Code → `.vscode/mcp.json`, Visual Studio → `.vs/mcp.json`)
 - ✔ generate MCP server configuration
 - ✔ copy review prompts to `.github/prompts/`
 - ✔ authenticate via Azure CLI (opens browser for login) or accept a GitHub PAT
@@ -182,7 +182,7 @@ cd /path/to/your/repo
 rebuss-pure init -g
 ```
 
-This writes the MCP configuration to the **user-level** paths (`~/.vs/mcp.json`, `~/.vscode/mcp.json` and `~/.claude.json`) instead of the repository-local directories. The global config points `--repo` to the current repository, so it works for any workspace you open.
+This writes the MCP configuration to the **user-level** paths (`~/.vs/mcp.json` and `~/.vscode/mcp.json`) instead of the repository-local directories. The global config points `--repo` to the current repository, so it works for any workspace you open.
 
 > **Switching between repositories:** If you use multiple repositories, run `rebuss-pure init -g` in the target repository before switching to it. This updates the global configuration to point to the correct workspace.
 
@@ -218,15 +218,6 @@ Works **offline** — no Azure DevOps connection required.
 ---
 
 ## ⚙️ Gateway Token Limit
-
-REBUSS.Pure paginates diff content so a single `get_pr_content` / `get_local_content` response fits inside the **per-tool-result token cap your MCP host enforces**. Different hosts have wildly different limits, so the server picks one automatically based on the `clientInfo.Name` from the MCP `initialize` handshake — **no configuration needed** for supported hosts:
-
-| Host (`clientInfo.Name`) | Auto cap |
-|---|---|
-| Claude Code / claude.ai | **25 000** |
-| Cursor | **24 000** |
-| OpenAI Codex | **20 000** |
-| anything else / unknown | **20 000** (safe fallback) |
 
 **Override (only if you need a different value):** set `ContextWindow:GatewayMaxTokens` in `appsettings.Local.json` next to the server executable:
 
