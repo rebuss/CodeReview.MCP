@@ -102,14 +102,8 @@ internal sealed class CopilotCliSetupStep
             // Authenticate `gh` if necessary.
             if (!await IsGhAuthenticatedAsync(cancellationToken))
             {
-                await _output.WriteLineAsync("A browser window will open to authenticate GitHub CLI.");
-                var loginExit = await RunGhInteractiveAsync("auth login --web", cancellationToken);
-                if (loginExit != 0 || !await IsGhAuthenticatedAsync(cancellationToken))
-                {
-                    await WriteDeclineBannerAsync();
-                    _logger?.LogWarning("copilot-setup: login-failed");
+                if (!await PromptAndRunAuthLoginAsync(cancellationToken))
                     return;
-                }
             }
 
             // User already consented at the entry prompt — install extension directly (Clarification Q2).
@@ -120,14 +114,8 @@ internal sealed class CopilotCliSetupStep
         // Step 2 — `gh` is installed. Check authentication.
         if (!await IsGhAuthenticatedAsync(cancellationToken))
         {
-            await _output.WriteLineAsync("GitHub CLI is installed but not authenticated. A browser window will open.");
-            var loginExit = await RunGhInteractiveAsync("auth login --web", cancellationToken);
-            if (loginExit != 0 || !await IsGhAuthenticatedAsync(cancellationToken))
-            {
-                await WriteDeclineBannerAsync();
-                _logger?.LogWarning("copilot-setup: login-failed");
+            if (!await PromptAndRunAuthLoginAsync(cancellationToken))
                 return;
-            }
         }
 
         // Step 3 — is the `gh-copilot` extension already installed?
@@ -142,6 +130,35 @@ internal sealed class CopilotCliSetupStep
 
         // Step 4 — extension missing. Prompt user.
         await InstallExtensionAsync(cancellationToken, skipPrompt: false);
+    }
+
+    /// <summary>
+    /// Prompts the user to authenticate GitHub CLI via browser, then runs `gh auth login --web`.
+    /// Returns <c>true</c> if authentication succeeded; <c>false</c> if user declined or login failed.
+    /// </summary>
+    private async Task<bool> PromptAndRunAuthLoginAsync(CancellationToken cancellationToken)
+    {
+        await _output.WriteLineAsync("GitHub CLI needs authentication to install the Copilot extension.");
+        await _output.WriteAsync("A browser window will open for GitHub login. Continue? [y/N]: ");
+
+        if (!IsYes(ReadLine()))
+        {
+            await _output.WriteLineAsync();
+            await WriteDeclineBannerAsync();
+            _logger?.LogInformation("copilot-setup: declined-auth");
+            return false;
+        }
+
+        await _output.WriteLineAsync();
+        var loginExit = await RunGhInteractiveAsync("auth login --web", cancellationToken);
+        if (loginExit != 0 || !await IsGhAuthenticatedAsync(cancellationToken))
+        {
+            await WriteDeclineBannerAsync();
+            _logger?.LogWarning("copilot-setup: login-failed");
+            return false;
+        }
+
+        return true;
     }
 
     private async Task InstallExtensionAsync(CancellationToken cancellationToken, bool skipPrompt)
