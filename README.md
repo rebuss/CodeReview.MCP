@@ -118,20 +118,18 @@ Contributions adding analyzers for additional languages are welcome — see `.gi
 
 ---
 
-## 🔒 Security & Privacy
+## 🔒 Security
 
-**Your source code never leaves your machine.**
+CodeReview.MCP acts as a local orchestrator for GitHub Copilot.
 
-REBUSS.Pure runs as a **local process** on your workstation. It does not upload, store, or relay your code to any external service. The MCP server acts as a controlled gateway between your AI agent and the data it actually needs:
+It does not introduce any external services or additional data flows.  
+All AI interactions are handled exclusively through GitHub Copilot, under the license and policies already approved by your organization.
 
-- **Local processing only** — the server runs on `localhost`; no outbound code transmission occurs.
-- **Minimal data exposure** — the AI model receives only **relevant context**, not the full repository.
-- **Azure DevOps stays yours** — when fetching PR data, requests go directly to **your organization's** Azure DevOps APIs using **your credentials**. No intermediary services are involved.
-- **GitHub stays yours** — GitHub API requests go directly to `api.github.com` using **your personal access token**. No intermediary services are involved.
-- **Offline self-review** — local review (`#self-review`) operates entirely without network access. Git operations run against your local repository; nothing is sent anywhere.
-- **No telemetry, no tracking** — the server collects zero usage data and phones home to nobody.
+The MCP server runs locally and communicates only with:
+- your Git provider (Azure DevOps or GitHub)
+- GitHub Copilot (via your existing setup)
 
-> **In short:** REBUSS.Pure gives AI agents *precise, scoped access* to exactly the context they need — and nothing more.
+No code or data is sent to any third-party services beyond what is already used by Copilot.
 
 ---
 
