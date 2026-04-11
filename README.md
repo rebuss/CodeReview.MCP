@@ -4,7 +4,7 @@
 
 # CodeReview.MCP
 
-Context-aware code review engine designed to support AI on large, real-world pull requests.
+Context-aware code review engine designed to support Github Copilot on large, real-world pull requests.
 
 > AI is not the bottleneck. Context is.
 
@@ -14,7 +14,7 @@ Context-aware code review engine designed to support AI on large, real-world pul
 
 CodeReview.MCP is a server that helps AI agents perform code review on large and messy repositories.
 
-It does not compete with AI tools like Github Copilot or Github Copilot CLI.  
+It does not compete with AI tools like Github Copilot or Copilot CLI.  
 It acts as a support layer that prepares the problem for them.
 
 ---
@@ -120,7 +120,7 @@ Contributions adding analyzers for additional languages are welcome — see `.gi
 
 ## 🔒 Security
 
-CodeReview.MCP acts as a local orchestrator for GitHub Copilot.
+CodeReview.MCP acts as a local orchestrator for GitHub Copilot. It runs as a local process on your workstation. 
 
 It does not introduce any external services or additional data flows.  
 All AI interactions are handled exclusively through GitHub Copilot, under the license and policies already approved by your organization.
