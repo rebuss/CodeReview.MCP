@@ -340,13 +340,4 @@ internal static class PlainTextFormatter
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Formats the content-only mode indicator header. Prepended to the existing
-    /// enriched-diff response when the Copilot path is not taken, so the IDE prompt
-    /// can detect "same as before" and keep its current page-by-page workflow.
-    /// </summary>
-    public static string FormatContentOnlyModeHeader()
-    {
-        return Resources.ContentOnlyModeHeader;
-    }
 }

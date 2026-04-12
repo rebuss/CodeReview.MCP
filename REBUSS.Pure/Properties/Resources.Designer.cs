@@ -868,8 +868,8 @@ namespace REBUSS.Pure.Properties {
             get { return ResourceManager.GetString("CopilotReviewModeHeader", resourceCulture)!; }
         }
 
-        internal static string ContentOnlyModeHeader {
-            get { return ResourceManager.GetString("ContentOnlyModeHeader", resourceCulture)!; }
+        internal static string ErrorCopilotRequired {
+            get { return ResourceManager.GetString("ErrorCopilotRequired", resourceCulture)!; }
         }
 
         internal static string LogCopilotReviewUnavailable {

@@ -21,10 +21,8 @@ namespace REBUSS.Pure.Tests.Tools;
 
 public class GetLocalContentToolHandlerTests
 {
-    private readonly ILocalReviewProvider _localProvider = Substitute.For<ILocalReviewProvider>();
     private readonly IContextBudgetResolver _budgetResolver = Substitute.For<IContextBudgetResolver>();
     private readonly ILocalEnrichmentOrchestrator _enrichmentOrchestrator = Substitute.For<ILocalEnrichmentOrchestrator>();
-    private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
     private readonly ICopilotAvailabilityDetector _copilotAvailability = Substitute.For<ICopilotAvailabilityDetector>();
     private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator = Substitute.For<ICopilotReviewOrchestrator>();
     private readonly IProgressReporter _progressReporter = Substitute.For<IProgressReporter>();
@@ -45,20 +43,20 @@ public class GetLocalContentToolHandlerTests
             ["src/B.cs"] = "=== src/B.cs ===\n+new line B",
         };
 
+    private static CopilotReviewResult BuildDefaultCopilotResult() => new()
+    {
+        ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
+        PageReviews = new[]
+        {
+            CopilotPageReviewResult.Success(1, "Review for page 1: LGTM", 1),
+        },
+        CompletedAt = DateTimeOffset.UtcNow,
+    };
+
     public GetLocalContentToolHandlerTests()
     {
         _budgetResolver.Resolve(Arg.Any<int?>(), Arg.Any<string?>())
             .Returns(new BudgetResolutionResult(200000, 140000, BudgetSource.Default, Array.Empty<string>()));
-
-        var pageSlice = new PageSlice(1, 0, 2,
-            new[]
-            {
-                new PageSliceItem(0, PackingItemStatus.Included, 500),
-                new PageSliceItem(1, PackingItemStatus.Included, 500)
-            },
-            1000, 139000);
-        _pageAllocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
-            .Returns(new PageAllocation(new[] { pageSlice }, 1, 2));
 
         // Default: enrichment returns immediately with sample data.
         _enrichmentOrchestrator.TryGetSnapshot(Arg.Any<string>()).Returns((LocalEnrichmentJobSnapshot?)null);
@@ -70,14 +68,36 @@ public class GetLocalContentToolHandlerTests
                 Scope = "working-tree",
                 SortedCandidates = SampleCandidates,
                 EnrichedByPath = SampleEnrichedByPath,
-                Allocation = new PageAllocation(new[] { pageSlice }, 1, 2),
+                Allocation = new PageAllocation(new[]
+                {
+                    new PageSlice(1, 0, 2,
+                        new[]
+                        {
+                            new PageSliceItem(0, PackingItemStatus.Included, 500),
+                            new PageSliceItem(1, PackingItemStatus.Included, 500)
+                        },
+                        1000, 139000)
+                }, 1, 2),
                 SafeBudgetTokens = 140000,
                 CompletedAt = DateTimeOffset.UtcNow,
             });
 
-        // Default: Copilot not available (content-only path).
+        // Default: Copilot available — the handler now requires Copilot.
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>())
-            .Returns(false);
+            .Returns(true);
+
+        // Default copilot review result.
+        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(BuildDefaultCopilotResult());
+        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+            .Returns(new CopilotReviewSnapshot
+            {
+                ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
+                Status = CopilotReviewStatus.Ready,
+                TotalPages = 1,
+                CompletedPages = 1,
+                Result = BuildDefaultCopilotResult(),
+            });
 
         _progressReporter.ReportAsync(Arg.Any<object?>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
@@ -88,10 +108,8 @@ public class GetLocalContentToolHandlerTests
             Options.Create(_workflowOpts));
 
         _handler = new GetLocalContentToolHandler(
-            _localProvider,
             _budgetResolver,
             _enrichmentOrchestrator,
-            _pageAllocator,
             Options.Create(_workflowOpts),
             _copilotAvailability,
             _copilotReviewOrchestrator,
@@ -104,37 +122,6 @@ public class GetLocalContentToolHandlerTests
         string.Join("\n", blocks.Cast<TextContentBlock>().Select(b => b.Text));
 
     // --- Happy path ---
-
-    [Fact]
-    public async Task ExecuteAsync_SinglePage_ReturnsAllFiles()
-    {
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var text = AllText(blocks);
-
-        Assert.Contains("src/A.cs", text);
-        Assert.Contains("src/B.cs", text);
-
-        var lastBlock = blocks.Cast<TextContentBlock>().Last().Text;
-        Assert.Contains("Page 1 of 1", lastBlock);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_IncludesRepositoryRoot()
-    {
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var headerText = AllText(blocks);
-
-        Assert.Contains("C:\\Projects\\MyRepo", headerText);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_IncludesCurrentBranch()
-    {
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var headerText = AllText(blocks);
-
-        Assert.Contains("feature/my-branch", headerText);
-    }
 
     [Fact]
     public async Task ExecuteAsync_DefaultScope_IsWorkingTree()
@@ -167,27 +154,6 @@ public class GetLocalContentToolHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Summary_HasCorrectValues()
-    {
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var lastBlock = blocks.Cast<TextContentBlock>().Last().Text;
-
-        Assert.Contains("Page 1 of 1", lastBlock);
-        Assert.Contains("hasMore: false", lastBlock);
-        Assert.Contains("2/2 files", lastBlock);
-        Assert.Contains("~1000 tokens", lastBlock);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_Summary_HasCategories()
-    {
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var text = AllText(blocks);
-
-        Assert.Contains("src/A.cs", text);
-    }
-
-    [Fact]
     public async Task ExecuteAsync_TriggersAndWaitsForEnrichment()
     {
         await _handler.ExecuteAsync(pageNumber: 1);
@@ -196,30 +162,19 @@ public class GetLocalContentToolHandlerTests
         await _enrichmentOrchestrator.Received(1).WaitForEnrichmentAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // --- Error handling ---
+    // --- Copilot not available — throws McpException ---
 
     [Fact]
-    public async Task ExecuteAsync_NullPageNumber_ThrowsMcpException()
+    public async Task ExecuteAsync_CopilotNotAvailable_ThrowsMcpException()
     {
-        var ex = await Assert.ThrowsAsync<McpException>(
-            () => _handler.ExecuteAsync(pageNumber: null));
-        Assert.Contains("pageNumber", ex.Message);
-    }
+        _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>())
+            .Returns(false);
 
-    [Fact]
-    public async Task ExecuteAsync_ZeroPageNumber_ThrowsMcpException()
-    {
         var ex = await Assert.ThrowsAsync<McpException>(
-            () => _handler.ExecuteAsync(pageNumber: 0));
-        Assert.Contains("pageNumber must be >= 1", ex.Message);
-    }
+            () => _handler.ExecuteAsync(pageNumber: 1));
 
-    [Fact]
-    public async Task ExecuteAsync_PageExceedsTotalPages_ThrowsMcpException()
-    {
-        var ex = await Assert.ThrowsAsync<McpException>(
-            () => _handler.ExecuteAsync(pageNumber: 99));
-        Assert.Contains("exceeds total pages", ex.Message);
+        Assert.Contains("gh copilot", ex.Message);
+        Assert.Contains("CopilotReview:Enabled", ex.Message);
     }
 
     // --- Budget forwarding ---
@@ -232,7 +187,7 @@ public class GetLocalContentToolHandlerTests
         _budgetResolver.Received(1).Resolve(50000, "gpt-4o");
     }
 
-    // --- T026: Copilot available -> copilot-assisted header ---
+    // --- Copilot available -> copilot-assisted header ---
 
     [Fact]
     public async Task ExecuteAsync_CopilotAvailable_ResponseHasCopilotAssistedHeader()
@@ -267,7 +222,7 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("[review-mode: copilot-assisted]", text);
     }
 
-    // --- T027: Partial Copilot failure -> response includes succeeded and failed blocks ---
+    // --- Partial Copilot failure -> response includes succeeded and failed blocks ---
 
     [Fact]
     public async Task ExecuteAsync_PartialCopilotFailure_ResponseIncludesSucceededAndFailedBlocks()
@@ -307,7 +262,7 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("src/C.cs", text);
     }
 
-    // --- T028: pageNumber=3 in copilot mode -> all summaries returned (pageNumber ignored) ---
+    // --- pageNumber=3 in copilot mode -> all summaries returned (pageNumber ignored) ---
 
     [Fact]
     public async Task ExecuteAsync_CopilotMode_PageNumber3_AllSummariesReturned()
@@ -346,10 +301,10 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("[review-mode: copilot-assisted]", text);
     }
 
-    // --- T031: Progress notifications emitted at each stage ---
+    // --- Progress notifications emitted at each stage ---
 
     [Fact]
-    public async Task ExecuteAsync_ContentOnly_ProgressNotificationsEmitted()
+    public async Task ExecuteAsync_ProgressNotificationsEmitted()
     {
         var progress = Substitute.For<IProgress<ProgressNotificationValue>>();
 
@@ -360,7 +315,7 @@ public class GetLocalContentToolHandlerTests
             .ReportAsync(Arg.Any<object?>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // --- T032: Copilot reviewing 5 pages -> incremental notifications ---
+    // --- Copilot reviewing 5 pages -> incremental notifications ---
 
     [Fact]
     public async Task ExecuteAsync_CopilotReview5Pages_IncrementalNotifications()
@@ -403,7 +358,7 @@ public class GetLocalContentToolHandlerTests
             .ReportAsync(Arg.Any<object?>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    // --- T033: No progress token -> completes normally ---
+    // --- No progress token -> completes normally ---
 
     [Fact]
     public async Task ExecuteAsync_NoProgressToken_CompletesNormally()
@@ -413,53 +368,10 @@ public class GetLocalContentToolHandlerTests
 
         Assert.NotEmpty(blocks);
         var text = AllText(blocks);
-        Assert.Contains("src/A.cs", text);
+        Assert.Contains("[review-mode: copilot-assisted]", text);
     }
 
-    // --- T034: Content-only path verified (content-only header present) ---
-
-    [Fact]
-    public async Task ExecuteAsync_ContentOnly_HasContentOnlyModeHeader()
-    {
-        // Default setup: Copilot not available -> content-only path.
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var firstBlockText = blocks.Cast<TextContentBlock>().First().Text;
-
-        Assert.Contains("[review-mode: content-only]", firstBlockText);
-    }
-
-    // --- T035: Copilot not available -> content-only mode ---
-
-    [Fact]
-    public async Task ExecuteAsync_CopilotNotAvailable_FallsBackToContentOnly()
-    {
-        _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>())
-            .Returns(false);
-
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var text = AllText(blocks);
-
-        Assert.Contains("[review-mode: content-only]", text);
-        Assert.DoesNotContain("[review-mode: copilot-assisted]", text);
-    }
-
-    // --- T036: CopilotReview:Enabled = false -> content-only ---
-
-    [Fact]
-    public async Task ExecuteAsync_CopilotDisabledByConfig_ContentOnlyMode()
-    {
-        // When CopilotReview is disabled, IsAvailableAsync returns false.
-        _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>())
-            .Returns(false);
-
-        var blocks = (await _handler.ExecuteAsync(pageNumber: 1)).ToList();
-        var text = AllText(blocks);
-
-        Assert.Contains("[review-mode: content-only]", text);
-        Assert.DoesNotContain("copilot-assisted", text);
-    }
-
-    // --- T037: Timeout -> friendly "still preparing" ---
+    // --- Timeout -> friendly "still preparing" ---
 
     [Fact]
     public async Task ExecuteAsync_EnrichmentTimeout_ReturnsFriendlyStillPreparing()
@@ -478,10 +390,8 @@ public class GetLocalContentToolHandlerTests
         var shortTimeoutOpts = new WorkflowOptions { ContentInternalTimeoutMs = 1, CopilotReviewProgressPollingIntervalMs = 100 };
         var waiter = new CopilotReviewWaiter(_copilotReviewOrchestrator, _progressReporter, Options.Create(shortTimeoutOpts));
         var handler = new GetLocalContentToolHandler(
-            _localProvider,
             _budgetResolver,
             _enrichmentOrchestrator,
-            _pageAllocator,
             Options.Create(shortTimeoutOpts),
             _copilotAvailability,
             _copilotReviewOrchestrator,
@@ -495,7 +405,7 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("still being prepared", text);
     }
 
-    // --- T038: Failure -> friendly failure status ---
+    // --- Failure -> friendly failure status ---
 
     [Fact]
     public async Task ExecuteAsync_FailedSnapshot_ReturnsFriendlyFailureStatus()
@@ -520,7 +430,7 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("Disk read error", text);
     }
 
-    // --- T039: Strict mode -> CopilotUnavailableException propagated ---
+    // --- Strict mode -> CopilotUnavailableException propagated ---
 
     [Fact]
     public async Task ExecuteAsync_StrictMode_CopilotUnavailableExceptionPropagated()

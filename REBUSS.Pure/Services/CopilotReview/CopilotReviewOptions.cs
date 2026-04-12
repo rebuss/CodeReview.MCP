@@ -12,9 +12,9 @@ public sealed class CopilotReviewOptions
 
     /// <summary>
     /// Master switch for the copilot-assisted review flow. When <c>false</c>, the
-    /// availability detector short-circuits to <c>false</c> without attempting to
-    /// start the SDK client, and every <c>get_pr_content</c> call uses the existing
-    /// content-only path (FR-003, FR-013).
+    /// availability detector short-circuits to <c>false</c> and all review tool
+    /// calls return an error instructing the user to enable Copilot SDK integration.
+    /// There is no content-only fallback.
     /// </summary>
     public bool Enabled { get; set; } = true;
 

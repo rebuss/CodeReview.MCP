@@ -45,7 +45,7 @@ internal sealed class CopilotAvailabilityDetector : ICopilotAvailabilityDetector
         {
             // FR-015 strict mode: throw on real verification failures only.
             // FR-016: disabled-by-config is NOT a verification failure — never throw for it
-            // even in strict mode, preserve today's content-only fallback behaviour.
+            // even in strict mode; the handler surfaces its own error for disabled-by-config.
             throw new CopilotUnavailableException(verdict);
         }
 

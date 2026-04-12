@@ -124,13 +124,6 @@ public class PlainTextFormatterTests
         Assert.Contains("Reason: network timeout", text);
     }
 
-    [Fact]
-    public void FormatContentOnlyModeHeader_ContainsContentOnlyLabel()
-    {
-        var text = PlainTextFormatter.FormatContentOnlyModeHeader();
-        Assert.Equal("[review-mode: content-only]", text);
-    }
-
     // ─── T029: FormatCopilotReviewHeader string overload tests ──────────────────
 
     [Fact]

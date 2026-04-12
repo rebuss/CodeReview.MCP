@@ -370,8 +370,8 @@ summarization) will not be available until the Copilot CLI is installed.</value>
   <data name="CopilotReviewModeHeader" xml:space="preserve">
     <value>[review-mode: copilot-assisted]</value>
   </data>
-  <data name="ContentOnlyModeHeader" xml:space="preserve">
-    <value>[review-mode: content-only]</value>
+  <data name="ErrorCopilotRequired" xml:space="preserve">
+    <value>Copilot SDK is required for code review. Ensure gh copilot is installed and authenticated, and CopilotReview:Enabled is set to true.</value>
   </data>
   <data name="LogCopilotReviewUnavailable" xml:space="preserve">
     <value>Copilot review layer unavailable: {Reason}. Remediation: {Remediation}. TokenSource={TokenSource}, ConfiguredModel={ConfiguredModel}, EntitledModels=[{EntitledModels}], Login={Login}, Host={Host}</value>

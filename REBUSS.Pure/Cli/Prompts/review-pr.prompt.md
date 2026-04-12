@@ -1,4 +1,4 @@
-# Pull Request Code Review (paginated + user confirmation)
+# Pull Request Code Review (Copilot-Assisted)
 
 You are invoked with a message that begins with a pull request number (digits before the first space).
 If missing, ask the user to provide a valid PR number and stop.
@@ -8,18 +8,36 @@ Extract:
 
 Use MCP server: REBUSS.Pure.
 
-Your job: perform a professional code review of the PR.
+Your job: organize and present the Copilot-assisted code review of the PR.
 
 ---
 
-## Response Mode Detection (feature 013)
+## Workflow
 
-After calling `get_pr_content`, **always inspect the first content block** for a mode indicator:
+### Step 1 — Load PR metadata
 
-### If the first block begins with `[review-mode: copilot-assisted]`
+Call:
+`get_pr_metadata(prNumber, modelName: "<model>" or maxTokens)`
 
-The MCP server has already performed the code review using GitHub Copilot. The response
-contains **review summaries for each page — NOT raw diff content**. Your task changes:
+Use it to determine:
+- base.sha and head.sha
+- general PR scope (title, description)
+
+Do NOT fetch any content before metadata.
+Always call get_pr_metadata — never infer PR scope, title, or content from conversation history or branch names.
+
+### Step 2 — Get Copilot review
+
+Call:
+`get_pr_content(prNumber)`
+
+The server performs the review using GitHub Copilot and returns pre-reviewed summaries.
+
+**If the call succeeds**: the response contains `[review-mode: copilot-assisted]` followed by page review blocks (`=== Page N Review ===`).
+
+**If the call returns an error about Copilot SDK**: inform the user that Copilot must be installed and authenticated. Suggest running `gh copilot` setup. Do not attempt alternative review methods.
+
+### Step 3 — Organize findings
 
 1. Read all `=== Page N Review ===` blocks.
 2. Organize findings **by severity**:
@@ -28,61 +46,12 @@ contains **review summaries for each page — NOT raw diff content**. Your task 
    - **Minor Suggestions** — group all minor findings from all pages
 3. Remove duplicates (same finding reported from multiple pages).
 4. Produce one coherent review report in the Output Structure format below.
-5. **Do NOT** ask the user to continue to the next page — all pages are already reviewed.
-6. If any `=== Page N Review (FAILED) ===` blocks are present, list the failed pages
-   (with their file paths) in a dedicated "Manual Follow-up Needed" section at the end.
-
-### If the first block begins with `[review-mode: content-only]`
-
-Standard flow — review the diff content yourself, page by page with user confirmation.
-(Existing workflow below applies unchanged.)
+5. If any `=== Page N Review (FAILED) ===` blocks are present, list the failed pages (with their file paths) in a dedicated "Manual Follow-up Needed" section at the end.
 
 ---
 
-# Workflow
+## Review Focus
 
-## 1. Load PR metadata first
-Call:
-get_pr_metadata(prNumber, modelName: "<model>" or maxTokens)
-
-Use it to determine:
-- base.sha and head.sha
-- totalPages from contentPaging.totalPages
-- general PR scope (title, description)
-
-Do NOT fetch any page content before metadata.
-Always call get_pr_metadata — never infer PR scope, title, or content from conversation history or branch names.
-
----
-
-## 2. Page-by-page review with confirmation
-Start from page 1.
-
-For each page:
-1. Fetch page:
-   get_pr_content(prNumber, pageNumber, same modelName/maxTokens)
-2. Review files on this page:
-   - analyze diff hunks
-   - handle skipped diffs by skipReason:
-     | skipReason | Meaning | Action |
-     |---|---|---|
-     | binary | Binary file (image, DLL, etc.) | Note as skipped; do not retrieve |
-     | generated | Auto-generated code (designer, .g.cs) | Note as skipped; do not retrieve |
-     | deleted | File removed entirely | Note deletion; no content to review |
-     | renamed | Rename/move without content change | Note rename; no diff to review |
-     | fullRewrite | Diff too large / full-file rewrite | Note as full rewrite; review based on available diff context |
-3. After finishing this page:
-   **Ask the user:** “Continue to next page (page X+1)?”
-
-Only load the next page IF the user answers *yes*.
-
-Stop otherwise.
-
-Never pre-load future pages.
-
----
-
-# Review Focus
 Look for issues affecting:
 - correctness, regressions, null safety
 - concurrency / thread safety
@@ -98,12 +67,12 @@ Ignore minor style issues unless they affect correctness or maintainability.
 
 ---
 
-# Output Structure
+## Output Structure
 
-## Verdict
+### Verdict
 Overall summary and risk level.
 
-## Critical Issues
+### Critical Issues
 For each:
 - file
 - severity
@@ -111,25 +80,26 @@ For each:
 - why it matters
 - suggested fix
 
-## Important Improvements
+### Important Improvements
 Non-critical but valuable improvements.
 
-## Minor Suggestions
+### Minor Suggestions
 Optional enhancements.
 
-## Review Notes
-Pages reviewed so far and skipped files with reasons.
+### Review Notes
+Total pages reviewed and any failed pages with reasons.
 
 ---
 
-# Behavior Rules
+## Behavior Rules
 - Be precise.
 - Do not invent missing context.
 - Label uncertain findings as potential risks.
 - Prefer fewer strong findings over many weak ones.
 - Minimize context usage.
+- Do NOT ask the user to confirm between pages — all pages are reviewed in a single call.
 
-# STRICT: No Repository Exploration
+## STRICT: No Repository Exploration
 You are **absolutely forbidden** from exploring, cloning, checking out, or browsing the repository in any way.
 - Do **NOT** use terminal commands (git, ls, find, cat, etc.) to access the repository.
 - Do **NOT** use IDE tools, file search, code search, symbol search, or any workspace-level tool to browse the codebase.

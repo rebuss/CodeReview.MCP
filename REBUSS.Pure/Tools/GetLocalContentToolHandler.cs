@@ -6,7 +6,6 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
-using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Properties;
@@ -17,13 +16,16 @@ using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
+    /// <summary>
+    /// Handles the execution of the get_local_content MCP tool. Triggers Copilot
+    /// review of enriched local changes and returns page review summaries.
+    /// Copilot SDK is required — there is no content-only fallback.
+    /// </summary>
     [McpServerToolType]
     public class GetLocalContentToolHandler
     {
-        private readonly ILocalReviewProvider _localProvider;
         private readonly IContextBudgetResolver _budgetResolver;
         private readonly ILocalEnrichmentOrchestrator _enrichmentOrchestrator;
-        private readonly IPageAllocator _pageAllocator;
         private readonly IOptions<WorkflowOptions> _workflowOptions;
         private readonly ICopilotAvailabilityDetector _copilotAvailability;
         private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator;
@@ -32,10 +34,8 @@ namespace REBUSS.Pure.Tools
         private readonly ILogger<GetLocalContentToolHandler> _logger;
 
         public GetLocalContentToolHandler(
-            ILocalReviewProvider localProvider,
             IContextBudgetResolver budgetResolver,
             ILocalEnrichmentOrchestrator enrichmentOrchestrator,
-            IPageAllocator pageAllocator,
             IOptions<WorkflowOptions> workflowOptions,
             ICopilotAvailabilityDetector copilotAvailability,
             ICopilotReviewOrchestrator copilotReviewOrchestrator,
@@ -43,10 +43,8 @@ namespace REBUSS.Pure.Tools
             IProgressReporter progressReporter,
             ILogger<GetLocalContentToolHandler> logger)
         {
-            _localProvider = localProvider;
             _budgetResolver = budgetResolver;
             _enrichmentOrchestrator = enrichmentOrchestrator;
-            _pageAllocator = pageAllocator;
             _workflowOptions = workflowOptions;
             _copilotAvailability = copilotAvailability;
             _copilotReviewOrchestrator = copilotReviewOrchestrator;
@@ -56,24 +54,18 @@ namespace REBUSS.Pure.Tools
         }
 
         [McpServerTool(Name = "get_local_content"), Description(
-            "Returns plain-text diff content for a specific page of local uncommitted changes. " +
-            "One content block per file with -/+/space prefixed lines, plus a pagination footer. " +
-            "Reuses background enrichment when available. If enrichment is still running and " +
-            "cannot complete within the internal timeout, returns a friendly 'still preparing' " +
-            "status block — never a raw timeout error.")]
+            "Returns Copilot-assisted review summaries for local uncommitted changes. " +
+            "Reuses background enrichment when available. If enrichment is still running " +
+            "and cannot complete within the internal timeout, returns a friendly 'still " +
+            "preparing' status block — never a raw timeout error.")]
         public async Task<IEnumerable<ContentBlock>> ExecuteAsync(
-            [Description("Page number to retrieve (1-based)")] int? pageNumber = null,
+            [Description("Page number (accepted for compatibility, ignored — all pages returned)")] int? pageNumber = null,
             [Description("Review scope: 'working-tree' (default), 'staged', or a branch/ref name")] string? scope = null,
             [Description("Model name for context budget resolution")] string? modelName = null,
             [Description("Explicit token budget override")] int? maxTokens = null,
             IProgress<ProgressNotificationValue>? progress = null,
             CancellationToken cancellationToken = default)
         {
-            if (pageNumber == null)
-                throw new McpException(Resources.ErrorMissingRequiredPageNumber);
-            if (pageNumber < 1)
-                throw new McpException(Resources.ErrorPageNumberMustBePositive);
-
             try
             {
                 var parsedScope = LocalReviewScope.Parse(scope);
@@ -92,13 +84,11 @@ namespace REBUSS.Pure.Tools
                 if (snapshot is { Status: LocalEnrichmentStatus.Failed, Failure: not null })
                 {
                     _logger.LogInformation("Local content request hit Failed snapshot (scope '{Scope}'); returning friendly status", scopeString);
-                    return BuildFriendlyFailureBlocks(scopeString, pageNumber.Value, snapshot.Failure!);
+                    return BuildFriendlyFailureBlocks(scopeString, snapshot.Failure!);
                 }
 
-                // Trigger enrichment (idempotent — reuses existing job for same scope).
                 _enrichmentOrchestrator.TriggerEnrichment(scopeString, safeBudget);
 
-                // Wait with our own internal timeout. The background body keeps running.
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 linkedCts.CancelAfter(_workflowOptions.Value.ContentInternalTimeoutMs);
 
@@ -115,7 +105,7 @@ namespace REBUSS.Pure.Tools
                     _logger.LogInformation(
                         "Local content wait expired after {TimeoutMs}ms (scope '{Scope}'); returning friendly status",
                         _workflowOptions.Value.ContentInternalTimeoutMs, scopeString);
-                    return BuildFriendlyStillPreparingBlocks(scopeString, pageNumber.Value);
+                    return BuildFriendlyStillPreparingBlocks(scopeString);
                 }
 
                 await _progressReporter.ReportAsync(progress, 2, null,
@@ -135,47 +125,27 @@ namespace REBUSS.Pure.Tools
                     throw;
                 }
 
-                if (copilotAvailable)
-                {
-                    await _progressReporter.ReportAsync(progress, 3, null,
-                        $"Copilot review started for local changes ({scopeString})", cancellationToken);
+                if (!copilotAvailable)
+                    throw new McpException(Resources.ErrorCopilotRequired);
 
-                    var reviewKey = $"local:{scopeString}:{result.RepositoryRoot}";
-                    _copilotReviewOrchestrator.TriggerReview(reviewKey, result);
+                await _progressReporter.ReportAsync(progress, 3, null,
+                    $"Copilot review started for local changes ({scopeString})", cancellationToken);
 
-                    var copilotResult = await _copilotReviewWaiter.WaitWithProgressAsync(
-                        reviewKey, progress, 4, cancellationToken);
+                var reviewKey = $"local:{scopeString}:{result.RepositoryRoot}";
+                _copilotReviewOrchestrator.TriggerReview(reviewKey, result);
 
-                    var copilotBlocks = BuildCopilotAssistedBlocks(scopeString, copilotResult);
+                var copilotResult = await _copilotReviewWaiter.WaitWithProgressAsync(
+                    reviewKey, progress, 4, cancellationToken);
 
-                    sw.Stop();
-                    _logger.LogInformation(
-                        "Local copilot-assisted content returned in {Ms}ms (scope '{Scope}', {Pages} pages, {Succeeded} ok, {Failed} failed)",
-                        sw.ElapsedMilliseconds, scopeString,
-                        copilotResult.TotalPages, copilotResult.SucceededPages, copilotResult.FailedPages);
-
-                    return copilotBlocks;
-                }
-
-                // Content-only path: repaginate per-call.
-                var allocation = _pageAllocator.Allocate(result.SortedCandidates, safeBudget);
-
-                if (pageNumber > allocation.TotalPages)
-                    throw new McpException(
-                        string.Format(Resources.ErrorPageNumberExceedsTotalPages, pageNumber, allocation.TotalPages));
-
-                var pageSlice = allocation.Pages[pageNumber.Value - 1];
-                var blocks = BuildContentOnlyBlocks(pageSlice, pageNumber.Value, allocation, result);
+                var copilotBlocks = BuildCopilotAssistedBlocks(scopeString, copilotResult);
 
                 sw.Stop();
+                _logger.LogInformation(
+                    "Local copilot-assisted content returned in {Ms}ms (scope '{Scope}', {Pages} pages, {Succeeded} ok, {Failed} failed)",
+                    sw.ElapsedMilliseconds, scopeString,
+                    copilotResult.TotalPages, copilotResult.SucceededPages, copilotResult.FailedPages);
 
-                await _progressReporter.ReportAsync(progress, 4, 4,
-                    $"Content ready — page {pageNumber}/{allocation.TotalPages}", cancellationToken);
-
-                _logger.LogInformation(Resources.LogGetLocalContentCompleted,
-                    pageNumber, allocation.TotalPages, pageSlice.Items.Count, sw.ElapsedMilliseconds);
-
-                return blocks;
+                return copilotBlocks;
             }
             catch (McpException) { throw; }
             catch (Exception ex)
@@ -183,48 +153,6 @@ namespace REBUSS.Pure.Tools
                 _logger.LogError(ex, Resources.LogGetLocalContentError, pageNumber, scope);
                 throw new McpException(string.Format(Resources.ErrorRetrievingLocalContent, ex.Message));
             }
-        }
-
-        private List<ContentBlock> BuildContentOnlyBlocks(
-            Core.Models.Pagination.PageSlice pageSlice, int pageNumber,
-            Core.Models.Pagination.PageAllocation allocation, LocalEnrichmentResult result)
-        {
-            var blocks = new List<ContentBlock>(pageSlice.Items.Count + 3);
-
-            // Mode indicator (FR-006).
-            blocks.Add(new TextContentBlock { Text = PlainTextFormatter.FormatContentOnlyModeHeader() });
-
-            // Local content header.
-            blocks.Add(new TextContentBlock
-            {
-                Text = PlainTextFormatter.FormatLocalContentHeader(
-                    result.RepositoryRoot,
-                    result.CurrentBranch,
-                    result.Scope)
-            });
-
-            // Per-file enriched text.
-            var pagePathsOrdered = new List<string>(pageSlice.Items.Count);
-            foreach (var item in pageSlice.Items)
-            {
-                var path = result.SortedCandidates[item.OriginalIndex].Path;
-                pagePathsOrdered.Add(path);
-                if (result.EnrichedByPath.TryGetValue(path, out var enrichedText))
-                    blocks.Add(new TextContentBlock { Text = enrichedText });
-            }
-
-            var categories = BuildCategoryBreakdown(pagePathsOrdered, result.SortedCandidates);
-
-            blocks.Add(new TextContentBlock
-            {
-                Text = PlainTextFormatter.FormatSimplePaginationBlock(
-                    pageNumber, allocation.TotalPages,
-                    pagePathsOrdered.Count, allocation.TotalItems,
-                    pageSlice.BudgetUsed,
-                    categories)
-            });
-
-            return blocks;
         }
 
         private static List<ContentBlock> BuildCopilotAssistedBlocks(
@@ -252,7 +180,7 @@ namespace REBUSS.Pure.Tools
             return blocks;
         }
 
-        private static List<ContentBlock> BuildFriendlyStillPreparingBlocks(string scopeString, int pageNumber)
+        private static List<ContentBlock> BuildFriendlyStillPreparingBlocks(string scopeString)
         {
             return
             [
@@ -261,12 +189,12 @@ namespace REBUSS.Pure.Tools
                     Text = PlainTextFormatter.FormatFriendlyStatus(
                         headline: "Response is still being prepared",
                         explanation: $"Background enrichment for local changes ({scopeString}) is still running.",
-                        suggestedNextAction: $"Retry get_local_content with pageNumber={pageNumber} in a moment")
+                        suggestedNextAction: "Retry get_local_content in a moment")
                 }
             ];
         }
 
-        private static List<ContentBlock> BuildFriendlyFailureBlocks(string scopeString, int pageNumber, LocalEnrichmentFailure failure)
+        private static List<ContentBlock> BuildFriendlyFailureBlocks(string scopeString, LocalEnrichmentFailure failure)
         {
             return
             [
@@ -275,23 +203,9 @@ namespace REBUSS.Pure.Tools
                     Text = PlainTextFormatter.FormatFriendlyStatus(
                         headline: $"Background enrichment failed for local changes ({scopeString})",
                         explanation: $"{failure.ExceptionTypeName}: {failure.SanitizedMessage}",
-                        suggestedNextAction: $"Retry get_local_content with pageNumber={pageNumber}")
+                        suggestedNextAction: "Retry get_local_content")
                 }
             ];
-        }
-
-        private static Dictionary<string, int> BuildCategoryBreakdown(
-            List<string> pagePaths, IReadOnlyList<PackingCandidate> sortedCandidates)
-        {
-            var categories = new Dictionary<string, int>();
-            var pagePathSet = new HashSet<string>(pagePaths, StringComparer.OrdinalIgnoreCase);
-            foreach (var candidate in sortedCandidates)
-            {
-                if (!pagePathSet.Contains(candidate.Path)) continue;
-                var key = candidate.Category.ToString().ToLowerInvariant();
-                categories[key] = categories.GetValueOrDefault(key) + 1;
-            }
-            return categories;
         }
     }
 }

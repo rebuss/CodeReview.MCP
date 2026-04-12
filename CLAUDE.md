@@ -26,6 +26,7 @@ tests/
 C# 14 on .NET 10 (`net10.0`), `<Nullable>enable</Nullable>`: Follow standard conventions
 
 ## Recent Changes
+- 020-remove-content-only: Removed legacy content-only review fallback — Copilot SDK is now the sole review mechanism. `FormatContentOnlyModeHeader()` deleted, prompts simplified, `IPageAllocator` removed from content handlers, unavailable Copilot returns error with remediation
 - 019-unified-self-review: Unified self-review pipeline — `IEnrichmentResult` interface, `LocalEnrichmentOrchestrator`, `CopilotReviewWaiter`, generalized `CopilotReviewOrchestrator` (string keys), rewritten `GetLocalContentToolHandler` with Copilot SDK + progress notifications + mode headers
 - 015-api-call-optimization: Added C# 14 on .NET 10 (`net10.0`), `<Nullable>enable</Nullable>` + `GitHubApiClient` (HTTP via `IHttpClientFactory`), `GitHubDiffProvider`, `CopilotClientProvider` (Copilot SDK), `CopilotReviewOptions`
 - 014-log-noise-reduction: Added C# 14 on .NET 10 (`net10.0`), `<Nullable>enable</Nullable>` + Microsoft.Extensions.Logging, Microsoft.Extensions.Http (Polly via `AddStandardResilienceHandler`)
