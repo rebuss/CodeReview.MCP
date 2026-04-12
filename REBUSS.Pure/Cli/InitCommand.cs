@@ -1,8 +1,13 @@
 using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Configuration;
+using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Properties;
+using REBUSS.Pure.Services.CopilotReview;
 using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
 using GitHubNames = REBUSS.Pure.GitHub.Names;
 
@@ -10,8 +15,7 @@ namespace REBUSS.Pure.Cli;
 
 /// <summary>
 /// Generates MCP server configuration file(s) in the current Git repository
-/// and copies review prompt files to <c>.github/prompts/</c> and instruction files
-/// to <c>.github/instructions/</c> so that MCP clients
+/// and copies review prompt files to <c>.github/prompts/</c> so that MCP clients
 /// (e.g. VS Code, Visual Studio, GitHub Copilot) can launch the server and use the prompts.
 /// <para>
 /// When no <c>--pat</c> is provided, the command runs <c>az login</c> so the user
@@ -23,8 +27,7 @@ namespace REBUSS.Pure.Cli;
 /// When <c>--ide</c> is not specified, the target is determined by IDE auto-detection:
 /// VS Code → <c>.vscode/mcp.json</c>;
 /// Visual Studio → <c>.vs/mcp.json</c>;
-/// both written when both IDEs are detected.
-/// Falls back to VS Code when no IDE markers are found.
+/// VS Code + Visual Studio are written when both are detected or when no markers are found.
 /// </para>
 /// </summary>
 public class InitCommand : ICliCommand
@@ -149,10 +152,49 @@ public class InitCommand : ICliCommand
         _gitHubConfigStore?.Clear();
 
         // Authenticate via the appropriate CLI flow after configs and prompts are already on disk
+        string? ghCliPathOverride = null;
         if (string.IsNullOrWhiteSpace(_pat))
         {
             var authFlow = CreateAuthFlow();
             await authFlow.RunAsync(cancellationToken);
+            if (authFlow is GitHubCliAuthFlow ghFlow)
+                ghCliPathOverride = ghFlow.GhCliPathOverride;
+        }
+
+        // GitHub Copilot CLI setup (feature 012) — runs regardless of SCM provider or --pat.
+        // This step is intentionally non-fatal: any failure or decline is soft, and the init
+        // exit code is not affected (FR-011).
+        // Feature 018 T032: also build a narrow throwaway service provider that exposes
+        // ICopilotVerificationProbe so the setup step can verify the session and print
+        // the remediation banner (FR-017). Probe construction failures are soft-exited.
+        ServiceProvider? copilotProbeServices = null;
+        ICopilotVerificationProbe? verificationProbe = null;
+        try
+        {
+            copilotProbeServices = BuildCopilotProbeServices();
+            verificationProbe = copilotProbeServices.GetRequiredService<ICopilotVerificationProbe>();
+        }
+        catch (Exception ex)
+        {
+            await _output.WriteLineAsync(
+                $"Warning: could not construct Copilot verification probe ({ex.Message}). Skipping verification step.");
+            verificationProbe = null;
+        }
+
+        try
+        {
+            var copilotStep = new CopilotCliSetupStep(
+                _output, _input, _processRunner, ghCliPathOverride,
+                verificationProbe: verificationProbe);
+            await copilotStep.RunAsync(cancellationToken);
+        }
+        catch
+        {
+            // Defense in depth — CopilotCliSetupStep is already catch-all internally.
+        }
+        finally
+        {
+            copilotProbeServices?.Dispose();
         }
 
         await _output.WriteLineAsync();
@@ -160,6 +202,34 @@ public class InitCommand : ICliCommand
         await _output.WriteLineAsync(Resources.MsgRestartIdeHint);
 
         return 0;
+    }
+
+    /// <summary>
+    /// Feature 018 T032: builds a narrow, throwaway service provider that registers
+    /// only the types needed by <see cref="ICopilotVerificationProbe"/> — this init
+    /// flow runs outside of the MCP host DI graph. The provider is disposed as soon
+    /// as <see cref="CopilotCliSetupStep.RunAsync"/> returns.
+    /// </summary>
+    private static ServiceProvider BuildCopilotProbeServices()
+    {
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: true)
+            .AddJsonFile("appsettings.Local.json", optional: true)
+            .AddEnvironmentVariables()
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
+        services.Configure<CopilotReviewOptions>(
+            configuration.GetSection(CopilotReviewOptions.SectionName));
+        services.AddSingleton<ICopilotTokenResolver, CopilotTokenResolver>();
+        services.AddSingleton<CopilotVerificationRunner>();
+        services.AddSingleton<ICopilotVerificationProbe>(
+            sp => sp.GetRequiredService<CopilotVerificationRunner>());
+
+        return services.BuildServiceProvider();
     }
 
     /// <summary>
@@ -320,15 +390,16 @@ public class InitCommand : ICliCommand
                         Path.Combine(gitRoot, VisualStudioDir),
                         Path.Combine(gitRoot, VisualStudioDir, McpConfigFileName))
                 ];
-        }
 
-        var targets = new List<McpConfigTarget>();
+            }
 
-        bool hasVsCode = DetectsVsCode(gitRoot);
-        bool hasVisualStudio = DetectsVisualStudio(gitRoot);
+            var targets = new List<McpConfigTarget>();
 
-        bool writeVsCode = hasVsCode || !hasVisualStudio;
-        bool writeVisualStudio = hasVisualStudio || !hasVsCode;
+            bool hasVsCode = DetectsVsCode(gitRoot);
+            bool hasVisualStudio = DetectsVisualStudio(gitRoot);
+
+            bool writeVsCode = hasVsCode || !hasVisualStudio;
+            bool writeVisualStudio = hasVisualStudio || !hasVsCode;
 
         if (writeVsCode)
             targets.Add(new McpConfigTarget(
@@ -385,9 +456,11 @@ public class InitCommand : ICliCommand
             ? string.Empty
             : $", \"--pat\", \"{pat}\"";
 
+        var serversKey = "servers";
+
         return $$"""
             {
-              "servers": {
+              "{{serversKey}}": {
                 "REBUSS.Pure": {
                   "type": "stdio",
                   "command": "{{normalizedExePath}}",
@@ -410,6 +483,8 @@ public class InitCommand : ICliCommand
         string rawRepoPath,
         string? pat = null)
     {
+        var serversKey = "servers";
+
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(existingJson);
@@ -421,19 +496,19 @@ public class InitCommand : ICliCommand
             {
                 writer.WriteStartObject();
 
-                // Copy all top-level properties except "servers" verbatim
+                // Copy all top-level properties except the servers key verbatim
                 foreach (var prop in root.EnumerateObject())
                 {
-                    if (prop.Name != "servers")
+                    if (prop.Name != serversKey)
                         prop.WriteTo(writer);
                 }
 
-                // Write merged "servers" block
-                writer.WritePropertyName("servers");
+                // Write merged servers block
+                writer.WritePropertyName(serversKey);
                 writer.WriteStartObject();
 
                 // Copy existing servers except REBUSS.Pure
-                if (root.TryGetProperty("servers", out var serversEl))
+                if (root.TryGetProperty(serversKey, out var serversEl))
                 {
                     foreach (var server in serversEl.EnumerateObject())
                     {
@@ -446,7 +521,7 @@ public class InitCommand : ICliCommand
                 // If no PAT was supplied, carry over any existing PAT from the current config.
                 var effectivePat = pat;
                 if (string.IsNullOrWhiteSpace(effectivePat))
-                    effectivePat = ExtractExistingPat(root);
+                    effectivePat = ExtractExistingPat(root, serversKey);
 
                 writer.WritePropertyName("REBUSS.Pure");
                 writer.WriteStartObject();
@@ -483,9 +558,9 @@ public class InitCommand : ICliCommand
     /// Extracts the <c>--pat</c> argument value from an existing REBUSS.Pure server entry,
     /// or returns <c>null</c> if no PAT is present.
     /// </summary>
-    private static string? ExtractExistingPat(System.Text.Json.JsonElement root)
+    private static string? ExtractExistingPat(System.Text.Json.JsonElement root, string serversKey = "servers")
     {
-        if (!root.TryGetProperty("servers", out var servers))
+        if (!root.TryGetProperty(serversKey, out var servers))
             return null;
 
         if (!servers.TryGetProperty("REBUSS.Pure", out var entry))
@@ -505,15 +580,12 @@ public class InitCommand : ICliCommand
     private async Task CopyPromptFilesAsync(string gitRoot, CancellationToken cancellationToken)
     {
         var promptsTargetDir = Path.Combine(gitRoot, ".github", "prompts");
-        var instructionsTargetDir = Path.Combine(gitRoot, ".github", "instructions");
         Directory.CreateDirectory(promptsTargetDir);
-        Directory.CreateDirectory(instructionsTargetDir);
 
         await DeleteLegacyPromptFilesAsync(promptsTargetDir);
 
         var assembly = Assembly.GetExecutingAssembly();
         var promptsWritten = 0;
-        var instructionsWritten = 0;
 
         foreach (var promptFileName in PromptFileNames)
         {
@@ -533,19 +605,10 @@ public class InitCommand : ICliCommand
             var promptPath = Path.Combine(promptsTargetDir, promptFileName);
             await File.WriteAllTextAsync(promptPath, content, cancellationToken);
             promptsWritten++;
-
-            // Always write to .github/instructions/ (overwrite enables instruction updates)
-            var instructionFileName = ToInstructionsFileName(promptFileName);
-            var instructionPath = Path.Combine(instructionsTargetDir, instructionFileName);
-            await File.WriteAllTextAsync(instructionPath, content, cancellationToken);
-            instructionsWritten++;
         }
 
         if (promptsWritten > 0)
             await _output.WriteLineAsync(string.Format(Resources.MsgCopiedPrompts, promptsWritten, promptsTargetDir));
-
-        if (instructionsWritten > 0)
-            await _output.WriteLineAsync(string.Format(Resources.MsgCopiedInstructions, instructionsWritten, instructionsTargetDir));
     }
 
     private async Task DeleteLegacyPromptFilesAsync(string promptsTargetDir)
@@ -561,20 +624,7 @@ public class InitCommand : ICliCommand
         }
     }
 
-    /// <summary>
-    /// Converts a prompt file name (e.g. <c>review-pr.md</c>) to the corresponding
-    /// instructions file name (e.g. <c>review-pr.instructions.md</c>).
-    /// </summary>
-    internal static string ToInstructionsFileName(string promptFileName)
-    {
-        const string promptMdSuffix = ".prompt.md";
-        var baseName = promptFileName.EndsWith(promptMdSuffix, StringComparison.OrdinalIgnoreCase)
-            ? promptFileName[..^promptMdSuffix.Length]
-            : Path.GetFileNameWithoutExtension(promptFileName);
-        return $"{baseName}.instructions.md";
-    }
-
-    /// <summary>
+/// <summary>
     /// Locates the embedded resource name for a given prompt file.
     /// The SDK may mangle hyphens to underscores depending on version,
     /// so we search by suffix with both variants.

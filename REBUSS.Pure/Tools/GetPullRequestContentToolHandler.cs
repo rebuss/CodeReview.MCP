@@ -1,54 +1,82 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Exceptions;
+using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Properties;
+using REBUSS.Pure.Services.PrEnrichment;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Shared;
 
 namespace REBUSS.Pure.Tools
 {
+    /// <summary>
+    /// Handles the execution of the get_pr_content MCP tool. Serves a single
+    /// page of enriched PR diff content from the
+    /// <see cref="IPrEnrichmentOrchestrator"/>'s cached result, kicking off
+    /// background enrichment as a fallback when no prior <c>get_pr_metadata</c>
+    /// call has primed it. Runs with its own fresh internal timeout window;
+    /// on timeout returns a friendly "still preparing" status block instead of
+    /// surfacing a tool-call failure.
+    /// </summary>
     [McpServerToolType]
     public class GetPullRequestContentToolHandler
     {
-        private readonly IPullRequestDiffCache _diffCache;
+        private readonly IPullRequestDataProvider _metadataProvider;
         private readonly IContextBudgetResolver _budgetResolver;
-        private readonly ITokenEstimator _tokenEstimator;
-        private readonly IFileClassifier _fileClassifier;
+        private readonly IPrEnrichmentOrchestrator _enrichmentOrchestrator;
         private readonly IPageAllocator _pageAllocator;
+        private readonly IOptions<WorkflowOptions> _workflowOptions;
+        private readonly ICopilotAvailabilityDetector _copilotAvailability;
+        private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator;
+        private readonly Services.CopilotReview.CopilotReviewWaiter _copilotReviewWaiter;
+        private readonly IProgressReporter _progressReporter;
         private readonly ILogger<GetPullRequestContentToolHandler> _logger;
 
         public GetPullRequestContentToolHandler(
-            IPullRequestDiffCache diffCache,
+            IPullRequestDataProvider metadataProvider,
             IContextBudgetResolver budgetResolver,
-            ITokenEstimator tokenEstimator,
-            IFileClassifier fileClassifier,
+            IPrEnrichmentOrchestrator enrichmentOrchestrator,
             IPageAllocator pageAllocator,
+            IOptions<WorkflowOptions> workflowOptions,
+            ICopilotAvailabilityDetector copilotAvailability,
+            ICopilotReviewOrchestrator copilotReviewOrchestrator,
+            Services.CopilotReview.CopilotReviewWaiter copilotReviewWaiter,
+            IProgressReporter progressReporter,
             ILogger<GetPullRequestContentToolHandler> logger)
         {
-            _diffCache = diffCache;
+            _metadataProvider = metadataProvider;
             _budgetResolver = budgetResolver;
-            _tokenEstimator = tokenEstimator;
-            _fileClassifier = fileClassifier;
+            _enrichmentOrchestrator = enrichmentOrchestrator;
             _pageAllocator = pageAllocator;
+            _workflowOptions = workflowOptions;
+            _copilotAvailability = copilotAvailability;
+            _copilotReviewOrchestrator = copilotReviewOrchestrator;
+            _copilotReviewWaiter = copilotReviewWaiter;
+            _progressReporter = progressReporter;
             _logger = logger;
         }
 
         [McpServerTool(Name = "get_pr_content"), Description(
             "Returns plain-text diff content for a specific page of a pull request review. " +
             "One content block per file with -/+/space prefixed lines, plus a pagination footer. " +
-            "Use get_pr_metadata with modelName/maxTokens to discover the total page count first.")]
+            "Reuses background enrichment from a prior get_pr_metadata call when available. " +
+            "If enrichment is still running and cannot complete within the internal timeout, " +
+            "returns a friendly 'still preparing' status block — never a raw timeout error.")]
         public async Task<IEnumerable<ContentBlock>> ExecuteAsync(
             [Description("The Pull Request number/ID")] int? prNumber = null,
             [Description("Page number to retrieve (1-based)")] int? pageNumber = null,
             [Description("Model name for context budget resolution")] string? modelName = null,
             [Description("Explicit token budget override")] int? maxTokens = null,
+            IProgress<ProgressNotificationValue>? progress = null,
             CancellationToken cancellationToken = default)
         {
             if (prNumber == null)
@@ -65,48 +93,122 @@ namespace REBUSS.Pure.Tools
                 _logger.LogInformation(Resources.LogGetPrContentEntry, prNumber, pageNumber);
                 var sw = Stopwatch.StartNew();
 
+                // SDK injects IProgress<T> automatically from _meta.progressToken;
+                // it no-ops when the client omits the token.
+                await _progressReporter.ReportAsync(progress, 0, 4,
+                    $"Starting content retrieval for PR #{prNumber}", cancellationToken);
+
                 var budget = _budgetResolver.Resolve(maxTokens, modelName);
                 var safeBudget = budget.SafeBudgetTokens;
 
-                var diff = await _diffCache.GetOrFetchDiffAsync(prNumber.Value, ct: cancellationToken);
-                var candidates = FileTokenMeasurement.BuildCandidatesFromDiff(diff, _tokenEstimator, _fileClassifier);
-                candidates.Sort(PackingPriorityComparer.Instance);
+                // Fast-path: a Failed snapshot means the prior background body raised.
+                // Surface it via friendly-status without retriggering.
+                var snapshot = _enrichmentOrchestrator.TryGetSnapshot(prNumber.Value);
+                if (snapshot is { Status: PrEnrichmentStatus.Failed, Failure: not null })
+                {
+                    _logger.LogInformation("PR {Pr} content request hit Failed snapshot; returning friendly status", prNumber);
+                    return BuildFriendlyFailureBlocks(prNumber.Value, pageNumber.Value, snapshot.Failure!);
+                }
 
-                var allocation = _pageAllocator.Allocate(candidates, safeBudget);
+                // SHA discovery: if there is no existing job, ask the metadata provider for the head SHA
+                // and start one. A budget change does NOT retrigger enrichment — pagination is recomputed
+                // per-call below from the cached enriched candidates, so the expensive Roslyn/diff work
+                // runs at most once per (prNumber, headSha).
+                if (snapshot is null)
+                {
+                    var meta = await _metadataProvider.GetMetadataAsync(prNumber.Value, cancellationToken);
+                    var headSha = meta.LastMergeSourceCommitId ?? string.Empty;
+                    _enrichmentOrchestrator.TriggerEnrichment(prNumber.Value, headSha, safeBudget);
+                }
+
+                // Wait with our own internal timeout. The background body keeps running
+                // even if this wait expires.
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(_workflowOptions.Value.ContentInternalTimeoutMs);
+
+                await _progressReporter.ReportAsync(progress, 1, 4,
+                    $"Waiting for enrichment — PR #{prNumber}", cancellationToken);
+
+                PrEnrichmentResult result;
+                try
+                {
+                    result = await _enrichmentOrchestrator.WaitForEnrichmentAsync(prNumber.Value, linkedCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation(
+                        "PR {Pr} content wait expired after {TimeoutMs}ms; returning friendly status",
+                        prNumber, _workflowOptions.Value.ContentInternalTimeoutMs);
+                    return BuildFriendlyStillPreparingBlocks(prNumber.Value, pageNumber.Value);
+                }
+
+                // Feature 013 branch: if Copilot is available + enabled, the server performs
+                // the review itself and returns compact page summaries in a single response.
+                // Otherwise, fall through to the existing content-only path.
+                await _progressReporter.ReportAsync(progress, 2, null,
+                    "Enrichment complete — checking review mode", cancellationToken);
+
+                bool copilotAvailable;
+                try
+                {
+                    copilotAvailable = await _copilotAvailability.IsAvailableAsync(cancellationToken);
+                }
+                catch (Services.CopilotReview.CopilotUnavailableException ex)
+                {
+                    // Feature 018 (FR-015 strict mode): when CopilotReview:StrictMode = true
+                    // and the cached verdict is unavailable for a real verification failure,
+                    // IsAvailableAsync throws instead of returning false. Surface the
+                    // remediation string as an MCP tool error so the operator sees a loud,
+                    // unambiguous signal on this exact request.
+                    sw.Stop();
+                    _logger.LogWarning(
+                        "PR {Pr} Copilot review layer unavailable (strict mode): {Reason}. Remediation: {Remediation}",
+                        prNumber, ex.Verdict.Reason, ex.Verdict.Remediation);
+                    throw;
+                }
+                if (copilotAvailable)
+                {
+                    await _progressReporter.ReportAsync(progress, 3, null,
+                        $"Copilot review started for PR #{prNumber}", cancellationToken);
+
+                    var reviewKey = $"pr:{prNumber.Value}";
+                    _copilotReviewOrchestrator.TriggerReview(reviewKey, result);
+
+                    var copilotResult = await _copilotReviewWaiter.WaitWithProgressAsync(
+                        reviewKey, progress, 4, cancellationToken);
+
+                    var copilotBlocks = BuildCopilotAssistedBlocks(prNumber.Value, copilotResult);
+
+                    sw.Stop();
+                    _logger.LogInformation(
+                        "PR {Pr} copilot-assisted content returned in {Ms}ms ({Pages} pages, {Succeeded} ok, {Failed} failed)",
+                        prNumber, sw.ElapsedMilliseconds,
+                        copilotResult.TotalPages, copilotResult.SucceededPages, copilotResult.FailedPages);
+
+                    return copilotBlocks;
+                }
+
+                // Repaginate per-call against the caller's resolved safe budget. The enriched
+                // candidates and per-file enriched text are reused from the cache; only the
+                // bin-packing (PageAllocator.Allocate) re-runs. This is what makes maxTokens /
+                // modelName overrides cheap and effective on every call, fixing the bug where
+                // a stale cached page was returned byte-for-byte.
+                var allocation = _pageAllocator.Allocate(result.SortedCandidates, safeBudget);
 
                 if (pageNumber > allocation.TotalPages)
                     throw new McpException(
                         string.Format(Resources.ErrorPageNumberExceedsTotalPages, pageNumber, allocation.TotalPages));
 
                 var pageSlice = allocation.Pages[pageNumber.Value - 1];
-
-                var pageFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var item in pageSlice.Items)
-                    pageFilePaths.Add(candidates[item.OriginalIndex].Path);
-
-                var categories = BuildCategoryBreakdown(pageFilePaths, candidates);
-
-                var pageFiles = diff.Files
-                    .Where(f => pageFilePaths.Contains(f.Path))
-                    .Select(f => FileTokenMeasurement.MapToStructured(f))
-                    .ToList();
-
-                var blocks = new List<ContentBlock>(pageFiles.Count + 1);
-                foreach (var f in pageFiles)
-                    blocks.Add(new TextContentBlock { Text = PlainTextFormatter.FormatFileDiff(f) });
-
-                blocks.Add(new TextContentBlock
-                {
-                    Text = PlainTextFormatter.FormatSimplePaginationBlock(
-                        pageNumber.Value, allocation.TotalPages,
-                        pageFiles.Count, allocation.TotalItems,
-                        pageSlice.BudgetUsed,
-                        categories)
-                });
+                var blocks = BuildPageBlocks(pageSlice, pageNumber.Value, allocation, result);
 
                 sw.Stop();
+
+                await _progressReporter.ReportAsync(progress, 4, 4,
+                    $"Content ready — page {pageNumber}/{allocation.TotalPages}", cancellationToken);
+
                 _logger.LogInformation(Resources.LogGetPrContentCompleted,
-                    prNumber, pageNumber, allocation.TotalPages, pageFiles.Count, sw.ElapsedMilliseconds);
+                    prNumber, pageNumber, allocation.TotalPages, pageSlice.Items.Count, sw.ElapsedMilliseconds);
 
                 return blocks;
             }
@@ -123,17 +225,107 @@ namespace REBUSS.Pure.Tools
             }
         }
 
+        private static List<ContentBlock> BuildPageBlocks(
+            PageSlice pageSlice, int pageNumber, PageAllocation allocation, PrEnrichmentResult result)
+        {
+            var blocks = new List<ContentBlock>(pageSlice.Items.Count + 2);
+
+            // Feature 013 FR-004: prepend the content-only mode indicator so the IDE prompt
+            // can detect the mode on every response.
+            blocks.Add(new TextContentBlock { Text = PlainTextFormatter.FormatContentOnlyModeHeader() });
+
+            // Per-file enriched text, in the order produced by the page allocator.
+            var pagePathsOrdered = new List<string>(pageSlice.Items.Count);
+            foreach (var item in pageSlice.Items)
+            {
+                var path = result.SortedCandidates[item.OriginalIndex].Path;
+                pagePathsOrdered.Add(path);
+                if (result.EnrichedByPath.TryGetValue(path, out var enrichedText))
+                    blocks.Add(new TextContentBlock { Text = enrichedText });
+            }
+
+            var categories = BuildCategoryBreakdown(pagePathsOrdered, result.SortedCandidates);
+
+            blocks.Add(new TextContentBlock
+            {
+                Text = PlainTextFormatter.FormatSimplePaginationBlock(
+                    pageNumber, allocation.TotalPages,
+                    pagePathsOrdered.Count, allocation.TotalItems,
+                    pageSlice.BudgetUsed,
+                    categories)
+            });
+
+            return blocks;
+        }
+
+        private static List<ContentBlock> BuildCopilotAssistedBlocks(
+            int prNumber, Core.Models.CopilotReview.CopilotReviewResult copilotResult)
+        {
+            var blocks = new List<ContentBlock>(copilotResult.PageReviews.Count + 1);
+
+            // First block: mode indicator + header (FR-004, FR-006).
+            blocks.Add(new TextContentBlock
+            {
+                Text = PlainTextFormatter.FormatCopilotReviewHeader(
+                    prNumber,
+                    copilotResult.TotalPages,
+                    copilotResult.SucceededPages,
+                    copilotResult.FailedPages)
+            });
+
+            // One block per page (success or failure) in page-number order (FR-005, FR-007a).
+            foreach (var pageReview in copilotResult.PageReviews)
+            {
+                blocks.Add(new TextContentBlock
+                {
+                    Text = PlainTextFormatter.FormatCopilotPageReviewBlock(pageReview)
+                });
+            }
+
+            return blocks;
+        }
+
+        private static List<ContentBlock> BuildFriendlyStillPreparingBlocks(int prNumber, int pageNumber)
+        {
+            return new List<ContentBlock>
+            {
+                new TextContentBlock
+                {
+                    Text = PlainTextFormatter.FormatFriendlyStatus(
+                        headline: "Response is still being prepared",
+                        explanation: $"Background enrichment for PR #{prNumber} is still running.",
+                        suggestedNextAction: $"Retry get_pr_content with pageNumber={pageNumber} in a moment")
+                }
+            };
+        }
+
+        private static List<ContentBlock> BuildFriendlyFailureBlocks(int prNumber, int pageNumber, PrEnrichmentFailure failure)
+        {
+            return new List<ContentBlock>
+            {
+                new TextContentBlock
+                {
+                    Text = PlainTextFormatter.FormatFriendlyStatus(
+                        headline: $"Background enrichment failed for PR #{prNumber}",
+                        explanation: $"{failure.ExceptionTypeName}: {failure.SanitizedMessage}",
+                        suggestedNextAction: $"Retry get_pr_content with pageNumber={pageNumber}")
+                }
+            };
+        }
+
         private static Dictionary<string, int> BuildCategoryBreakdown(
-            HashSet<string> pageFilePaths, List<PackingCandidate> candidates)
+            List<string> pagePaths, IReadOnlyList<PackingCandidate> sortedCandidates)
         {
             var categories = new Dictionary<string, int>();
-            foreach (var candidate in candidates)
+            var pagePathSet = new HashSet<string>(pagePaths, StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in sortedCandidates)
             {
-                if (!pageFilePaths.Contains(candidate.Path)) continue;
+                if (!pagePathSet.Contains(candidate.Path)) continue;
                 var key = candidate.Category.ToString().ToLowerInvariant();
                 categories[key] = categories.GetValueOrDefault(key) + 1;
             }
             return categories;
         }
+
     }
 }

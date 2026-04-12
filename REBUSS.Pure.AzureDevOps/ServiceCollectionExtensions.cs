@@ -48,13 +48,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AzureDevOpsDiffProvider>();
         services.AddSingleton<AzureDevOpsMetadataProvider>();
         services.AddSingleton<AzureDevOpsFilesProvider>();
-        services.AddSingleton<AzureDevOpsFileContentProvider>();
+        services.AddSingleton<AzureDevOpsRepositoryArchiveProvider>();
 
         // Unified SCM client facade + interface forwarding
         services.AddSingleton<AzureDevOpsScmClient>();
         services.AddSingleton<IScmClient>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
         services.AddSingleton<IPullRequestDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
-        services.AddSingleton<IFileContentDataProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
+        services.AddSingleton<IRepositoryArchiveProvider>(sp => sp.GetRequiredService<AzureDevOpsScmClient>());
 
         return services;
     }

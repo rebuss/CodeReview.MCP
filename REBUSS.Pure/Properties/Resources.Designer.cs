@@ -124,15 +124,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to File not found: {0}.
-        /// </summary>
-        internal static string ErrorFileNotFound {
-            get {
-                return ResourceManager.GetString("ErrorFileNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to File '{0}' not found among local changes (scope: {1}).
         /// </summary>
         internal static string ErrorFileNotFoundAmongLocalChanges {
@@ -196,29 +187,11 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Missing required parameter: path.
-        /// </summary>
-        internal static string ErrorMissingRequiredPath {
-            get {
-                return ResourceManager.GetString("ErrorMissingRequiredPath", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Missing required parameter: prNumber.
         /// </summary>
         internal static string ErrorMissingRequiredPrNumber {
             get {
                 return ResourceManager.GetString("ErrorMissingRequiredPrNumber", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to Missing required parameter: ref.
-        /// </summary>
-        internal static string ErrorMissingRequiredRef {
-            get {
-                return ResourceManager.GetString("ErrorMissingRequiredRef", resourceCulture);
             }
         }
 
@@ -268,15 +241,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Partially included: {0}/{1} hunks fit within budget.
-        /// </summary>
-        internal static string ErrorPartiallyIncludedHunks {
-            get {
-                return ResourceManager.GetString("ErrorPartiallyIncludedHunks", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to prNumber must be greater than 0.
         /// </summary>
         internal static string ErrorPrNumberMustBePositive {
@@ -309,15 +273,6 @@ namespace REBUSS.Pure.Properties {
         internal static string ErrorRetrievingFileDiff {
             get {
                 return ResourceManager.GetString("ErrorRetrievingFileDiff", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to Error retrieving file content: {0}.
-        /// </summary>
-        internal static string ErrorRetrievingFileContent {
-            get {
-                return ResourceManager.GetString("ErrorRetrievingFileContent", resourceCulture);
             }
         }
 
@@ -430,87 +385,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Completed: path='{Path}', ref='{Ref}', ...
-        /// </summary>
-        internal static string LogGetFileContentAtRefCompleted {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefCompleted", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Entry: path='{Path}', ref='{Ref}'.
-        /// </summary>
-        internal static string LogGetFileContentAtRefEntry {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] Error (path='{Path}', ref='{Ref}').
-        /// </summary>
-        internal static string LogGetFileContentAtRefError {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_content_at_ref] File content not found (path='{Path}', ref='{Ref}').
-        /// </summary>
-        internal static string LogGetFileContentAtRefNotFound {
-            get {
-                return ResourceManager.GetString("LogGetFileContentAtRefNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_diff] Completed: PR #{PrNumber}, path='{Path}', ...
-        /// </summary>
-        internal static string LogGetFileDiffCompleted {
-            get {
-                return ResourceManager.GetString("LogGetFileDiffCompleted", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_diff] Entry: PR #{PrNumber}, path='{Path}'.
-        /// </summary>
-        internal static string LogGetFileDiffEntry {
-            get {
-                return ResourceManager.GetString("LogGetFileDiffEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_diff] Error (prNumber={PrNumber}, path='{Path}').
-        /// </summary>
-        internal static string LogGetFileDiffError {
-            get {
-                return ResourceManager.GetString("LogGetFileDiffError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_diff] File not found in pull request (prNumber={PrNumber}, path='{Path}').
-        /// </summary>
-        internal static string LogGetFileDiffFileNotFound {
-            get {
-                return ResourceManager.GetString("LogGetFileDiffFileNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_file_diff] Pull request not found (prNumber={PrNumber}, path='{Path}').
-        /// </summary>
-        internal static string LogGetFileDiffPrNotFound {
-            get {
-                return ResourceManager.GetString("LogGetFileDiffPrNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to [get_local_content] Completed: page {Page}/{TotalPages}, ...
         /// </summary>
         internal static string LogGetLocalContentCompleted {
@@ -534,60 +408,6 @@ namespace REBUSS.Pure.Properties {
         internal static string LogGetLocalContentError {
             get {
                 return ResourceManager.GetString("LogGetLocalContentError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] Completed: path='{Path}', scope={Scope}, ...
-        /// </summary>
-        internal static string LogGetLocalFileDiffCompleted {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffCompleted", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] Entry: path='{Path}', scope={Scope}.
-        /// </summary>
-        internal static string LogGetLocalFileDiffEntry {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] Error (path='{Path}').
-        /// </summary>
-        internal static string LogGetLocalFileDiffError {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] File not found in local changes (path='{Path}').
-        /// </summary>
-        internal static string LogGetLocalFileDiffFileNotFound {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffFileNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] Git command failed (path='{Path}').
-        /// </summary>
-        internal static string LogGetLocalFileDiffGitCommandFailed {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffGitCommandFailed", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_file_diff] Repository not found.
-        /// </summary>
-        internal static string LogGetLocalFileDiffRepositoryNotFound {
-            get {
-                return ResourceManager.GetString("LogGetLocalFileDiffRepositoryNotFound", resourceCulture);
             }
         }
 
@@ -678,60 +498,6 @@ namespace REBUSS.Pure.Properties {
         internal static string LogGetPrContentPrNotFound {
             get {
                 return ResourceManager.GetString("LogGetPrContentPrNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Completed (F003): PR #{PrNumber}, ...
-        /// </summary>
-        internal static string LogGetPrDiffCompletedF003 {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffCompletedF003", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Completed (F004): PR #{PrNumber}, ...
-        /// </summary>
-        internal static string LogGetPrDiffCompletedF004 {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffCompletedF004", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Entry: PR #{PrNumber}, pageRef={HasRef}, pageNum={PageNum}.
-        /// </summary>
-        internal static string LogGetPrDiffEntry {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Error.
-        /// </summary>
-        internal static string LogGetPrDiffError {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Could not fetch metadata for fingerprint.
-        /// </summary>
-        internal static string LogGetPrDiffMetadataFingerprintFailed {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffMetadataFingerprintFailed", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_diff] Pull request not found.
-        /// </summary>
-        internal static string LogGetPrDiffPrNotFound {
-            get {
-                return ResourceManager.GetString("LogGetPrDiffPrNotFound", resourceCulture);
             }
         }
 
@@ -943,15 +709,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Copied {0} instruction file(s) to {1}.
-        /// </summary>
-        internal static string MsgCopiedInstructions {
-            get {
-                return ResourceManager.GetString("MsgCopiedInstructions", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Deleted legacy prompt file: {0}.
         /// </summary>
         internal static string MsgDeletedLegacyPromptFile {
@@ -1021,6 +778,142 @@ namespace REBUSS.Pure.Properties {
             get {
                 return ResourceManager.GetString("WarnEmbeddedPromptResourceNotFound", resourceCulture);
             }
+        }
+
+        internal static string CopilotSetup_ExplainBenefit {
+            get { return ResourceManager.GetString("CopilotSetup_ExplainBenefit", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_PromptInstallGhAndContinue {
+            get { return ResourceManager.GetString("CopilotSetup_PromptInstallGhAndContinue", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_PromptInstallExtension {
+            get { return ResourceManager.GetString("CopilotSetup_PromptInstallExtension", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_AlreadyInstalled {
+            get { return ResourceManager.GetString("CopilotSetup_AlreadyInstalled", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_InstallSuccess {
+            get { return ResourceManager.GetString("CopilotSetup_InstallSuccess", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_InstallFailed {
+            get { return ResourceManager.GetString("CopilotSetup_InstallFailed", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_DeclineBannerTitle {
+            get { return ResourceManager.GetString("CopilotSetup_DeclineBannerTitle", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_DeclineBannerBody {
+            get { return ResourceManager.GetString("CopilotSetup_DeclineBannerBody", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_ManualInstallHint {
+            get { return ResourceManager.GetString("CopilotSetup_ManualInstallHint", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotClientStarting {
+            get { return ResourceManager.GetString("LogCopilotClientStarting", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotClientStarted {
+            get { return ResourceManager.GetString("LogCopilotClientStarted", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotClientStartFailed {
+            get { return ResourceManager.GetString("LogCopilotClientStartFailed", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotClientStopping {
+            get { return ResourceManager.GetString("LogCopilotClientStopping", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotAvailable {
+            get { return ResourceManager.GetString("LogCopilotAvailable", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotNotAvailable {
+            get { return ResourceManager.GetString("LogCopilotNotAvailable", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewTriggered {
+            get { return ResourceManager.GetString("LogCopilotReviewTriggered", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewPageStarted {
+            get { return ResourceManager.GetString("LogCopilotReviewPageStarted", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewPageCompleted {
+            get { return ResourceManager.GetString("LogCopilotReviewPageCompleted", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewPageFailed {
+            get { return ResourceManager.GetString("LogCopilotReviewPageFailed", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewCompleted {
+            get { return ResourceManager.GetString("LogCopilotReviewCompleted", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewFailed {
+            get { return ResourceManager.GetString("LogCopilotReviewFailed", resourceCulture)!; }
+        }
+
+        internal static string CopilotReviewModeHeader {
+            get { return ResourceManager.GetString("CopilotReviewModeHeader", resourceCulture)!; }
+        }
+
+        internal static string ContentOnlyModeHeader {
+            get { return ResourceManager.GetString("ContentOnlyModeHeader", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewUnavailable {
+            get { return ResourceManager.GetString("LogCopilotReviewUnavailable", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotReviewAuthenticatedSuccess {
+            get { return ResourceManager.GetString("LogCopilotReviewAuthenticatedSuccess", resourceCulture)!; }
+        }
+
+        internal static string LogCopilotFreeTierShapeWarning {
+            get { return ResourceManager.GetString("LogCopilotFreeTierShapeWarning", resourceCulture)!; }
+        }
+
+        internal static string ErrorCopilotNotAuthenticatedRemediation {
+            get { return ResourceManager.GetString("ErrorCopilotNotAuthenticatedRemediation", resourceCulture)!; }
+        }
+
+        internal static string ErrorCopilotOverrideTokenRejectedRemediation {
+            get { return ResourceManager.GetString("ErrorCopilotOverrideTokenRejectedRemediation", resourceCulture)!; }
+        }
+
+        internal static string ErrorCopilotModelNotEntitledRemediation {
+            get { return ResourceManager.GetString("ErrorCopilotModelNotEntitledRemediation", resourceCulture)!; }
+        }
+
+        internal static string ErrorCopilotStartFailureRemediation {
+            get { return ResourceManager.GetString("ErrorCopilotStartFailureRemediation", resourceCulture)!; }
+        }
+
+        internal static string ErrorCopilotVerificationTimeoutRemediation {
+            get { return ResourceManager.GetString("ErrorCopilotVerificationTimeoutRemediation", resourceCulture)!; }
+        }
+
+        internal static string CopilotSetup_VerificationOk {
+            get { return ResourceManager.GetString("CopilotSetup_VerificationOk", resourceCulture)!; }
+        }
+
+        internal static string BannerCopilotNotAuthenticatedTitle {
+            get { return ResourceManager.GetString("BannerCopilotNotAuthenticatedTitle", resourceCulture)!; }
+        }
+
+        internal static string BannerCopilotNotAuthenticatedBody {
+            get { return ResourceManager.GetString("BannerCopilotNotAuthenticatedBody", resourceCulture)!; }
         }
     }
 }

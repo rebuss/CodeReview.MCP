@@ -11,14 +11,19 @@ using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Logging;
+using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Services;
 using REBUSS.Pure.Services.ContextWindow;
+using REBUSS.Pure.Services.CopilotReview;
 using REBUSS.Pure.Services.LocalReview;
+using REBUSS.Pure.Services.PrEnrichment;
 using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
 using GitHubNames = REBUSS.Pure.GitHub.Names;
 using ResponsePacking = REBUSS.Pure.Services.ResponsePacking;
 using Pagination = REBUSS.Pure.Services.Pagination;
 using REBUSS.Pure.Properties;
+using REBUSS.Pure.RoslynProcessor;
+using REBUSS.Pure.Services.RepositoryDownload;
 
 namespace REBUSS.Pure
 {
@@ -100,7 +105,6 @@ namespace REBUSS.Pure
                     options.LogToStandardErrorThreshold = LogLevel.Trace;
                 });
                 builder.Logging.AddProvider(new FileLoggerProvider(GetLogDirectory()));
-                builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
                 // Register business services (providers, algorithms, shared services)
                 ConfigureBusinessServices(builder.Services, configuration, parseResult.RepoPath);
@@ -151,9 +155,43 @@ namespace REBUSS.Pure
             services.AddSingleton<IDiffAlgorithm, DiffPlexDiffAlgorithm>();
             services.AddSingleton<IStructuredDiffBuilder, StructuredDiffBuilder>();
             services.AddSingleton<IFileClassifier, FileClassifier>();
+            services.AddSingleton<DiffSourceResolver>();
+            services.AddSingleton<IDiffEnricher, BeforeAfterEnricher>();         // Order=100
+            services.AddSingleton<IDiffEnricher, ScopeAnnotatorEnricher>();      // Order=150
+            services.AddSingleton<IDiffEnricher, StructuralChangeEnricher>();    // Order=200
+            services.AddSingleton<IDiffEnricher, UsingsChangeEnricher>();        // Order=250
+            services.AddSingleton<CallSiteScanner>();
+            services.AddSingleton<IDiffEnricher, CallSiteEnricher>();            // Order=300
+            services.AddSingleton<IDiffEnricher, FileStructureValidationEnricher>(); // Order=400
+            services.AddSingleton<ICodeProcessor, CompositeCodeProcessor>();
+
+            // Progress reporting (MCP notifications/progress)
+            services.AddSingleton<IProgressReporter, ProgressReporter>();
+
+            // Workflow timeouts (progressive PR metadata feature)
+            services.Configure<WorkflowOptions>(configuration.GetSection(WorkflowOptions.SectionName));
+            services.AddSingleton<IPrEnrichmentOrchestrator, PrEnrichmentOrchestrator>();
+
+            // Copilot Review Layer (feature 013) — SDK-backed server-side PR review.
+            // The provider is registered three ways: (1) concrete singleton, (2) interface
+            // alias so consumers can depend on ICopilotClientProvider, (3) IHostedService so
+            // the generic host calls StopAsync on shutdown. All three resolve to the same instance.
+            services.Configure<CopilotReviewOptions>(configuration.GetSection(CopilotReviewOptions.SectionName));
+            services.AddSingleton<ICopilotTokenResolver, CopilotTokenResolver>();
+            services.AddSingleton<CopilotVerificationRunner>();
+            services.AddSingleton<ICopilotVerificationProbe>(sp => sp.GetRequiredService<CopilotVerificationRunner>());
+            services.AddSingleton<CopilotClientProvider>();
+            services.AddSingleton<ICopilotClientProvider>(sp => sp.GetRequiredService<CopilotClientProvider>());
+            services.AddHostedService(sp => sp.GetRequiredService<CopilotClientProvider>());
+            services.AddSingleton<ICopilotSessionFactory, CopilotSessionFactory>();
+            services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
+            services.AddSingleton<ICopilotPageReviewer, CopilotPageReviewer>();
+            services.AddSingleton<ICopilotReviewOrchestrator, CopilotReviewOrchestrator>();
+            services.AddSingleton<CopilotReviewWaiter>();
 
             // Context Window Awareness
             services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
+
             services.AddSingleton<IContextBudgetResolver, ContextBudgetResolver>();
             services.AddSingleton<ITokenEstimator, TokenEstimator>();
 
@@ -180,9 +218,14 @@ namespace REBUSS.Pure
                     break;
             }
 
+            // Repository download orchestrator + startup cleanup
+            services.AddSingleton<IRepositoryDownloadOrchestrator, RepositoryDownloadOrchestrator>();
+            services.AddHostedService<RepositoryCleanupService>();
+
             // Local self-review pipeline
             services.AddSingleton<ILocalGitClient, LocalGitClient>();
             services.AddSingleton<ILocalReviewProvider, LocalReviewProvider>();
+            services.AddSingleton<ILocalEnrichmentOrchestrator, LocalEnrichmentOrchestrator>();
         }
 
         private static Dictionary<string, string?> BuildCliConfigOverrides(CliParseResult parseResult)

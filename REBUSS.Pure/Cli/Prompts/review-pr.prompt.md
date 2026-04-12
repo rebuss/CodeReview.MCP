@@ -8,7 +8,34 @@ Extract:
 
 Use MCP server: REBUSS.Pure.
 
-Your job: perform a professional code review of the PR while minimizing context usage.
+Your job: perform a professional code review of the PR.
+
+---
+
+## Response Mode Detection (feature 013)
+
+After calling `get_pr_content`, **always inspect the first content block** for a mode indicator:
+
+### If the first block begins with `[review-mode: copilot-assisted]`
+
+The MCP server has already performed the code review using GitHub Copilot. The response
+contains **review summaries for each page — NOT raw diff content**. Your task changes:
+
+1. Read all `=== Page N Review ===` blocks.
+2. Organize findings **by severity**:
+   - **Critical Issues** — group all critical findings from all pages
+   - **Major Issues** — group all major findings from all pages
+   - **Minor Suggestions** — group all minor findings from all pages
+3. Remove duplicates (same finding reported from multiple pages).
+4. Produce one coherent review report in the Output Structure format below.
+5. **Do NOT** ask the user to continue to the next page — all pages are already reviewed.
+6. If any `=== Page N Review (FAILED) ===` blocks are present, list the failed pages
+   (with their file paths) in a dedicated "Manual Follow-up Needed" section at the end.
+
+### If the first block begins with `[review-mode: content-only]`
+
+Standard flow — review the diff content yourself, page by page with user confirmation.
+(Existing workflow below applies unchanged.)
 
 ---
 
@@ -43,12 +70,7 @@ For each page:
      | generated | Auto-generated code (designer, .g.cs) | Note as skipped; do not retrieve |
      | deleted | File removed entirely | Note deletion; no content to review |
      | renamed | Rename/move without content change | Note rename; no diff to review |
-     | fullRewrite | Diff too large / full-file rewrite | Consider retrieving via get_file_content_at_ref |
-   - full-file retrieval rules (get_file_content_at_ref):
-     - prefer **head.sha** to see the final state of the file
-     - use **base.sha** only when you need the original for comparison
-     - never bulk-retrieve all files — only fetch when the diff is genuinely insufficient
-     - skip retrieval for binary, generated, and trivially deleted files
+     | fullRewrite | Diff too large / full-file rewrite | Note as full rewrite; review based on available diff context |
 3. After finishing this page:
    **Ask the user:** “Continue to next page (page X+1)?”
 
@@ -96,7 +118,7 @@ Non-critical but valuable improvements.
 Optional enhancements.
 
 ## Review Notes
-Pages reviewed so far, skipped files, and any full-file retrieval done.
+Pages reviewed so far and skipped files with reasons.
 
 ---
 
@@ -112,6 +134,6 @@ You are **absolutely forbidden** from exploring, cloning, checking out, or brows
 - Do **NOT** use terminal commands (git, ls, find, cat, etc.) to access the repository.
 - Do **NOT** use IDE tools, file search, code search, symbol search, or any workspace-level tool to browse the codebase.
 - Do **NOT** read files from disk or the local workspace — even if you have tools that could do so.
-- The **only** way you may obtain code or PR data is by calling the MCP tools provided by REBUSS.Pure: `get_pr_metadata`, `get_pr_content`, `get_pr_files`, `get_pr_diff`, `get_file_diff`, and `get_file_content_at_ref`.
+- The **only** way you may obtain code or PR data is by calling the MCP tools provided by REBUSS.Pure: `get_pr_metadata`, `get_pr_content`, `get_pr_files`, `get_local_files`, and `get_local_content`.
 - Your entire review must be based **exclusively** on the content returned by these MCP tools. No exceptions.
 - If the MCP tools do not provide enough information to assess something, state that explicitly — do **not** attempt to obtain it through other means.

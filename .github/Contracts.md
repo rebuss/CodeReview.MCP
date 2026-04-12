@@ -33,15 +33,11 @@ Wire format example (diff tool, 2 files + manifest):
 
 | Tool | Blocks returned |
 |---|---|
-| `get_pr_diff` / `get_file_diff` / `get_local_file_diff` (F003) | `[file_block..., manifest_block]` |
-| `get_pr_diff` / `get_pr_files` (F004, paginated) | `[file_block..., manifest_block, pagination_block]` |
 | `get_pr_content` / `get_local_content` | `[file_block..., simple_pagination_block]` |
 | `get_pr_files` (F003, non-paginated) | `[file_list_block, manifest_block]` |
-| `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
+| `get_pr_files` / `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
 | `get_pr_metadata` | `[metadata_block]` (single block) |
-| `get_file_content_at_ref` | `[content_block]` (single block) |
-
-> **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, `FileContentAtRefResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
+> **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
 
 ## 2. Error Contracts
 
@@ -72,11 +68,8 @@ catch (Exception ex)
 > **Migration note:** Previously, errors were returned as `ToolResult { isError = true, content = [...] }` with an `"Error: "` prefix in the message text. Now errors are thrown as `McpException` and the SDK produces the `isError` response. The message text **no longer** carries the `"Error: "` prefix — the `McpException` message is used directly.
 
 Error messages by tool:
-- `get_pr_diff` / `get_pr_files` / `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR ..."`
-- `get_file_diff`: `"File not found in Pull Request: ..."`, `"Pull Request not found: ..."`
-- `get_file_content_at_ref`: `"File not found: ..."`, `"Error retrieving file content: ..."`
+- `get_pr_files` / `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR ..."`
 - `get_local_files`: `"Repository not found: ..."`, `"Git command failed: ..."`
-- `get_local_file_diff`: `"File not found in local changes: ..."`, `"Repository not found: ..."`, `"Git command failed: ..."`
 - `get_pr_content`: `"Missing required parameter: prNumber"`, `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Pull Request not found: ..."`, `"Error retrieving PR content: ..."`
 - `get_local_content`: `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Error retrieving local content: ..."`
 
@@ -128,33 +121,6 @@ Since the migration to the **ModelContextProtocol SDK v1.2.0**, tool input schem
 | Nullable with default (`string? scope = null`) | Optional parameter | `"scope": { "type": "string" }` — **not** in `required` |
 | `[Description("...")]` on parameter | `"description"` field | `"prNumber": { "type": "integer", "description": "The PR number/ID" }` |
 | `CancellationToken` parameter | **Not exposed** | Auto-injected by SDK, invisible in schema |
-| `@ref` (C# keyword escape) | `"ref"` in JSON | C# `string @ref` → schema property `"ref"` |
-
-### Example: auto-generated schema for `get_file_content_at_ref`
-
-C# signature:
-```csharp
-[McpServerTool(Name = "get_file_content_at_ref")]
-public async Task<string> ExecuteAsync(
-    [Description("The repository-relative path of the file")] string path,
-    [Description("The Git ref to fetch the file at: a commit SHA, branch, or tag")] string @ref,
-    CancellationToken cancellationToken = default)
-```
-
-Auto-generated JSON Schema:
-```json
-{
-  "name": "get_file_content_at_ref",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "path": { "type": "string", "description": "The repository-relative path of the file" },
-      "ref": { "type": "string", "description": "The Git ref to fetch the file at: a commit SHA, branch, or tag" }
-    },
-    "required": ["path", "ref"]
-  }
-}
-```
 
 > **Migration note:** Previously, each tool handler implemented a `GetToolDefinition()` method that returned a hand-crafted `Tool` object with the schema. Now the SDK infers the schema from the method signature. The contract is equivalent, but the source of truth is the C# method signature rather than a manual JSON definition.
 
@@ -254,114 +220,7 @@ Budget: 750/140000 tokens (1%)
 
 ---
 
-### 4.3 `get_pr_diff`
-
-#### Input
-
-Auto-generated from `GetPullRequestDiffToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
-
-| Parameter | C# Type | Required | Description |
-|---|---|---|---|
-| `prNumber` | `int?` | ❌ | The Pull Request number/ID to retrieve the diff for |
-| `modelName` | `string?` | ❌ | Optional model name (e.g. 'Claude Sonnet') to resolve context window size |
-| `maxTokens` | `int?` | ❌ | Optional explicit context window size in tokens |
-| `pageReference` | `string?` | ❌ | Opaque page reference from a previous response. Encodes all context needed to re-derive the page. |
-| `pageNumber` | `int?` | ❌ | Page number for direct access (requires original params + budget) |
-
-> **Feature 004 note:** `prNumber` is **optional** when `pageReference` is provided (the page reference encodes the original request parameters). `pageReference` and `pageNumber` are mutually exclusive.
-
-#### Output — plain text blocks
-
-**Block 1..N:** one `TextContentBlock` per file
-
-Each file block starts with a `=== path (changeType: +additions -deletions) ===` header, followed by one or more hunks. Each hunk begins with a unified-diff `@@ -oldStart,oldCount +newStart,newCount @@` header line, then `+`/`-`/` `-prefixed content lines:
-
-```
-=== src/Cache/CacheService.cs (edit: +5 -2) ===
-@@ -10,4 +10,5 @@
- public class CacheService
--    private int _ttl = 60;
-+    private int _ttl = 300;
-```
-
-For skipped files (binary, generated, etc.):
-
-```
-=== docs/logo.png (add: skipped) ===
-Reason: Binary file
-```
-
-**Last block:** manifest
-
-```
-Manifest:
-  src/Cache/CacheService.cs                                          ~  150 tokens  Included   Source
-  docs/logo.png                                                      ~    5 tokens  Included   Docs
-Budget: 155/140000 tokens (0%)
-```
-
-**Extra block (paginated only — Feature 004):** pagination footer (appended after manifest)
-
-```
---- Page 1 of 3 | hasMore: true | next: eyJ0IjoiZ2V0X3ByX2RpZmYiL... | STALE: head changed (abc123… → def456…) ---
-```
-
-**Shared by:** `get_pr_diff`, `get_file_diff`, `get_local_file_diff`. For `get_file_diff`, exactly 1 file block is returned.
-
----
-
-### 4.4 `get_file_diff`
-
-#### Input
-
-Auto-generated from `GetFileDiffToolHandler.ExecuteAsync` signature. Both parameters are non-nullable, making them required.
-
-| Parameter | C# Type | Required | Description |
-|---|---|---|---|
-| `prNumber` | `int` | ✅ | The Pull Request number/ID |
-| `path` | `string` | ✅ | Repository-relative file path |
-
-#### Output
-
-Same plain text format as `get_pr_diff`. Returns exactly 1 file block + manifest block. Tool-level error if file not in PR.
-
----
-
-### 4.5 `get_file_content_at_ref`
-
-#### Input
-
-Auto-generated from `GetFileContentAtRefToolHandler.ExecuteAsync` signature. Both parameters are non-nullable, making them required. Note: `@ref` (C# keyword escape) maps to `ref` in the JSON schema.
-
-| Parameter | C# Type | Required | Description |
-|---|---|---|---|
-| `path` | `string` | ✅ | The repository-relative path of the file |
-| `ref` | `string` | ✅ | The Git ref to fetch the file at: a commit SHA, branch name, or tag |
-
-#### Output — plain text (single `TextContentBlock`)
-
-```
-=== src/Cache/CacheService.cs @ abc123def456 ===
-using System;
-
-namespace Cache...
-```
-
-For binary files:
-
-```
-=== docs/logo.png @ abc123def456 ===
-[binary file, size: 4096 bytes, encoding: base64]
-```
-
-| Part | Notes |
-|---|---|
-| Header line | `=== {path} @ {ref} ===` |
-| Body | Raw file content for text files; `[binary file, ...]` for binary; `[file content not available]` if content is null |
-
----
-
-### 4.6 `get_local_files`
+### 4.3 `get_local_files`
 
 #### Input
 
@@ -405,26 +264,7 @@ Summary: 1 source, 1 test | High priority: 1
 
 ---
 
-### 4.7 `get_local_file_diff`
-
-#### Input
-
-Auto-generated from `GetLocalFileDiffToolHandler.ExecuteAsync` signature.
-
-| Parameter | C# Type | Required | Default | Description |
-|---|---|---|---|---|
-| `path` | `string` | ✅ | — | Repository-relative file path |
-| `scope` | `string?` | ❌ | `null` (resolved to `"working-tree"`) | Same scope values as `get_local_files` |
-| `modelName` | `string?` | ❌ | `null` | Optional model name to resolve context window size |
-| `maxTokens` | `int?` | ❌ | `null` | Optional explicit context window size in tokens |
-
-#### Output
-
-Same plain text format as `get_pr_diff`. Returns exactly 1 file block + manifest block.
-
----
-
-### 4.8 `get_pr_content`
+### 4.4 `get_pr_content`
 
 #### Input
 
@@ -439,7 +279,7 @@ Auto-generated from `GetPullRequestContentToolHandler.ExecuteAsync` signature. A
 
 #### Output — plain text blocks
 
-**Block 1..N:** one `TextContentBlock` per file (same diff format as `get_pr_diff`, with `@@ -oldStart,oldCount +newStart,newCount @@` hunk headers)
+**Block 1..N:** one `TextContentBlock` per file (unified diff format with `@@ -oldStart,oldCount +newStart,newCount @@` hunk headers)
 
 ```
 === src/Cache/CacheService.cs (edit: +5 -2) ===
@@ -466,7 +306,7 @@ Error messages: `"Missing required parameter: prNumber"`, `"prNumber must be gre
 
 ---
 
-### 4.9 `get_local_content`
+### 4.5 `get_local_content`
 
 #### Input
 
@@ -515,7 +355,6 @@ These C# classes are used internally by `PlainTextFormatter`, `ToolHandlerHelper
 | **status** (PR files) | `"add"`, `"edit"`, `"delete"`, `"rename"` | Same mapping as changeType for PR tools |
 | **status** (local files) | `"added"`, `"modified"`, `"removed"`, `"renamed"` | Local: `MapStatus(char)` — git status codes |
 | **op** (diff line) | `"+"`, `"-"`, `" "` | `DiffLine.Op.ToString()` — char to string |
-| **encoding** (file content) | `"utf-8"`, `"base64"` | Text vs binary files |
 | **reviewPriority** | `"high"`, `"medium"`, `"low"` | `FileClassifier.DetermineReviewPriority(category)` |
 | **scope** (local tools) | `"working-tree"`, `"staged"`, `"<branch-name>"` | `LocalReviewScope.Parse(string?)` |
 | **fileCategory** (internal) | Source, Test, Config, Docs, Binary, Generated | `FileCategory` enum — mapped to summary counts, not directly in output |

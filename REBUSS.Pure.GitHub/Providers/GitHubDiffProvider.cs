@@ -192,12 +192,25 @@ public class GitHubDiffProvider
             {
                 var fileSw = Stopwatch.StartNew();
 
-                var baseContentTask = _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path, ct);
-                var headContentTask = _apiClient.GetFileContentAtRefAsync(headCommit, file.Path, ct);
-                await Task.WhenAll(baseContentTask, headContentTask);
+                string? baseContent;
+                string? headContent;
 
-                var baseContent = await baseContentTask;
-                var headContent = await headContentTask;
+                if (string.Equals(file.ChangeType, "add", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Added files have no base version — skip the fetch that would 404.
+                    baseContent = null;
+                    headContent = await _apiClient.GetFileContentAtRefAsync(headCommit, file.Path, ct);
+                    _logger.LogDebug("Skipping base ref fetch for added file '{FilePath}'", file.Path);
+                }
+                else
+                {
+                    var baseContentTask = _apiClient.GetFileContentAtRefAsync(baseCommit, file.Path, ct);
+                    var headContentTask = _apiClient.GetFileContentAtRefAsync(headCommit, file.Path, ct);
+                    await Task.WhenAll(baseContentTask, headContentTask);
+
+                    baseContent = await baseContentTask;
+                    headContent = await headContentTask;
+                }
                 file.Hunks = _diffBuilder.Build(file.Path, baseContent, headContent);
 
                 if (IsFullFileRewrite(baseContent, headContent, file.Hunks))
@@ -255,7 +268,11 @@ public class GitHubDiffProvider
         if (oldLineCount < FullRewriteMinLineCount && newLineCount < FullRewriteMinLineCount)
             return false;
 
-        return !hunks.SelectMany(h => h.Lines).Any(l => l.Op == ' ');
+        var allLines = hunks.SelectMany(h => h.Lines);
+        var deletions = allLines.Count(l => l.Op == '-');
+        var additions = allLines.Count(l => l.Op == '+');
+
+        return deletions == oldLineCount && additions == newLineCount;
     }
 
     private static PullRequestDiff BuildDiff(
