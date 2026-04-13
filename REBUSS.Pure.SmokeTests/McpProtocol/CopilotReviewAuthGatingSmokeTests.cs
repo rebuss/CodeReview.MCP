@@ -61,7 +61,6 @@ public class CopilotReviewAuthGatingSmokeTests
 
         Assert.Contains("get_pr_content", toolNames);
         Assert.Contains("get_pr_metadata", toolNames);
-        Assert.Contains("get_local_files", toolNames);
 
         await server.ShutdownAsync();
     }

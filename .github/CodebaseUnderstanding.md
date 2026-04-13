@@ -35,7 +35,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Models\FullPullRequestMetadata.cs` | Rich PR metadata (all fields + `RepositoryFullName`, `WebUrl`) | `FullPullRequestMetadata` | AzureDevOpsMetadataProvider, AzureDevOpsScmClient, GetPullRequestMetadataToolHandler |
 | `REBUSS.Pure.Core\Models\IterationInfo.cs` | Iteration commit SHAs | `IterationInfo` (record) | AzureDevOpsDiffProvider, AzureDevOpsMetadataProvider, IterationInfoParser |
 | `REBUSS.Pure.Core\Models\FileClassification.cs` | File classification result | `FileClassification`, `FileCategory` (enum) | FileClassifier, AzureDevOpsFilesProvider, AzureDevOpsDiffProvider, LocalReviewProvider |
-| `REBUSS.Pure.Core\Models\PullRequestFiles.cs` | File list result models | `PullRequestFiles`, `PullRequestFileInfo`, `PullRequestFilesSummary` | AzureDevOpsFilesProvider, LocalReviewProvider, GetLocalChangesFilesToolHandler |
+| `REBUSS.Pure.Core\Models\PullRequestFiles.cs` | File list result models | `PullRequestFiles`, `PullRequestFileInfo`, `PullRequestFilesSummary` | AzureDevOpsFilesProvider, LocalReviewProvider |
 | `REBUSS.Pure.Core\Models\BudgetSource.cs` | Budget resolution source enum | `BudgetSource` (enum: `Explicit`, `Registry`, `Default`) | ContextBudgetResolver |
 | `REBUSS.Pure.Core\Models\BudgetResolutionResult.cs` | Budget resolution result | `BudgetResolutionResult` (sealed record) | ContextBudgetResolver, ContextBudgetMetadata composition |
 | `REBUSS.Pure.Core\Models\TokenEstimationResult.cs` | Token estimation result | `TokenEstimationResult` (sealed record) | TokenEstimator, ContextBudgetMetadata composition |
@@ -327,7 +327,6 @@ Owns background enrichment of pull-request diffs so `get_pr_metadata` can fall b
 | `REBUSS.Pure\Tools\GetPullRequestMetadataToolHandler.cs` | `[McpServerToolType]` `get_pr_metadata` — returns plain text `IEnumerable<ContentBlock>`; with optional `modelName`/`maxTokens` it kicks off background enrichment via `IPrEnrichmentOrchestrator` and waits up to `WorkflowOptions.MetadataInternalTimeoutMs` (default 28 000 ms). On internal timeout falls back to a basic-summary response with an explicit "paging not yet available" indicator (FR-002, FR-004); on background failure appends a friendly-status block (FR-017). The host never sees a tool-call timeout regardless of PR size. SDK attribute-based registration | `IPullRequestDataProvider`, `IContextBudgetResolver`, `IRepositoryDownloadOrchestrator`, `IPrEnrichmentOrchestrator`, `IOptions<WorkflowOptions>`, `PlainTextFormatter` |
 | `REBUSS.Pure\Tools\GetPullRequestContentToolHandler.cs` | `[McpServerToolType]` `get_pr_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); reads enriched content from `IPrEnrichmentOrchestrator`'s cached `PrEnrichmentResult`. Cold-start path (no prior snapshot) calls `IPullRequestDataProvider.GetMetadataAsync` for SHA discovery then triggers enrichment. Detects budget mismatch and supersedes with new safeBudget. Runs with its own `WorkflowOptions.ContentInternalTimeoutMs` (default 28 000 ms) — on timeout returns a friendly "still preparing" status block, on Failed snapshot returns a friendly failure block. SDK attribute-based registration | `IPullRequestDataProvider`, `IContextBudgetResolver`, `IPrEnrichmentOrchestrator`, `IOptions<WorkflowOptions>`, `PlainTextFormatter` |
 | `REBUSS.Pure\Tools\GetLocalContentToolHandler.cs` | `[McpServerToolType]` `get_local_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); stat-based page allocation, parallel per-file diff fetch via `Task.WhenAll` (only page files); uses `FileTokenMeasurement.MapToStructured` for file mapping; SDK attribute-based registration | `ILocalReviewProvider`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `FileTokenMeasurement`, `PlainTextFormatter`, `PaginationMetadataResult` |
-| `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — returns plain text `IEnumerable<ContentBlock>` (file list block + manifest/pagination footer); F004 integration: pagination support but no staleness (null fingerprint); delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PlainTextFormatter`, `PaginationMetadataResult` |
 ### Tool shared helpers (REBUSS.Pure\Tools\Shared)
 
 | File | Role | Depends on |
@@ -445,7 +444,7 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `README.md` | Project documentation |
 | `install.ps1` | PowerShell installer: downloads latest `.nupkg` from GitHub Releases (`rebuss/CodeReview.MCP`), installs as global tool (`CodeReview.MCP`) |
 | `install.sh` | Bash installer: same workflow as `install.ps1` for Linux/macOS |
-| `.github\prompts\create-pr.md` | *(Not deployed by `init` — reserved for future release)* GitHub Copilot prompt for creating a pull request; uses `get_local_files` MCP tool and `git`/`gh`/`az` CLI |
+| `.github\prompts\create-pr.md` | *(Not deployed by `init` — reserved for future release)* GitHub Copilot prompt for creating a pull request; uses `get_local_content` MCP tool and `git`/`gh`/`az` CLI |
 | `.github\prompts\create-project-conventions.prompt.md` | Meta-prompt: instructs agent how to create/regenerate `ProjectConventions.md` from codebase analysis |
 | `.github\prompts\create-architecture.prompt.md` | Meta-prompt: instructs agent how to create/regenerate `Architecture.md` — deep-dive into MCP protocol, provider internals, auth/config, design rationale |
 | `.github\prompts\create-extension-recipes.prompt.md` | Meta-prompt: instructs agent how to create/regenerate `ExtensionRecipes.md` — detailed cookbook with code templates, validation checklists, pitfalls |
@@ -487,7 +486,6 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubChainedAuthenticationProviderTests.cs` | `GitHubChainedAuthenticationProvider` — PAT precedence, cached tokens, GitHub CLI token acquisition and caching, expired token fallback, null expiry used as valid, `InvalidateCachedToken`, `BuildAuthRequiredMessage` tests read `Resources.ErrorGitHubAuthRequired` directly |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliTokenProviderTests.cs` | `GitHubCliTokenProvider.ParseTokenResponse` — valid plain text, whitespace trimming, empty/null/whitespace returns null, `DefaultTokenLifetime` constant (24 hours) |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliProcessHelperTests.cs` | `GitHubCliProcessHelper.GetProcessStartArgs` — Windows `cmd.exe /c gh` wrapping, Linux direct `gh` invocation, custom `ghPath`; `TryFindGhCliOnWindows` |
-| `REBUSS.Pure.Tests\Tools\GetLocalChangesFilesToolHandlerTests.cs` | `GetLocalChangesFilesToolHandler` — scope parsing, plain text output, error handling (McpException), packing manifest |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestMetadataToolHandlerTests.cs` | `GetPullRequestMetadataToolHandler` — plain text output, validation (McpException), provider exceptions, +contentPaging computation (diff-based token measurement via `IPullRequestDiffCache` + `FileTokenMeasurement`, page allocation, backward compatibility without budget params), diff-cache verification test (Feature 005: replaced `_dataProvider.GetFilesAsync` mock with `_diffCache` mock, replaced `EstimateFromStats` with `EstimateTokenCount`) |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestContentToolHandlerTests.cs` | `GetPullRequestContentToolHandler` — plain text output, validation (McpException), pagination (page filtering, category breakdown, multi-page, out-of-range), PR not found error; Feature 005: replaced `_dataProvider` with `_diffCache` mock, diff-based token measurement via `EstimateTokenCount`, diff-cache and token-estimation verification tests |
 | `REBUSS.Pure.Tests\Tools\GetLocalContentToolHandlerTests.cs` | `GetLocalContentToolHandler` — plain text output, validation (McpException), pagination (per-file diff fetch, category breakdown, scope routing, multi-page, out-of-range) |
@@ -516,7 +514,7 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.SmokeTests\Fixtures\CliProcessHelper.cs` | Test helper: runs `dotnet run --project REBUSS.Pure` with stdin piping, env overrides, and timeout; uses compile-time `BuildConfiguration` constant (`#if DEBUG`) with `-c {BuildConfiguration} --no-build` to avoid redundant rebuilds; wraps stdin write/close in `try/catch (IOException)` for process-exits-before-stdin-consumed race; uses `WaitForExit(TimeSpan)` via `Task.Run` instead of `WaitForExitAsync` to avoid .NET 7+ pipe-EOF-wait hang; separate `pipeCts` for pipe reads with 5 s drain grace period after process exit; `BuildRestrictedPathEnv()` hides auth CLI tools — on Windows filters PATH directories, on Linux/macOS prepends shadow scripts for `gh`/`az` that exit immediately |
 | `REBUSS.Pure.SmokeTests\InitCommand\GitHubInitSmokeTests.cs` | Smoke tests for `init` in GitHub repos: PAT, no-PAT, IDE detection, config merge |
 | `REBUSS.Pure.SmokeTests\InitCommand\AzureDevOpsInitSmokeTests.cs` | Smoke tests for `init` in Azure DevOps repos: PAT, no-PAT, SSH remote, non-git dir, subdirectory |
-| `REBUSS.Pure.SmokeTests\McpProtocol\McpServerSmokeTests.cs` | Smoke tests for MCP protocol: initialize, tools/list, get_local_files, unknown method, graceful shutdown; validates plain-text tool output for local files |
+| `REBUSS.Pure.SmokeTests\McpProtocol\McpServerSmokeTests.cs` | Smoke tests for MCP protocol: initialize, tools/list, unknown method, graceful shutdown |
 | `REBUSS.Pure.SmokeTests\Installation\FullInstallSmokeTests.cs` | Smoke test: pack (`--no-build -c {BuildConfiguration}`) → tool install → init (60 s timeout) → MCP handshake (full user installation flow). Uses `#if DEBUG` compile-time config constant; `IOException` handling on stdin writes/close; uses `WaitForExit(TimeSpan)` via `Task.Run` instead of `WaitForExitAsync` to avoid .NET 7+ pipe-EOF-wait hang; separate `pipeCts` for pipe reads with 5 s drain grace period after process exit; `McpHandshakeAsync` stdin writes wrapped in `try/catch (IOException)`; `RunProcessAsync` accepts `environmentOverrides` parameter; init step uses `CliProcessHelper.BuildRestrictedPathEnv()` to shadow `az`/`gh` CLI tools on CI runners, preventing interactive `az login` from blocking indefinitely when the dotnet-tool shim does not forward `--pat` |
 | `REBUSS.Pure.SmokeTests\Infrastructure\TestSettings.cs` | Contract test settings: reads env vars (`REBUSS_ADO_*`, `REBUSS_GH_*`), validates completeness, provides skip reasons |
 | `REBUSS.Pure.SmokeTests\Infrastructure\ContractMcpProcessFixture.cs` | Contract test fixture: starts MCP server with provider-specific CLI args (ADO/GitHub/Protocol), performs SDK-compatible handshake (sends `initialize` with `protocolVersion`, `capabilities`, `clientInfo`, then `notifications/initialized`), provides `SendToolCallAsync` |
@@ -525,7 +523,7 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.SmokeTests\Expectations\AdoTestExpectations.cs` | Expected values from Azure DevOps fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Expectations\GitHubTestExpectations.cs` | Expected values from GitHub fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Protocol\InitializeProtocolTests.cs` | Protocol tests (no credentials): MCP initialize handshake — protocol version, server info, capabilities |
-| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (4), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +PaginationEnabledTools array, +2 schema assertions for F004 pagination parameters, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
+| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (3), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoMetadataContractTests.cs` | Contract tests (ADO): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoNegativeContractTests.cs` | Negative tests (ADO): invalid/missing prNumber |
 | `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubMetadataContractTests.cs` | Contract tests (GitHub): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
@@ -611,12 +609,10 @@ AnalysisInput / AnalysisSection / ReviewContext [Core]
 LocalReviewScope / LocalFileStatus
   ? LocalGitClient [Pure]                          (produces LocalFileStatus)
   ? LocalReviewProvider [Pure]                     (consumes: orchestrates git client + diff builder)
-  ? GetLocalChangesFilesToolHandler [Pure]          (consumes scope string ? parse ? pass to provider)
   ? GetLocalContentToolHandler [Pure]               (consumes scope string + pageNumber ? pass to provider)
 
 LocalReviewFiles
   ? LocalReviewProvider [Pure]                     (produces)
-  ? GetLocalChangesFilesToolHandler [Pure]          (consumes: maps to LocalReviewFilesResult)
   ? GetLocalContentToolHandler [Pure]               (consumes: maps to LocalContentPageResult)
 
 AzureDevOpsOptions (+ LocalRepoPath) [AzureDevOps]
@@ -847,7 +843,6 @@ switch (provider)
 
 // MCP tool handlers
 // SDK-migrated handlers (registered via [McpServerToolType] attribute discovery):
-// GetLocalChangesFilesToolHandler,
 // GetPullRequestMetadataToolHandler, GetPullRequestContentToolHandler,
 // GetLocalContentToolHandler
 

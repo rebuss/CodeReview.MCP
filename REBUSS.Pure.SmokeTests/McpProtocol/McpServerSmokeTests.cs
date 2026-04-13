@@ -12,7 +12,6 @@ public class McpServerSmokeTests
     private static readonly string[] ExpectedTools =
     [
         "get_pr_metadata",
-        "get_local_files",
         "get_pr_content",
         "get_local_content"
     ];
@@ -89,71 +88,6 @@ public class McpServerSmokeTests
                 $"Tool '{name}' is missing inputSchema.");
             Assert.Equal("object", schema.GetProperty("type").GetString());
         }
-
-        await server.ShutdownAsync();
-    }
-
-    [Fact]
-    public async Task GetLocalFiles_ReturnsValidResponse()
-    {
-        using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
-
-        // Create an initial commit so HEAD exists
-        repo.CreateFile("dummy.txt", "hello");
-        RunGitInRepo(repo.RootPath, "add .");
-        RunGitInRepo(repo.RootPath, "commit -m \"initial\"");
-
-        await using var server = McpProcessFixture.Start(repo.RootPath);
-
-        await server.InitializeHandshakeAsync("1");
-
-        // Call get_local_files
-        var response = await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "2",
-            method = "tools/call",
-            @params = new { name = "get_local_files", arguments = new { scope = "working-tree" } }
-        });
-
-        var result = response.RootElement.GetProperty("result");
-        var isError = result.TryGetProperty("isError", out var errProp) && errProp.GetBoolean();
-        Assert.False(isError,
-            $"get_local_files returned error: {result}");
-
-        await server.ShutdownAsync();
-    }
-
-    [Fact]
-    public async Task GetLocalFiles_WithChangedFile_ReturnsDiff()
-    {
-        using var repo = TempGitRepoFixture.Create("https://github.com/fake/repo.git");
-
-        // Create initial commit, then modify a file
-        repo.CreateFile("test.txt", "original content");
-        RunGitInRepo(repo.RootPath, "add .");
-        RunGitInRepo(repo.RootPath, "commit -m \"initial\"");
-        repo.CreateFile("test.txt", "modified content");
-
-        await using var server = McpProcessFixture.Start(repo.RootPath);
-
-        await server.InitializeHandshakeAsync("1");
-
-        var response = await server.SendAsync(new
-        {
-            jsonrpc = "2.0",
-            id = "2",
-            method = "tools/call",
-            @params = new { name = "get_local_files", arguments = new { scope = "working-tree" } }
-        });
-
-        var result = response.RootElement.GetProperty("result");
-        var isError = result.TryGetProperty("isError", out var errProp) && errProp.GetBoolean();
-        Assert.False(isError);
-
-        // Tool responses are plain text blocks; verify the changed file appears in output.
-        var contentText = result.GetProperty("content")[0].GetProperty("text").GetString()!;
-        Assert.Contains("test.txt", contentText, StringComparison.OrdinalIgnoreCase);
 
         await server.ShutdownAsync();
     }

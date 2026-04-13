@@ -13,7 +13,6 @@ public class ToolsListProtocolTests
     private static readonly string[] ExpectedToolNames =
     [
         "get_pr_metadata",
-        "get_local_files",
         "get_pr_content",
         "get_local_content"
     ];
@@ -24,14 +23,6 @@ public class ToolsListProtocolTests
         "get_pr_content"
     ];
 
-    /// <summary>
-    /// Tools that support pagination (Feature 004). prNumber/scope is optional when pageReference is used.
-    /// </summary>
-    private static readonly string[] PaginationEnabledTools =
-    [
-        "get_local_files"
-    ];
-
     private readonly ProtocolMcpProcessFixture _fixture;
 
     public ToolsListProtocolTests(ProtocolMcpProcessFixture fixture)
@@ -40,14 +31,14 @@ public class ToolsListProtocolTests
     }
 
     [Fact]
-    public async Task ToolsList_ReturnsAllFourTools()
+    public async Task ToolsList_ReturnsAllThreeTools()
     {
         var response = await _fixture.Server.SendToolsListAsync();
         var tools = response.RootElement
             .GetProperty("result")
             .GetProperty("tools");
 
-        Assert.Equal(4, tools.GetArrayLength());
+        Assert.Equal(3, tools.GetArrayLength());
     }
 
     [Fact]
@@ -109,37 +100,6 @@ public class ToolsListProtocolTests
 
             Assert.True(props.TryGetProperty("prNumber", out _),
                 $"Tool '{prTool}' is missing 'prNumber' property.");
-        }
-    }
-
-    /// <summary>
-    /// Feature 004 (SC-008): Pagination-enabled tools must declare pageReference and pageNumber properties.
-    /// </summary>
-    [Fact]
-    public async Task ToolsList_PaginationEnabledTools_HavePageReferenceAndPageNumber()
-    {
-        var response = await _fixture.Server.SendToolsListAsync();
-        var tools = response.RootElement
-            .GetProperty("result")
-            .GetProperty("tools");
-
-        var toolMap = tools.EnumerateArray()
-            .ToDictionary(
-                t => t.GetProperty("name").GetString()!,
-                t => t);
-
-        foreach (var pagTool in PaginationEnabledTools)
-        {
-            Assert.True(toolMap.ContainsKey(pagTool), $"Tool '{pagTool}' not found.");
-
-            var schema = toolMap[pagTool].GetProperty("inputSchema");
-            Assert.True(schema.TryGetProperty("properties", out var props),
-                $"Tool '{pagTool}' has no 'properties' in schema.");
-
-            Assert.True(props.TryGetProperty("pageReference", out _),
-                $"Tool '{pagTool}' is missing 'pageReference' property.");
-            Assert.True(props.TryGetProperty("pageNumber", out _),
-                $"Tool '{pagTool}' is missing 'pageNumber' property.");
         }
     }
 

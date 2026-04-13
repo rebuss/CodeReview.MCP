@@ -137,9 +137,6 @@
   <data name="ErrorRetrievingLocalFileDiff" xml:space="preserve">
     <value>Error retrieving local file diff: {0}</value>
   </data>
-  <data name="ErrorRetrievingLocalFiles" xml:space="preserve">
-    <value>Error retrieving local files: {0}</value>
-  </data>
   <data name="ErrorRetrievingPrContent" xml:space="preserve">
     <value>Error retrieving PR content: {0}</value>
   </data>
@@ -172,24 +169,6 @@
   </data>
   <data name="LogGetLocalContentError" xml:space="preserve">
     <value>[get_local_content] Error (pageNumber={PageNumber}, scope={Scope})</value>
-  </data>
-  <data name="LogGetLocalFilesCompletedF003" xml:space="preserve">
-    <value>[get_local_files] Completed (F003): scope={Scope}, {FileCount} files, {ElapsedMs}ms</value>
-  </data>
-  <data name="LogGetLocalFilesCompletedF004" xml:space="preserve">
-    <value>[get_local_files] Completed (F004): scope={Scope}, page {Page}/{TotalPages}, {ElapsedMs}ms</value>
-  </data>
-  <data name="LogGetLocalFilesEntry" xml:space="preserve">
-    <value>[get_local_files] Entry: scope={Scope}</value>
-  </data>
-  <data name="LogGetLocalFilesError" xml:space="preserve">
-    <value>[get_local_files] Error</value>
-  </data>
-  <data name="LogGetLocalFilesGitCommandFailed" xml:space="preserve">
-    <value>[get_local_files] Git command failed</value>
-  </data>
-  <data name="LogGetLocalFilesRepositoryNotFound" xml:space="preserve">
-    <value>[get_local_files] Repository not found</value>
   </data>
   <data name="LogGetPrContentCompleted" xml:space="preserve">
     <value>[get_pr_content] Completed: PR #{PrNumber}, page {Page}/{TotalPages}, {FileCount} files, {Ms}ms</value>

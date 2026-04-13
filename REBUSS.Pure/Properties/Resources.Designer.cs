@@ -295,15 +295,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Error retrieving local files: {0}.
-        /// </summary>
-        internal static string ErrorRetrievingLocalFiles {
-            get {
-                return ResourceManager.GetString("ErrorRetrievingLocalFiles", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Error retrieving PR content: {0}.
         /// </summary>
         internal static string ErrorRetrievingPrContent {
@@ -399,60 +390,6 @@ namespace REBUSS.Pure.Properties {
         internal static string LogGetLocalContentError {
             get {
                 return ResourceManager.GetString("LogGetLocalContentError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Completed (F003): scope={Scope}, ...
-        /// </summary>
-        internal static string LogGetLocalFilesCompletedF003 {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesCompletedF003", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Completed (F004): scope={Scope}, ...
-        /// </summary>
-        internal static string LogGetLocalFilesCompletedF004 {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesCompletedF004", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Entry: scope={Scope}.
-        /// </summary>
-        internal static string LogGetLocalFilesEntry {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Error.
-        /// </summary>
-        internal static string LogGetLocalFilesError {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Git command failed.
-        /// </summary>
-        internal static string LogGetLocalFilesGitCommandFailed {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesGitCommandFailed", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_local_files] Repository not found.
-        /// </summary>
-        internal static string LogGetLocalFilesRepositoryNotFound {
-            get {
-                return ResourceManager.GetString("LogGetLocalFilesRepositoryNotFound", resourceCulture);
             }
         }
 

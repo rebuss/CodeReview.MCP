@@ -45,8 +45,6 @@ Read **every** output model file. Document every property: name (as it appears i
 **Read these files in full:**
 - `REBUSS.Pure/Tools/Models/StructuredDiffResult.cs` — used by `get_pr_content`, `get_local_content`
 - `REBUSS.Pure/Tools/Models/PullRequestMetadataResult.cs` — used by `get_pr_metadata`
-- `REBUSS.Pure/Tools/Models/PullRequestFilesResult.cs` — used by `get_local_files`
-- `REBUSS.Pure/Tools/Models/LocalReviewFilesResult.cs` — used by `get_local_files`
 
 ### Step 4: Understand the serialization pipeline (dual-config)
 
@@ -151,19 +149,7 @@ Line op values: "+", "-", " " (context). Additions/deletions counts.]
 
 ---
 
-### 3.3 `get_local_files`
-
-#### Input
-[Table: scope (optional, default "working-tree"). Document all scope values.]
-
-#### Output
-[Full JSON example. Note: EXTENDS PullRequestFilesResult shape with
-repositoryRoot, scope, currentBranch context fields.
-Reuses PullRequestFileItem and PullRequestFilesSummaryResult.]
-
----
-
-### 3.4 `get_local_content`
+### 3.3 `get_local_content`
 
 #### Input
 [Table: pageNumber (required) + scope (optional, default "working-tree")]
@@ -181,9 +167,6 @@ Returns unified-diff content as plain text ContentBlocks.]
 - StructuredFileChange — nested in StructuredDiffResult
 - StructuredHunk — nested in StructuredFileChange
 - StructuredLine — nested in StructuredHunk
-- PullRequestFileItem — used by: get_local_files
-- PullRequestFilesSummaryResult — used by: get_local_files
-
 For each DTO: list all JSON fields with types. This is the authoritative field list
 that must be updated when DTOs change.]
 

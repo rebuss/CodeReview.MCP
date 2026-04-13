@@ -46,7 +46,7 @@ Trace the path for `get_pr_content(prNumber: 42, pageNumber: 1)` from MCP reques
 5. `DiffProvider` calls API client → parses JSON → builds `PullRequestDiff` via `StructuredDiffBuilder`
 6. Handler maps domain model → paginated plain text content → returned to SDK
 
-Do the same for `get_local_files` (local review path without network).
+Do the same for `get_local_content` (local review path without network).
 
 ### Step 4: Write the document
 

@@ -104,6 +104,6 @@ You are **absolutely forbidden** from exploring, cloning, checking out, or brows
 - Do **NOT** use terminal commands (git, ls, find, cat, etc.) to access the repository.
 - Do **NOT** use IDE tools, file search, code search, symbol search, or any workspace-level tool to browse the codebase.
 - Do **NOT** read files from disk or the local workspace — even if you have tools that could do so.
-- The **only** way you may obtain code or PR data is by calling the MCP tools provided by REBUSS.Pure: `get_pr_metadata`, `get_pr_content`, `get_local_files`, and `get_local_content`.
+- The **only** way you may obtain code or PR data is by calling the MCP tools provided by REBUSS.Pure: `get_pr_metadata`, `get_pr_content`, and `get_local_content`.
 - Your entire review must be based **exclusively** on the content returned by these MCP tools. No exceptions.
 - If the MCP tools do not provide enough information to assess something, state that explicitly — do **not** attempt to obtain it through other means.

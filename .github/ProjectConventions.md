@@ -31,12 +31,13 @@ MCP stdin → SDK (JSON-RPC dispatch) → [McpServerTool] method on GetPullReque
   → IEnumerable<ContentBlock> → returned to SDK → JSON-RPC response on stdout
 ```
 
-### Local Review: `get_local_files(scope)`
+### Local Review: `get_local_content(pageNumber, scope)`
 ```
-MCP stdin → SDK → [McpServerTool] method on GetLocalChangesFilesToolHandler
-  → ExecuteAsync → ILocalReviewProvider.GetFilesAsync(scope)
-    → ILocalGitClient (git child process: diff --name-status) → FileClassifier
-  ← LocalReviewFiles → PlainTextFormatter.FormatFileList + FormatManifestBlock
+MCP stdin → SDK → [McpServerTool] method on GetLocalContentToolHandler
+  → ExecuteAsync → ILocalEnrichmentOrchestrator.TriggerEnrichment(scope)
+    → ILocalReviewProvider.GetFilesAsync(scope) → ILocalGitClient (git child process)
+    → FileClassifier → Copilot review per page
+  ← LocalEnrichmentResult → PlainTextFormatter.FormatFileDiff + FormatManifestBlock
   → IEnumerable<ContentBlock> on stdout
 ```
 

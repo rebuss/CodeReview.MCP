@@ -34,8 +34,6 @@ Wire format example (diff tool, 2 files + manifest):
 | Tool | Blocks returned |
 |---|---|
 | `get_pr_content` / `get_local_content` | `[file_block..., simple_pagination_block]` |
-| `get_local_files` (F003, non-paginated) | `[file_list_block, manifest_block]` |
-| `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
 | `get_pr_metadata` | `[metadata_block]` (single block) |
 > **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
 
@@ -69,7 +67,6 @@ catch (Exception ex)
 
 Error messages by tool:
 - `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR metadata: ..."`
-- `get_local_files`: `"Repository not found: ..."`, `"Git command failed: ..."`
 - `get_pr_content`: `"Missing required parameter: prNumber"`, `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Pull Request not found: ..."`, `"Error retrieving PR content: ..."`
 - `get_local_content`: `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Error retrieving local content: ..."`
 
@@ -168,49 +165,7 @@ Files per page: p1:12f, p2:15f, p3:18f, p4:14f, p5:8f
 
 ---
 
-### 4.2 `get_local_files`
-
-#### Input
-
-Auto-generated from `GetLocalChangesFilesToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
-
-| Parameter | C# Type | Required | Default | Description |
-|---|---|---|---|---|
-| `scope` | `string?` | ❌ | `null` (resolved to `"working-tree"`) | Scope of local changes: `"working-tree"`, `"staged"`, or any branch/ref name |
-| `modelName` | `string?` | ❌ | `null` | Optional model name to resolve context window size |
-| `maxTokens` | `int?` | ❌ | `null` | Optional explicit context window size in tokens |
-| `pageReference` | `string?` | ❌ | `null` | Opaque page reference from a previous response. Mutually exclusive with `pageNumber`. |
-| `pageNumber` | `int?` | ❌ | `null` | Page number for direct access. Mutually exclusive with `pageReference`. |
-
-#### Output — plain text blocks
-
-**Block 1:** file list table (context = `"{scope} (N file(s))"` for non-paginated or `"{scope} (page P/T)"` for paginated)
-
-```
-Changed files: working-tree (2 file(s))
-  Path                                                           Status       +Add    -Del  Priority Flags
-  ----------------------------------------------------------------------------------------------------
-  src/Cache/CacheService.cs                                      modified        +5      -2  high
-  tests/CacheServiceTests.cs                                     modified        +3      -0  medium [test]
-
-Summary: 1 source, 1 test | High priority: 1
-```
-
-**Block 2:** manifest
-
-**Block 3 (paginated only — Feature 004):** pagination footer (no staleness warning for local tools)
-
-```
---- Page 1 of 2 | hasMore: true | next: eyJ0IjoiZ2V0X2xvY2FsX2Zp... ---
-```
-
-> **Note:** `get_local_files` does **not** include `stalenessWarning` (local tools use null fingerprint).
-
-**Local`status` values differ from PR tools:** `"added"`, `"modified"`, `"removed"`, `"renamed"` (git status codes).
-
----
-
-### 4.3 `get_pr_content`
+### 4.2 `get_pr_content`
 
 #### Input
 
@@ -252,7 +207,7 @@ Error messages: `"Missing required parameter: prNumber"`, `"prNumber must be gre
 
 ---
 
-### 4.4 `get_local_content`
+### 4.3 `get_local_content`
 
 #### Input
 

@@ -58,58 +58,6 @@ internal static class PlainTextFormatter
         return sb.ToString();
     }
 
-    // ─── File list ────────────────────────────────────────────────────────────────
-
-    /// <summary>Returns a single-line representation used for token-size estimation.</summary>
-    public static string FormatFileEntry(PullRequestFileInfo f, int pathWidth = DefaultPathWidth)
-    {
-        var flags = new List<string>(3);
-        if (f.IsTestFile) flags.Add("test");
-        if (f.IsBinary) flags.Add("binary");
-        if (f.IsGenerated) flags.Add("generated");
-        var flagsStr = flags.Count > 0 ? $" [{string.Join(", ", flags)}]" : string.Empty;
-        var paddedPath = f.Path.Length > pathWidth ? f.Path[..(pathWidth - 3)] + "..." : f.Path.PadRight(pathWidth);
-        return $"  {paddedPath} {f.Status,-10} +{f.Additions,4} -{f.Deletions,4}  {f.ReviewPriority,-6}{flagsStr}";
-    }
-
-    /// <summary>
-    /// Formats a full file list as a table. <paramref name="context"/> is placed in
-    /// the header line, e.g. <c>"PR #42"</c> or <c>"working-tree"</c>.
-    /// </summary>
-    public static string FormatFileList(
-        IReadOnlyList<PullRequestFileInfo> files,
-        PullRequestFilesSummary summary,
-        string context)
-    {
-        ArgumentNullException.ThrowIfNull(files);
-        ArgumentNullException.ThrowIfNull(summary);
-        var pathWidth = Math.Max(DefaultPathWidth, files.Count > 0 ? files.Max(f => f.Path.Length) + 2 : DefaultPathWidth);
-        var sb = new StringBuilder();
-        sb.AppendLine($"Changed files: {context} ({files.Count} file(s))");
-        sb.AppendLine($"  {"Path".PadRight(pathWidth)} {"Status",-10} {"  +Add",6} {"  -Del",6}  {"Priority",-8} Flags");
-        sb.AppendLine("  " + new string('-', pathWidth + 40));
-
-        foreach (var f in files)
-            sb.AppendLine(FormatFileEntry(f, pathWidth));
-
-        sb.AppendLine();
-        sb.Append(FormatFilesSummaryLine(summary));
-        return sb.ToString();
-    }
-
-    private static string FormatFilesSummaryLine(PullRequestFilesSummary summary)
-    {
-        var parts = new List<string>(7);
-        if (summary.SourceFiles > 0) parts.Add($"{summary.SourceFiles} source");
-        if (summary.TestFiles > 0) parts.Add($"{summary.TestFiles} test");
-        if (summary.ConfigFiles > 0) parts.Add($"{summary.ConfigFiles} config");
-        if (summary.DocsFiles > 0) parts.Add($"{summary.DocsFiles} docs");
-        if (summary.BinaryFiles > 0) parts.Add($"{summary.BinaryFiles} binary");
-        if (summary.GeneratedFiles > 0) parts.Add($"{summary.GeneratedFiles} generated");
-        var categoriesText = parts.Count > 0 ? string.Join(", ", parts) : "no files";
-        return $"Summary: {categoriesText} | High priority: {summary.HighPriorityFiles}";
-    }
-
     // ─── PR Metadata ──────────────────────────────────────────────────────────────
 
     /// <summary>

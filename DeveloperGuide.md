@@ -243,7 +243,7 @@ gh auth token
 
 If none of the above methods work, the server returns a clear error message instructing you to run `gh auth login` or configure a PAT.
 
-> **Note:** Local self-review (`get_local_files`, `get_local_content`) works without any authentication.
+> **Note:** Local self-review (`get_local_content`) works without any authentication.
 
 ---
 
@@ -373,7 +373,6 @@ The orchestrator's load-bearing semantic — caller cancellation never cancels t
 | Tool | Description |
 |---|---|
 | `get_local_content(pageNumber, [scope], [modelName], [maxTokens])` | Returns diff content for a specific page of local uncommitted changes. Page allocation is computed internally — no separate metadata call needed |
-| `get_local_files([scope], [pageReference])` | Lists locally changed files with classification metadata; supports pagination via `pageReference` |
 
 **Scopes for local tools:**
 
