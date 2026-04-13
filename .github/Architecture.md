@@ -481,6 +481,42 @@ orchestrators exist because `IOptions<T>` cannot express in-flight `Task`
 lifecycles, and a static class would make tests impossible without process
 restart.
 
+## 6b. Copilot Review Pipeline (CopilotReviewOrchestrator)
+
+### Why parallel dispatch
+
+`CopilotReviewOrchestrator` coordinates server-side Copilot review of every page
+of enriched content. Pages are dispatched **concurrently** via `Task.Run` per page
+plus `Task.WhenAll`. The `CopilotRequestThrottle` (a static `SemaphoreSlim(1,1)`
+with a 3-second minimum spacing) serializes the actual SDK calls, but model
+response wait times overlap across pages — yielding wall-time reduction of roughly
+`3s × (N-1) + max(response_time)` vs `N × response_time` sequentially.
+
+### Thread safety
+
+| Concern | Mechanism |
+|---|---|
+| `pageResults[idx]` array | Each task writes to a unique index — no contention |
+| `CompletedPages` counter | `Interlocked.Increment` — lock-free atomic |
+| `CurrentActivity` | `volatile string?` — last writer wins (cosmetic) |
+| `Status`, `Result`, `ErrorMessage` | Guarded by `_lock` |
+| Job dictionary | `ConcurrentDictionary<string, CopilotReviewJob>` |
+
+### Progress observation
+
+`CopilotReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
+(`CopilotReviewProgressPollingIntervalMs`, default 2000ms). It reports progress
+as `"Copilot review — X/N pages complete"` whenever `CompletedPages` increases.
+This message is inherently order-agnostic — pages may complete out of order
+(e.g. page 3 before page 2), but the notification only shows the aggregate count.
+
+### Retry loop
+
+Each page gets up to 3 attempts (`MaxAttemptsPerPage = 3`) inside
+`ReviewPageWithRetryAsync`. No backoff — retries fire immediately. On exhaustion,
+the orchestrator fills in `FailedFilePaths` (only it knows which files were on
+the page) and returns a `CopilotPageReviewResult.Failure`.
+
 ## 7. Local Review Pipeline
 
 ### Scope Model

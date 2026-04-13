@@ -111,7 +111,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator
                 Resources.LogCopilotReviewTriggered, job.ReviewKey, allocation.TotalPages);
 
             lock (_lock) { job.TotalPages = allocation.TotalPages; }
-            job.CurrentActivity = $"Allocated {allocation.TotalPages} pages — starting reviews";
+            job.CurrentActivity = $"Allocated {allocation.TotalPages} pages — reviewing in parallel";
 
             // Empty-allocation fast path (edge case: empty PR / zero pages).
             if (allocation.TotalPages == 0)
@@ -131,17 +131,27 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator
                 return;
             }
 
-            // Process pages sequentially so that progress notifications advance in order
-            // (Page 1/N → 2/N → …). With the global request throttle serialising SDK calls,
-            // parallel dispatch only caused status-message races without a real throughput gain.
+            // Dispatch all pages concurrently. CopilotRequestThrottle (3-second
+            // SemaphoreSlim gate) serializes the outgoing SDK calls, but model response
+            // wait times overlap — giving a real wall-time reduction of roughly
+            // 3s × (N-1) + max(response_time) vs N × response_time sequentially.
+            // Each task writes to its own pageResults[idx] slot (no contention).
+            // CopilotReviewWaiter observes CompletedPages via polling — order-agnostic.
             var pageResults = new CopilotPageReviewResult[allocation.TotalPages];
+            var pageTasks = new Task[allocation.TotalPages];
             for (var pageIdx = 0; pageIdx < allocation.TotalPages; pageIdx++)
             {
-                var pageSlice = allocation.Pages[pageIdx];
+                var idx = pageIdx;
+                var pageSlice = allocation.Pages[idx];
                 var pageNumber = pageSlice.PageNumber;
                 var (enrichedContent, filePaths) = BuildPageInput(pageSlice, enrichment);
-                pageResults[pageIdx] = await ReviewPageAndTrackAsync(job, pageNumber, enrichedContent, filePaths, ct);
+                pageTasks[idx] = Task.Run(async () =>
+                {
+                    pageResults[idx] = await ReviewPageAndTrackAsync(
+                        job, pageNumber, enrichedContent, filePaths, ct);
+                }, ct);
             }
+            await Task.WhenAll(pageTasks);
 
             var result = new CopilotReviewResult
             {

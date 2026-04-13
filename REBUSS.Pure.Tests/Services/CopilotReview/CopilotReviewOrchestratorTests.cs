@@ -306,4 +306,38 @@ public class CopilotReviewOrchestratorTests
         // Snapshots are truly independent — querying a non-existent key returns null.
         Assert.Null(orchestrator.TryGetSnapshot("pr:999"));
     }
+
+    [Fact]
+    public async Task TriggerReview_MultiplePages_ExecutesConcurrently()
+    {
+        // Each page review takes ~200ms. With 3 pages sequential that would be ≥600ms.
+        // Parallel dispatch should complete in roughly ~200ms (+scheduling overhead).
+        const int pageDelayMs = 200;
+        const int pageCount = 3;
+
+        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        reviewer.ReviewPageAsync(Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(async ci =>
+            {
+                await Task.Delay(pageDelayMs);
+                return CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1);
+            });
+
+        var orchestrator = Create(reviewer, BuildAllocator(numberOfPages: pageCount));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        orchestrator.TriggerReview("pr:42", BuildEnrichment(fileCount: 6));
+        var result = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
+
+        sw.Stop();
+
+        Assert.Equal(pageCount, result.TotalPages);
+        Assert.Equal(pageCount, result.SucceededPages);
+
+        // Sequential would take ≥ pageCount × pageDelayMs = 600ms.
+        // Parallel should be well under that threshold.
+        var sequentialMinMs = pageCount * pageDelayMs;
+        Assert.True(sw.ElapsedMilliseconds < sequentialMinMs,
+            $"Expected parallel execution under {sequentialMinMs}ms, but took {sw.ElapsedMilliseconds}ms");
+    }
 }
