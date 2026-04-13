@@ -34,7 +34,6 @@ Read the `GetToolDefinition()` method from **every** tool handler. Extract the e
 
 **Read these files — focus on `GetToolDefinition()` and `McpTool` return value:**
 - `REBUSS.Pure/Tools/GetPullRequestMetadataToolHandler.cs`
-- `REBUSS.Pure/Tools/GetPullRequestFilesToolHandler.cs`
 - `REBUSS.Pure/Tools/GetPullRequestContentToolHandler.cs`
 - `REBUSS.Pure/Tools/GetLocalChangesFilesToolHandler.cs`
 - `REBUSS.Pure/Tools/GetLocalContentToolHandler.cs`
@@ -46,7 +45,7 @@ Read **every** output model file. Document every property: name (as it appears i
 **Read these files in full:**
 - `REBUSS.Pure/Tools/Models/StructuredDiffResult.cs` — used by `get_pr_content`, `get_local_content`
 - `REBUSS.Pure/Tools/Models/PullRequestMetadataResult.cs` — used by `get_pr_metadata`
-- `REBUSS.Pure/Tools/Models/PullRequestFilesResult.cs` — used by `get_pr_files` (also reused by `get_local_files`)
+- `REBUSS.Pure/Tools/Models/PullRequestFilesResult.cs` — used by `get_local_files`
 - `REBUSS.Pure/Tools/Models/LocalReviewFilesResult.cs` — used by `get_local_files`
 
 ### Step 4: Understand the serialization pipeline (dual-config)
@@ -78,7 +77,6 @@ Read the mapping/result-building methods in tool handlers and the assertions in 
 
 - `REBUSS.Pure/Tools/GetPullRequestContentToolHandler.cs` — `BuildStructuredResult` method: how domain model maps to DTO
 - `REBUSS.Pure/Tools/GetPullRequestMetadataToolHandler.cs` — `BuildMetadataResult` method: `MaxDescriptionLength` truncation, `isDraft` mapping
-- `REBUSS.Pure/Tools/GetPullRequestFilesToolHandler.cs` — `BuildResult` method: how file classification maps to output
 - `REBUSS.Pure.Tests/Tools/GetPullRequestContentToolHandlerTests.cs` — JSON assertions: what fields are expected, what's omitted
 - `REBUSS.Pure.SmokeTests/Expectations/GitHubTestExpectations.cs` — expected values for contract tests
 - `REBUSS.Pure.SmokeTests/Expectations/AdoTestExpectations.cs` — expected values for contract tests
@@ -137,22 +135,7 @@ field path | type | nullable | semantic notes (e.g. "state: active|completed|aba
 
 ---
 
-### 3.2 `get_pr_files`
-
-#### Input
-[Table]
-
-#### Output
-[Full JSON example. Field table. Note: PullRequestFileItem and PullRequestFilesSummaryResult
-are REUSED by get_local_files.]
-
-#### Semantic rules
-[reviewPriority values: "high"/"medium"/"low". How classification works.
-Binary/generated/test detection logic (reference FileClassifier).]
-
----
-
-### 3.3 `get_pr_content`
+### 3.2 `get_pr_content`
 
 #### Input
 [Table: prNumber (required) + pageNumber (required)]
@@ -168,7 +151,7 @@ Line op values: "+", "-", " " (context). Additions/deletions counts.]
 
 ---
 
-### 3.4 `get_local_files`
+### 3.3 `get_local_files`
 
 #### Input
 [Table: scope (optional, default "working-tree"). Document all scope values.]
@@ -180,7 +163,7 @@ Reuses PullRequestFileItem and PullRequestFilesSummaryResult.]
 
 ---
 
-### 3.5 `get_local_content`
+### 3.4 `get_local_content`
 
 #### Input
 [Table: pageNumber (required) + scope (optional, default "working-tree")]
@@ -198,8 +181,8 @@ Returns unified-diff content as plain text ContentBlocks.]
 - StructuredFileChange — nested in StructuredDiffResult
 - StructuredHunk — nested in StructuredFileChange
 - StructuredLine — nested in StructuredHunk
-- PullRequestFileItem — used by: get_pr_files, get_local_files
-- PullRequestFilesSummaryResult — used by: get_pr_files, get_local_files
+- PullRequestFileItem — used by: get_local_files
+- PullRequestFilesSummaryResult — used by: get_local_files
 
 For each DTO: list all JSON fields with types. This is the authoritative field list
 that must be updated when DTOs change.]

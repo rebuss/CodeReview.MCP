@@ -146,9 +146,6 @@
   <data name="ErrorRetrievingPrDiff" xml:space="preserve">
     <value>Error retrieving PR diff: {0}</value>
   </data>
-  <data name="ErrorRetrievingPrFiles" xml:space="preserve">
-    <value>Error retrieving PR files: {0}</value>
-  </data>
   <data name="ErrorRetrievingPrMetadata" xml:space="preserve">
     <value>Error retrieving PR metadata: {0}</value>
   </data>
@@ -205,24 +202,6 @@
   </data>
   <data name="LogGetPrContentPrNotFound" xml:space="preserve">
     <value>[get_pr_content] PR not found (prNumber={PrNumber})</value>
-  </data>
-  <data name="LogGetPrFilesCompletedF003" xml:space="preserve">
-    <value>[get_pr_files] Completed (F003): PR #{PrNumber}, {FileCount} files, {ElapsedMs}ms</value>
-  </data>
-  <data name="LogGetPrFilesCompletedF004" xml:space="preserve">
-    <value>[get_pr_files] Completed (F004): PR #{PrNumber}, page {Page}/{TotalPages}, {ElapsedMs}ms</value>
-  </data>
-  <data name="LogGetPrFilesEntry" xml:space="preserve">
-    <value>[get_pr_files] Entry: PR #{PrNumber}</value>
-  </data>
-  <data name="LogGetPrFilesError" xml:space="preserve">
-    <value>[get_pr_files] Error</value>
-  </data>
-  <data name="LogGetPrFilesMetadataFingerprintFailed" xml:space="preserve">
-    <value>[get_pr_files] Could not fetch metadata for fingerprint</value>
-  </data>
-  <data name="LogGetPrFilesPrNotFound" xml:space="preserve">
-    <value>[get_pr_files] Pull request not found</value>
   </data>
   <data name="LogGetPrMetadataCompleted" xml:space="preserve">
     <value>[get_pr_metadata] Completed: PR #{PrNumber}, {ResponseLength} chars, {ElapsedMs}ms</value>

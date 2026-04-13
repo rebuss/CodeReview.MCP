@@ -12,7 +12,6 @@ public class McpServerSmokeTests
     private static readonly string[] ExpectedTools =
     [
         "get_pr_metadata",
-        "get_pr_files",
         "get_local_files",
         "get_pr_content",
         "get_local_content"

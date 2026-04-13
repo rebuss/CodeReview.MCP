@@ -35,7 +35,7 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Models\FullPullRequestMetadata.cs` | Rich PR metadata (all fields + `RepositoryFullName`, `WebUrl`) | `FullPullRequestMetadata` | AzureDevOpsMetadataProvider, AzureDevOpsScmClient, GetPullRequestMetadataToolHandler |
 | `REBUSS.Pure.Core\Models\IterationInfo.cs` | Iteration commit SHAs | `IterationInfo` (record) | AzureDevOpsDiffProvider, AzureDevOpsMetadataProvider, IterationInfoParser |
 | `REBUSS.Pure.Core\Models\FileClassification.cs` | File classification result | `FileClassification`, `FileCategory` (enum) | FileClassifier, AzureDevOpsFilesProvider, AzureDevOpsDiffProvider, LocalReviewProvider |
-| `REBUSS.Pure.Core\Models\PullRequestFiles.cs` | File list result models | `PullRequestFiles`, `PullRequestFileInfo`, `PullRequestFilesSummary` | AzureDevOpsFilesProvider, GetPullRequestFilesToolHandler, LocalReviewProvider, GetLocalChangesFilesToolHandler |
+| `REBUSS.Pure.Core\Models\PullRequestFiles.cs` | File list result models | `PullRequestFiles`, `PullRequestFileInfo`, `PullRequestFilesSummary` | AzureDevOpsFilesProvider, LocalReviewProvider, GetLocalChangesFilesToolHandler |
 | `REBUSS.Pure.Core\Models\BudgetSource.cs` | Budget resolution source enum | `BudgetSource` (enum: `Explicit`, `Registry`, `Default`) | ContextBudgetResolver |
 | `REBUSS.Pure.Core\Models\BudgetResolutionResult.cs` | Budget resolution result | `BudgetResolutionResult` (sealed record) | ContextBudgetResolver, ContextBudgetMetadata composition |
 | `REBUSS.Pure.Core\Models\TokenEstimationResult.cs` | Token estimation result | `TokenEstimationResult` (sealed record) | TokenEstimator, ContextBudgetMetadata composition |
@@ -327,7 +327,6 @@ Owns background enrichment of pull-request diffs so `get_pr_metadata` can fall b
 | `REBUSS.Pure\Tools\GetPullRequestMetadataToolHandler.cs` | `[McpServerToolType]` `get_pr_metadata` — returns plain text `IEnumerable<ContentBlock>`; with optional `modelName`/`maxTokens` it kicks off background enrichment via `IPrEnrichmentOrchestrator` and waits up to `WorkflowOptions.MetadataInternalTimeoutMs` (default 28 000 ms). On internal timeout falls back to a basic-summary response with an explicit "paging not yet available" indicator (FR-002, FR-004); on background failure appends a friendly-status block (FR-017). The host never sees a tool-call timeout regardless of PR size. SDK attribute-based registration | `IPullRequestDataProvider`, `IContextBudgetResolver`, `IRepositoryDownloadOrchestrator`, `IPrEnrichmentOrchestrator`, `IOptions<WorkflowOptions>`, `PlainTextFormatter` |
 | `REBUSS.Pure\Tools\GetPullRequestContentToolHandler.cs` | `[McpServerToolType]` `get_pr_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); reads enriched content from `IPrEnrichmentOrchestrator`'s cached `PrEnrichmentResult`. Cold-start path (no prior snapshot) calls `IPullRequestDataProvider.GetMetadataAsync` for SHA discovery then triggers enrichment. Detects budget mismatch and supersedes with new safeBudget. Runs with its own `WorkflowOptions.ContentInternalTimeoutMs` (default 28 000 ms) — on timeout returns a friendly "still preparing" status block, on Failed snapshot returns a friendly failure block. SDK attribute-based registration | `IPullRequestDataProvider`, `IContextBudgetResolver`, `IPrEnrichmentOrchestrator`, `IOptions<WorkflowOptions>`, `PlainTextFormatter` |
 | `REBUSS.Pure\Tools\GetLocalContentToolHandler.cs` | `[McpServerToolType]` `get_local_content` — returns plain text `IEnumerable<ContentBlock>` (file blocks + pagination footer); stat-based page allocation, parallel per-file diff fetch via `Task.WhenAll` (only page files); uses `FileTokenMeasurement.MapToStructured` for file mapping; SDK attribute-based registration | `ILocalReviewProvider`, `IContextBudgetResolver`, `ITokenEstimator`, `IFileClassifier`, `IPageAllocator`, `FileTokenMeasurement`, `PlainTextFormatter`, `PaginationMetadataResult` |
-| `REBUSS.Pure\Tools\GetPullRequestFilesToolHandler.cs` | `[McpServerToolType]` `get_pr_files` — returns plain text `IEnumerable<ContentBlock>` (file list block + manifest/pagination footer); F004 integration: pagination with pageReference resume and staleness detection; prNumber now optional when pageReference is provided; delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `IPullRequestDataProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PlainTextFormatter`, `PaginationMetadataResult`, `StalenessWarningResult` |
 | `REBUSS.Pure\Tools\GetLocalChangesFilesToolHandler.cs` | `[McpServerToolType]` `get_local_files` — returns plain text `IEnumerable<ContentBlock>` (file list block + manifest/pagination footer); F004 integration: pagination support but no staleness (null fingerprint); delegates candidate building, sorting, page extraction, and manifest construction to `ToolHandlerHelpers`; SDK attribute-based registration, throws `McpException` for errors | `ILocalReviewProvider`, `IPageAllocator`, `IPageReferenceCodec`, `ToolHandlerHelpers`, `PlainTextFormatter`, `PaginationMetadataResult` |
 ### Tool shared helpers (REBUSS.Pure\Tools\Shared)
 
@@ -488,7 +487,6 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubChainedAuthenticationProviderTests.cs` | `GitHubChainedAuthenticationProvider` — PAT precedence, cached tokens, GitHub CLI token acquisition and caching, expired token fallback, null expiry used as valid, `InvalidateCachedToken`, `BuildAuthRequiredMessage` tests read `Resources.ErrorGitHubAuthRequired` directly |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliTokenProviderTests.cs` | `GitHubCliTokenProvider.ParseTokenResponse` — valid plain text, whitespace trimming, empty/null/whitespace returns null, `DefaultTokenLifetime` constant (24 hours) |
 | `REBUSS.Pure.GitHub.Tests\Configuration\GitHubCliProcessHelperTests.cs` | `GitHubCliProcessHelper.GetProcessStartArgs` — Windows `cmd.exe /c gh` wrapping, Linux direct `gh` invocation, custom `ghPath`; `TryFindGhCliOnWindows` |
-| `REBUSS.Pure.Tests\Tools\GetPullRequestFilesToolHandlerTests.cs` | `GetPullRequestFilesToolHandler` — plain text output, validation (McpException), provider exceptions, packing manifest |
 | `REBUSS.Pure.Tests\Tools\GetLocalChangesFilesToolHandlerTests.cs` | `GetLocalChangesFilesToolHandler` — scope parsing, plain text output, error handling (McpException), packing manifest |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestMetadataToolHandlerTests.cs` | `GetPullRequestMetadataToolHandler` — plain text output, validation (McpException), provider exceptions, +contentPaging computation (diff-based token measurement via `IPullRequestDiffCache` + `FileTokenMeasurement`, page allocation, backward compatibility without budget params), diff-cache verification test (Feature 005: replaced `_dataProvider.GetFilesAsync` mock with `_diffCache` mock, replaced `EstimateFromStats` with `EstimateTokenCount`) |
 | `REBUSS.Pure.Tests\Tools\GetPullRequestContentToolHandlerTests.cs` | `GetPullRequestContentToolHandler` — plain text output, validation (McpException), pagination (page filtering, category breakdown, multi-page, out-of-range), PR not found error; Feature 005: replaced `_dataProvider` with `_diffCache` mock, diff-based token measurement via `EstimateTokenCount`, diff-cache and token-estimation verification tests |
@@ -527,13 +525,11 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.SmokeTests\Expectations\AdoTestExpectations.cs` | Expected values from Azure DevOps fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Expectations\GitHubTestExpectations.cs` | Expected values from GitHub fixture PR (title, state, file paths, statuses, code fragments) |
 | `REBUSS.Pure.SmokeTests\Protocol\InitializeProtocolTests.cs` | Protocol tests (no credentials): MCP initialize handshake — protocol version, server info, capabilities |
-| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (5), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +PaginationEnabledTools array, +2 schema assertions for F004 pagination parameters, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
+| `REBUSS.Pure.SmokeTests\Protocol\ToolsListProtocolTests.cs` | Protocol tests (no credentials): tools/list — tool count (4), names, schemas; PrNumberTools checks property declaration (not required array) for get_pr_metadata+get_pr_content, +PaginationEnabledTools array, +2 schema assertions for F004 pagination parameters, +ContentTools_HavePageNumberProperty for get_pr_content/get_local_content |
 | `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoMetadataContractTests.cs` | Contract tests (ADO): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
-| `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoFilesContractTests.cs` | Contract tests (ADO): `get_pr_files` plain-text output — file-count header, paths/statuses, summary/priorities, non-binary/non-generated markers |
-| `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoNegativeContractTests.cs` | Negative tests (ADO): nonexistent PR, invalid/missing prNumber |
+| `REBUSS.Pure.SmokeTests\Contracts\AzureDevOps\AdoNegativeContractTests.cs` | Negative tests (ADO): invalid/missing prNumber |
 | `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubMetadataContractTests.cs` | Contract tests (GitHub): `get_pr_metadata` plain-text output — PR header/title, state, branches, author/source, stats, SHA lines, description, draft marker |
-| `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubFilesContractTests.cs` | Contract tests (GitHub): `get_pr_files` plain-text output — file-count header, paths/statuses, summary/priorities, non-binary/non-generated markers |
-| `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubNegativeContractTests.cs` | Negative tests (GitHub): nonexistent PR, invalid/missing prNumber |
+| `REBUSS.Pure.SmokeTests\Contracts\GitHub\GitHubNegativeContractTests.cs` | Negative tests (GitHub): invalid/missing prNumber |
 
 ---
 
@@ -590,7 +586,6 @@ PullRequestFiles / PullRequestFileInfo / PullRequestFilesSummary
   ? AzureDevOpsScmClient [AzureDevOps]            (delegates: passes through from files provider)
   ? GitHubFilesProvider [GitHub]                   (produces)
   ? GitHubScmClient [GitHub]                      (delegates: passes through from files provider)
-  ? GetPullRequestFilesToolHandler [Pure]          (consumes)
   ? AnalysisInput [Core]                           (carries PullRequestFiles for analyzer pipeline)
 
 IScmClient / IPullRequestDataProvider / IRepositoryArchiveProvider [Core interfaces]
@@ -598,7 +593,6 @@ IScmClient / IPullRequestDataProvider / IRepositoryArchiveProvider [Core interfa
   ? GitHubScmClient [GitHub]                      (implements IScmClient; registered via interface forwarding in ServiceCollectionExtensions)
   ? ReviewContextOrchestrator [Core]               (consumes IScmClient: fetches all data for analysis)
   ? GetPullRequestMetadataToolHandler [Pure]       (consumes IPullRequestDataProvider for metadata; diff via IPullRequestDiffCache)
-  ? GetPullRequestFilesToolHandler [Pure]          (consumes IPullRequestDataProvider)
 
 IPullRequestDiffCache [Core interface]
   ? PullRequestDiffCache [Pure]                    (implements: ConcurrentDictionary cache + Lazy<Task> in-flight dedup keyed by PR number, delegates to IPullRequestDataProvider on miss; concurrent misses coalesced; staleness detection via LastSourceCommitId comparison when knownHeadCommitId is provided)
@@ -853,7 +847,7 @@ switch (provider)
 
 // MCP tool handlers
 // SDK-migrated handlers (registered via [McpServerToolType] attribute discovery):
-// GetPullRequestFilesToolHandler, GetLocalChangesFilesToolHandler,
+// GetLocalChangesFilesToolHandler,
 // GetPullRequestMetadataToolHandler, GetPullRequestContentToolHandler,
 // GetLocalContentToolHandler
 

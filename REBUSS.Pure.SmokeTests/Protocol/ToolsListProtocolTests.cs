@@ -13,7 +13,6 @@ public class ToolsListProtocolTests
     private static readonly string[] ExpectedToolNames =
     [
         "get_pr_metadata",
-        "get_pr_files",
         "get_local_files",
         "get_pr_content",
         "get_local_content"
@@ -30,7 +29,6 @@ public class ToolsListProtocolTests
     /// </summary>
     private static readonly string[] PaginationEnabledTools =
     [
-        "get_pr_files",
         "get_local_files"
     ];
 
@@ -42,14 +40,14 @@ public class ToolsListProtocolTests
     }
 
     [Fact]
-    public async Task ToolsList_ReturnsAllFiveTools()
+    public async Task ToolsList_ReturnsAllFourTools()
     {
         var response = await _fixture.Server.SendToolsListAsync();
         var tools = response.RootElement
             .GetProperty("result")
             .GetProperty("tools");
 
-        Assert.Equal(5, tools.GetArrayLength());
+        Assert.Equal(4, tools.GetArrayLength());
     }
 
     [Fact]

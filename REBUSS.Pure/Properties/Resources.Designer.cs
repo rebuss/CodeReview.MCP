@@ -322,15 +322,6 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Error retrieving PR files: {0}.
-        /// </summary>
-        internal static string ErrorRetrievingPrFiles {
-            get {
-                return ResourceManager.GetString("ErrorRetrievingPrFiles", resourceCulture);
-            }
-        }
-
-        /// <summary>
         ///   Looks up a localized string similar to Error retrieving PR metadata: {0}.
         /// </summary>
         internal static string ErrorRetrievingPrMetadata {
@@ -498,60 +489,6 @@ namespace REBUSS.Pure.Properties {
         internal static string LogGetPrContentPrNotFound {
             get {
                 return ResourceManager.GetString("LogGetPrContentPrNotFound", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Completed (F003): PR #{PrNumber}, ...
-        /// </summary>
-        internal static string LogGetPrFilesCompletedF003 {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesCompletedF003", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Completed (F004): PR #{PrNumber}, ...
-        /// </summary>
-        internal static string LogGetPrFilesCompletedF004 {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesCompletedF004", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Entry: PR #{PrNumber}.
-        /// </summary>
-        internal static string LogGetPrFilesEntry {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesEntry", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Error.
-        /// </summary>
-        internal static string LogGetPrFilesError {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesError", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Could not fetch metadata for fingerprint.
-        /// </summary>
-        internal static string LogGetPrFilesMetadataFingerprintFailed {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesMetadataFingerprintFailed", resourceCulture);
-            }
-        }
-
-        /// <summary>
-        ///   Looks up a localized string similar to [get_pr_files] Pull request not found.
-        /// </summary>
-        internal static string LogGetPrFilesPrNotFound {
-            get {
-                return ResourceManager.GetString("LogGetPrFilesPrNotFound", resourceCulture);
             }
         }
 

@@ -367,7 +367,6 @@ The orchestrator's load-bearing semantic — caller cancellation never cancels t
 |---|---|
 | `get_pr_metadata(prNumber, [modelName], [maxTokens])` | Returns PR metadata. Pass `modelName` or `maxTokens` to also receive `contentPaging` — total page count and per-page file breakdown for use with `get_pr_content` |
 | `get_pr_content(prNumber, pageNumber, [modelName], [maxTokens])` | Returns diff content for a specific page of the PR. Call `get_pr_metadata` with budget params first to discover the total page count |
-| `get_pr_files(prNumber, [pageReference])` | Returns classified list of changed files with per-file stats and review priority; supports pagination via `pageReference` |
 
 ### Local Self-Review Tools (no authentication needed)
 

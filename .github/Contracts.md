@@ -34,8 +34,8 @@ Wire format example (diff tool, 2 files + manifest):
 | Tool | Blocks returned |
 |---|---|
 | `get_pr_content` / `get_local_content` | `[file_block..., simple_pagination_block]` |
-| `get_pr_files` (F003, non-paginated) | `[file_list_block, manifest_block]` |
-| `get_pr_files` / `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
+| `get_local_files` (F003, non-paginated) | `[file_list_block, manifest_block]` |
+| `get_local_files` (F004, paginated) | `[file_list_block, manifest_block, pagination_block]` |
 | `get_pr_metadata` | `[metadata_block]` (single block) |
 > **Refactor note:** Before this change, handlers serialized output DTOs to JSON inside the `text` field. Now all output is human-readable plain text. The `[JsonPropertyName]` output DTOs (`PullRequestMetadataResult`, `PullRequestFilesResult`, etc.) have been removed. Internal data structures (`StructuredFileChange`, `StructuredHunk`, `StructuredLine`) remain as plain C# classes used by `PlainTextFormatter`.
 
@@ -61,14 +61,14 @@ catch (PullRequestNotFoundException ex)
 catch (McpException) { throw; }
 catch (Exception ex)
 {
-    throw new McpException($"Error retrieving PR files: {ex.Message}");
+    throw new McpException($"Error retrieving PR content: {ex.Message}");
 }
 ```
 
 > **Migration note:** Previously, errors were returned as `ToolResult { isError = true, content = [...] }` with an `"Error: "` prefix in the message text. Now errors are thrown as `McpException` and the SDK produces the `isError` response. The message text **no longer** carries the `"Error: "` prefix — the `McpException` message is used directly.
 
 Error messages by tool:
-- `get_pr_files` / `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR ..."`
+- `get_pr_metadata`: `"Pull Request not found: ..."`, `"Error retrieving PR metadata: ..."`
 - `get_local_files`: `"Repository not found: ..."`, `"Git command failed: ..."`
 - `get_pr_content`: `"Missing required parameter: prNumber"`, `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Pull Request not found: ..."`, `"Error retrieving PR content: ..."`
 - `get_local_content`: `"Missing required parameter: pageNumber"`, `"pageNumber N exceeds total pages M"`, `"Error retrieving local content: ..."`
@@ -168,59 +168,7 @@ Files per page: p1:12f, p2:15f, p3:18f, p4:14f, p5:8f
 
 ---
 
-### 4.2 `get_pr_files`
-
-#### Input
-
-Auto-generated from `GetPullRequestFilesToolHandler.ExecuteAsync` signature. All parameters are nullable with defaults, making them optional in the schema.
-
-| Parameter | C# Type | Required | Description |
-|---|---|---|---|
-| `prNumber` | `int?` | ❌ | The Pull Request number/ID to retrieve the file list for |
-| `modelName` | `string?` | ❌ | Optional model name (e.g. 'Claude Sonnet') to resolve context window size |
-| `maxTokens` | `int?` | ❌ | Optional explicit context window size in tokens |
-| `pageReference` | `string?` | ❌ | Opaque page reference from a previous response. Encodes all context needed to re-derive the page. |
-| `pageNumber` | `int?` | ❌ | Page number for direct access (requires original params + budget) |
-
-> **Feature 004 note:** `prNumber` is **optional** when `pageReference` is provided (the page reference encodes the original request parameters). `pageReference` and `pageNumber` are mutually exclusive.
-
-#### Output — plain text blocks
-
-**Block 1:** file list table
-
-```
-Changed files: PR #42 (2 file(s))
-  Path                                                           Status       +Add    -Del  Priority Flags
-  ----------------------------------------------------------------------------------------------------
-  src/Cache/CacheService.cs                                      edit          +45     -12  high
-  tests/CacheServiceTests.cs                                     edit          +30      -0  medium [test]
-
-Summary: 1 source, 1 test | High priority: 1
-```
-
-**Block 2:** manifest
-
-```
-Manifest:
-  src/Cache/CacheService.cs                                          ~  450 tokens  Included   Source
-  tests/CacheServiceTests.cs                                         ~  300 tokens  Included   Test
-Budget: 750/140000 tokens (1%)
-```
-
-**Block 3 (paginated only — Feature 004):** pagination footer
-
-```
---- Page 1 of 3 | hasMore: true | next: eyJ0IjoiZ2V0X3ByX2ZpbGVzIi... | STALE: head changed (abc123… → def456…) ---
-```
-
-| Part | Condition |
-|---|---|
-| `next: <ref>` | Only present when `hasMore: true` |
-| `STALE: ...` | Only present when staleness detected (head SHA changed between pages) |
-
----
-
-### 4.3 `get_local_files`
+### 4.2 `get_local_files`
 
 #### Input
 
@@ -236,9 +184,7 @@ Auto-generated from `GetLocalChangesFilesToolHandler.ExecuteAsync` signature. Al
 
 #### Output — plain text blocks
 
-Same block structure as `get_pr_files`. Context string in the file list header uses the local scope, e.g. `"working-tree (3 file(s))"`.
-
-**Block 1:** file list table (same format as `get_pr_files`, context = `"{scope} (N file(s))"` for non-paginated or `"{scope} (page P/T)"` for paginated)
+**Block 1:** file list table (context = `"{scope} (N file(s))"` for non-paginated or `"{scope} (page P/T)"` for paginated)
 
 ```
 Changed files: working-tree (2 file(s))
@@ -250,7 +196,7 @@ Changed files: working-tree (2 file(s))
 Summary: 1 source, 1 test | High priority: 1
 ```
 
-**Block 2:** manifest (same format as `get_pr_files`)
+**Block 2:** manifest
 
 **Block 3 (paginated only — Feature 004):** pagination footer (no staleness warning for local tools)
 
@@ -264,7 +210,7 @@ Summary: 1 source, 1 test | High priority: 1
 
 ---
 
-### 4.4 `get_pr_content`
+### 4.3 `get_pr_content`
 
 #### Input
 
@@ -306,7 +252,7 @@ Error messages: `"Missing required parameter: prNumber"`, `"prNumber must be gre
 
 ---
 
-### 4.5 `get_local_content`
+### 4.4 `get_local_content`
 
 #### Input
 
