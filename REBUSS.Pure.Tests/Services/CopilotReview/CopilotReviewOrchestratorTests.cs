@@ -344,26 +344,26 @@ public class CopilotReviewOrchestratorTests
             $"Expected parallel execution under {sequentialMinMs}ms, but took {sw.ElapsedMilliseconds}ms");
     }
 
-[Fact]
-public async Task TriggerReview_PropagatesReviewKeyToPageReviewer()
-{
-    // Feature 022: orchestrator must pass the review key as the first argument to
-    // ICopilotPageReviewer.ReviewPageAsync so the inspection writer can group output
-    // under a per-PR subdirectory.
-    var reviewer = Substitute.For<ICopilotPageReviewer>();
-    reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-        .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+    [Fact]
+    public async Task TriggerReview_PropagatesReviewKeyToPageReviewer()
+    {
+        // Feature 022: orchestrator must pass the review key as the first argument to
+        // ICopilotPageReviewer.ReviewPageAsync so the inspection writer can group output
+        // under a per-PR subdirectory.
+        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
-    var orchestrator = Create(reviewer);
-    orchestrator.TriggerReview("pr:42", BuildEnrichment());
-    _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
+        var orchestrator = Create(reviewer);
+        orchestrator.TriggerReview("pr:42", BuildEnrichment());
+        _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
 
-    await reviewer.Received().ReviewPageAsync(
-        "pr:42", Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-}
+        await reviewer.Received().ReviewPageAsync(
+            "pr:42", Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
 
     // ─── Feature 021 — Finding validation integration (T028, T040) ────────────────
-
+  
     [Fact]
     public async Task TriggerReview_NullValidator_ReviewTextUnchanged()
     {
