@@ -187,6 +187,24 @@ namespace REBUSS.Pure
             services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
             services.AddSingleton<ICopilotPageReviewer, CopilotPageReviewer>();
 
+            // Feature 022 — Copilot inspection (internal diagnostic, env-var gated).
+            // REBUSS_COPILOT_INSPECT=1|true|True registers the filesystem writer; any other
+            // value registers a no-op. Read once at DI composition time; restart to toggle.
+            var inspectEnabled = Environment.GetEnvironmentVariable("REBUSS_COPILOT_INSPECT")
+                is "1" or "true" or "True";
+            if (inspectEnabled)
+            {
+                services.AddSingleton<
+                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.FileSystemCopilotInspectionWriter>();
+            }
+            else
+            {
+                services.AddSingleton<
+                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.NoOpCopilotInspectionWriter>();
+            }
+
             // Feature 021 — Finding validation pipeline (false positive reduction).
             // Registered unconditionally; CopilotReviewOrchestrator short-circuits at
             // runtime based on CopilotReviewOptions.ValidateFindings (per Principle V

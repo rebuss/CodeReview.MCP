@@ -315,7 +315,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator
             CopilotPageReviewResult result;
             try
             {
-                result = await _pageReviewer.ReviewPageAsync(pageNumber, enrichedContent, ct).ConfigureAwait(false);
+                result = await _pageReviewer.ReviewPageAsync(job.ReviewKey, pageNumber, enrichedContent, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
