@@ -72,12 +72,6 @@ public sealed class CopilotReviewOptions
     public bool ValidateFindings { get; set; } = true;
 
     /// <summary>
-    /// Max findings per validation Copilot call. Smaller batches give each finding
-    /// more model attention at the cost of more calls. Feature 021 (FR-009).
-    /// </summary>
-    public int ValidationBatchSize { get; set; } = 5;
-
-    /// <summary>
     /// If the total number of findings across all pages exceeds this threshold, validation
     /// is skipped entirely (likely a systemic issue, not individual false positives). Feature 021 (FR-015).
     /// </summary>

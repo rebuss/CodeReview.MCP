@@ -505,10 +505,23 @@ response wait times overlap across pages — yielding wall-time reduction of rou
 ### Progress observation
 
 `CopilotReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
-(`CopilotReviewProgressPollingIntervalMs`, default 2000ms). It reports progress
-as `"Copilot review — X/N pages complete"` whenever `CompletedPages` increases.
-This message is inherently order-agnostic — pages may complete out of order
-(e.g. page 3 before page 2), but the notification only shows the aggregate count.
+(`CopilotReviewProgressPollingIntervalMs`, default 2000ms) and emits two kinds of
+IDE notifications:
+
+1. **`"Copilot review — X/N pages complete"`** whenever `CompletedPages` increases.
+   This message is inherently order-agnostic — pages may complete out of order
+   (e.g. page 3 before page 2), but the notification only shows the aggregate count.
+2. **Phase activities** read from `CurrentActivity` whenever it changes —
+   `"Allocated N pages — reviewing in parallel"`, `"Resolving N scopes for validation"`,
+   `"Validating findings: page X/Y"`, and `"Review complete — X/N pages succeeded"`.
+
+**Per-page `CurrentActivity` is intentionally not published.** Pages run in parallel
+and each concurrent task would overwrite `CurrentActivity` with its own "waiting"
+message, causing the IDE feed to flip-flop between pages. The monotonic
+`CompletedPages` counter is the sole page-level progress signal; per-attempt retries
+are visible in the log only. The waiter also intentionally does **not** reset its
+"last reported activity" tracker on page-completion milestones so a stale phase
+message can never be re-emitted after a counter tick.
 
 ### Retry loop
 
@@ -516,6 +529,45 @@ Each page gets up to 3 attempts (`MaxAttemptsPerPage = 3`) inside
 `ReviewPageWithRetryAsync`. No backoff — retries fire immediately. On exhaustion,
 the orchestrator fills in `FailedFilePaths` (only it knows which files were on
 the page) and returns a `CopilotPageReviewResult.Failure`.
+
+### Finding validation pipeline (Feature 021)
+
+After all page reviews complete (and provided `CopilotReviewOptions.ValidateFindings`
+is `true` and both `FindingValidator` + `FindingScopeResolver` resolved through DI),
+`ValidateAllFindingsAsync` runs as a fifth phase before the orchestrator surfaces
+the result. Its job is to filter false positives produced by the page-review pass:
+
+```
+parse → resolve scopes → severity-order → token-budget pages → SDK call(s) → map back → filter
+```
+
+| Phase | Component | Detail |
+|---|---|---|
+| Parse | `FindingParser.Parse` | Per-page Markdown → `ParsedFinding[]` + the unparseable remainder (free-form prose preserved verbatim, FR-012) |
+| Threshold | orchestrator | If total findings > `MaxValidatableFindings` (default 40) → skip validation entirely (likely a systemic issue) |
+| Resolve scopes | `FindingScopeResolver` | For each `.cs` finding, resolve enclosing method/scope via `DiffSourceResolver` + `FindingScopeExtractor` (Roslyn). Truncate around the finding line when method body exceeds `MaxScopeLines` (default 150) — window ±`MaxScopeLines/2` plus `// ... (X lines omitted) ...` markers. Non-`.cs` ⇒ `NotCSharp`; missing source ⇒ `SourceUnavailable`; located but no scope ⇒ `ScopeNotFound` |
+| Phase 1 verdicts | `FindingValidator` | Deterministic, no Copilot call: `NotCSharp` → `Valid` (passthrough), `SourceUnavailable`/`ScopeNotFound` → `Uncertain` |
+| Severity order | `FindingSeverityOrderer.Order` | Stable sort by severity rank: `critical=0`, `major=1`, `minor=2`, unknown last. Ensures the most important issues land in the first SDK call's prompt |
+| Token budgeting | `IPageAllocator` + `ITokenEstimator` | Build one synthetic `PackingCandidate` per finding+scope pair, with `EstimatedTokens` from `EstimateTokenCount` over the per-finding prompt section. Allocate against `ReviewBudgetTokens − templateOverhead` so the wrapping prompt template (loaded once and measured) is accounted for. **Token budget — not a fixed batch size — controls how many findings fit per Copilot SDK call.** This is the same mechanism used to paginate the original review pass |
+| SDK calls | `FindingValidator.ValidatePageAsync` | One `ICopilotSessionFactory.CreateSessionAsync` call per allocator page. Inspection writer kind = `validation-{pageNumber}`. Response parsed via index-based regex (`**Finding {N}: VALID\|FALSE_POSITIVE\|UNCERTAIN**`) so verdict mapping is order-independent |
+| Order check | `FindingValidator.VerifyResponseOrder` | Re-runs `IsOrderedBySeverity` on the response sequence; if Copilot scrambled severities, log a warning. Verdicts remain correctly mapped via the index regex — the warning is informational |
+| Map back | orchestrator | Walk per-page findings in original order, slice the validator's flat result array per page, hand to `FindingFilterer.Apply(remainder, pageValidated)` |
+| Rebuild | `FindingFilterer.Apply` | Emit `Valid` verbatim, `Uncertain` prefixed with `[uncertain]`, omit `FalsePositive`. Append `_Validation: V confirmed, F filtered, U uncertain_` footer; collapse to `No issues found.` when everything was filtered and no remainder existed |
+
+Graceful-degradation policy (FR-012) is preserved at every step: validator failure
+keeps original findings as `Valid` so a flaky validation pass never breaks the
+review output.
+
+#### What gets logged where
+
+- `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each Copilot SDK
+  exchange. Kinds in use: `page-{N}-review` from `CopilotPageReviewer`,
+  `validation-{N}` from `FindingValidator`. There is no separate "summary" file —
+  the validation prompt is itself the consolidated dump of every finding (with
+  scope source) and the response carries every verdict, so they double as the
+  end-of-review summary.
+- `ILogger` carries phase transitions, retries, and validation warnings (skipped
+  due to threshold, page failure with graceful degradation, scrambled response order).
 
 ## 7. Local Review Pipeline
 

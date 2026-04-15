@@ -2,6 +2,9 @@ using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using REBUSS.Pure.Core;
+using REBUSS.Pure.Core.Models.Pagination;
+using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview.Inspection;
@@ -12,25 +15,83 @@ namespace REBUSS.Pure.Tests.Services.CopilotReview.Validation;
 /// <summary>Unit tests for <see cref="FindingValidator"/>. Feature 021.</summary>
 public class FindingValidatorTests
 {
-    private static FindingValidator CreateValidator(FakeSessionFactory factory, int batchSize = 5, ICopilotInspectionWriter? inspection = null) =>
+    private static FindingValidator CreateValidator(
+        FakeSessionFactory factory,
+        ICopilotInspectionWriter? inspection = null,
+        IPageAllocator? pageAllocator = null,
+        ITokenEstimator? tokenEstimator = null) =>
         new(factory,
             Options.Create(new CopilotReviewOptions
             {
                 Model = "claude-sonnet-4.6",
                 ValidateFindings = true,
-                ValidationBatchSize = batchSize,
             }),
             inspection ?? Substitute.For<ICopilotInspectionWriter>(),
+            pageAllocator ?? SinglePageAllocator(),
+            tokenEstimator ?? FixedTokenEstimator(estimatePerCall: 1),
             NullLogger<FindingValidator>.Instance);
 
-    private static ParsedFinding MakeFinding(int index) => new()
+    /// <summary>Allocator that puts every candidate on a single page (the common test case).</summary>
+    private static IPageAllocator SinglePageAllocator()
+    {
+        var allocator = Substitute.For<IPageAllocator>();
+        allocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(ci =>
+            {
+                var candidates = ci.Arg<IReadOnlyList<PackingCandidate>>();
+                if (candidates.Count == 0)
+                    return new PageAllocation(Array.Empty<PageSlice>(), 0, 0);
+                var items = Enumerable.Range(0, candidates.Count)
+                    .Select(i => new PageSliceItem(i, PackingItemStatus.Included, candidates[i].EstimatedTokens))
+                    .ToArray();
+                return new PageAllocation(
+                    new[] { new PageSlice(1, 0, candidates.Count, items, 0, 0) },
+                    1,
+                    candidates.Count);
+            });
+        return allocator;
+    }
+
+    /// <summary>Allocator that splits candidates into fixed-size pages — for multi-page tests.</summary>
+    private static IPageAllocator FixedSizePageAllocator(int itemsPerPage)
+    {
+        var allocator = Substitute.For<IPageAllocator>();
+        allocator.Allocate(Arg.Any<IReadOnlyList<PackingCandidate>>(), Arg.Any<int>())
+            .Returns(ci =>
+            {
+                var candidates = ci.Arg<IReadOnlyList<PackingCandidate>>();
+                var pages = new List<PageSlice>();
+                if (candidates.Count == 0)
+                    return new PageAllocation(pages, 0, 0);
+                var pageNum = 1;
+                for (var start = 0; start < candidates.Count; start += itemsPerPage)
+                {
+                    var end = Math.Min(start + itemsPerPage, candidates.Count);
+                    var items = Enumerable.Range(start, end - start)
+                        .Select(i => new PageSliceItem(i, PackingItemStatus.Included, candidates[i].EstimatedTokens))
+                        .ToArray();
+                    pages.Add(new PageSlice(pageNum++, start, end, items, 0, 0));
+                }
+                return new PageAllocation(pages, pages.Count, candidates.Count);
+            });
+        return allocator;
+    }
+
+    private static ITokenEstimator FixedTokenEstimator(int estimatePerCall)
+    {
+        var estimator = Substitute.For<ITokenEstimator>();
+        estimator.EstimateTokenCount(Arg.Any<string>()).Returns(estimatePerCall);
+        return estimator;
+    }
+
+    private static ParsedFinding MakeFinding(int index, string severity = "major") => new()
     {
         Index = index,
         FilePath = "src/A.cs",
         LineNumber = 10,
-        Severity = "major",
+        Severity = severity,
         Description = $"issue {index}",
-        OriginalText = $"**[major]** `src/A.cs` (line 10): issue {index}",
+        OriginalText = $"**[{severity}]** `src/A.cs` (line 10): issue {index}",
     };
 
     private static FindingWithScope Resolved(ParsedFinding finding) => new()
@@ -128,29 +189,31 @@ public class FindingValidatorTests
         Assert.Equal(FindingVerdict.Valid, result[0].Verdict);
         Assert.Equal(FindingVerdict.FalsePositive, result[1].Verdict);
         Assert.Equal(FindingVerdict.Uncertain, result[2].Verdict);
-        Assert.Equal(1, factory.CreateSessionCalls); // one batch
+        Assert.Equal(1, factory.CreateSessionCalls); // single page → single Copilot call
     }
 
     [Fact]
-    public async Task ValidateAsync_TwelveFindings_BatchSizeFive_MakesThreeCalls()
+    public async Task ValidateAsync_TwelveFindings_AcrossThreePages_MakesThreeCalls()
     {
         var factory = new FakeSessionFactory();
         factory.OnSendAsync = (h, _) =>
         {
-            // Response template: declare every finding in the batch VALID.
+            // Response template: declare every finding in the page VALID.
             var content = string.Join('\n',
                 Enumerable.Range(1, 10).Select(i => $"**Finding {i}: VALID** — ok"));
             h.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m", Content = content } });
             h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
         };
 
-        var validator = CreateValidator(factory, batchSize: 5);
+        // Allocator splits into pages of 5 → 12 findings across 3 pages (5, 5, 2).
+        var validator = CreateValidator(
+            factory,
+            pageAllocator: FixedSizePageAllocator(itemsPerPage: 5));
         var input = Enumerable.Range(0, 12).Select(i => Resolved(MakeFinding(i))).ToArray();
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
         Assert.Equal(12, result.Count);
-        // 12 / 5 = 3 batches (5, 5, 2).
         Assert.Equal(3, factory.CreateSessionCalls);
     }
 
@@ -192,7 +255,7 @@ public class FindingValidatorTests
         factory.OnSendAsync = (h, prompt) =>
         {
             // Count how many "## Finding " headers are in the prompt — should equal
-            // the number of RESOLVED findings in this batch.
+            // the number of RESOLVED findings on this page.
             capturedFindingsInPrompt =
                 System.Text.RegularExpressions.Regex.Matches(prompt, @"^## Finding ", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
             h.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" } });
@@ -244,9 +307,71 @@ public class FindingValidatorTests
         await validator.ValidateAsync(input, "pr:42", CancellationToken.None);
 
         await inspection.Received(1).WritePromptAsync(
-            "pr:42", "validation-batch-1", Arg.Any<string>(), Arg.Any<CancellationToken>());
+            "pr:42", "validation-1", Arg.Any<string>(), Arg.Any<CancellationToken>());
         await inspection.Received(1).WriteResponseAsync(
-            "pr:42", "validation-batch-1", Arg.Any<string>(), Arg.Any<CancellationToken>());
+            "pr:42", "validation-1", Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ValidateAsync_OrdersBySeverityBeforeSendingToCopilot()
+    {
+        // The validator must put critical findings ahead of major and minor in the prompt
+        // so the most important issues get the model's first read.
+        var factory = new FakeSessionFactory();
+        var capturedSeverityOrder = new List<string>();
+        factory.OnSendAsync = (h, prompt) =>
+        {
+            // Extract severity values in the order they appear in the prompt.
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                prompt, @"\*\*Severity:\*\*\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            foreach (System.Text.RegularExpressions.Match m in matches)
+                capturedSeverityOrder.Add(m.Groups[1].Value.ToLowerInvariant());
+
+            h.PushEvent(new AssistantMessageEvent
+            {
+                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" }
+            });
+            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+        };
+
+        var validator = CreateValidator(factory);
+        var input = new[]
+        {
+            Resolved(MakeFinding(0, severity: "minor")),
+            Resolved(MakeFinding(1, severity: "critical")),
+            Resolved(MakeFinding(2, severity: "major")),
+        };
+
+        await validator.ValidateAsync(input, "test:1", CancellationToken.None);
+
+        Assert.Equal(new[] { "critical", "major", "minor" }, capturedSeverityOrder);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_PageProgressCallback_FiresForEachValidationPage()
+    {
+        var factory = new FakeSessionFactory();
+        factory.OnSendAsync = (h, _) =>
+        {
+            h.PushEvent(new AssistantMessageEvent
+            {
+                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" }
+            });
+            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+        };
+
+        var validator = CreateValidator(
+            factory,
+            pageAllocator: FixedSizePageAllocator(itemsPerPage: 2));
+        var input = Enumerable.Range(0, 5).Select(i => Resolved(MakeFinding(i))).ToArray();
+
+        var observedPages = new List<(int page, int total)>();
+        await validator.ValidateAsync(
+            input, "test:1", CancellationToken.None,
+            pageProgress: (p, t) => observedPages.Add((p, t)));
+
+        // 5 findings / 2 per page = 3 pages (2, 2, 1).
+        Assert.Equal(new[] { (1, 3), (2, 3), (3, 3) }, observedPages);
     }
 
     // ─── Fakes (mirror CopilotPageReviewerTests pattern) ────────────────────────

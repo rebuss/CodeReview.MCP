@@ -12,7 +12,4 @@ internal sealed class NoOpCopilotInspectionWriter : ICopilotInspectionWriter
 
     public Task WriteResponseAsync(string reviewKey, string kind, string content, CancellationToken ct)
         => Task.CompletedTask;
-
-    public Task WriteSummaryAsync(string reviewKey, string content, CancellationToken ct)
-        => Task.CompletedTask;
 }
