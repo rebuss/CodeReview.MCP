@@ -568,14 +568,23 @@ restart.
 
 ## 6b. Copilot Review Pipeline (CopilotReviewOrchestrator)
 
-### Why parallel dispatch
+### Why batched parallel dispatch
 
 `CopilotReviewOrchestrator` coordinates server-side Copilot review of every page
-of enriched content. Pages are dispatched **concurrently** via `Task.Run` per page
-plus `Task.WhenAll`. The `CopilotRequestThrottle` (a static `SemaphoreSlim(1,1)`
-with a 3-second minimum spacing) serializes the actual SDK calls, but model
-response wait times overlap across pages — yielding wall-time reduction of roughly
-`3s × (N-1) + max(response_time)` vs `N × response_time` sequentially.
+of enriched content. Pages are dispatched **in batches** (`CopilotReviewOptions.MaxConcurrentPages`,
+default 6): for each batch the orchestrator launches one `Task.Run` per page,
+awaits `Task.WhenAll` on the batch, then starts the next batch. Within a batch
+the `CopilotRequestThrottle` (a static `SemaphoreSlim(1,1)` with a 3-second
+minimum spacing) still serializes the actual SDK calls so model response wait
+times overlap across the 6 pages.
+
+The batch gate exists because the GitHub Copilot backend rate-limits larger
+fan-outs and silently re-queues the overflow — without the cap a 12-page review
+does not finish twice as fast as a 6-page one; the second 6 pages sit in a
+backend queue until the first 6 drain, roughly doubling wall-clock time. With
+the cap the orchestrator pays that drain explicitly and predictably between
+batches. Wall-time is roughly `⌈N / MaxConcurrentPages⌉ × (3s × (B-1) + max(response_time))`
+where `B = min(MaxConcurrentPages, remaining pages)`.
 
 ### Thread safety
 

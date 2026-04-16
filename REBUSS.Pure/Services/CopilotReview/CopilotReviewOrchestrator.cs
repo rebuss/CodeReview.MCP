@@ -141,27 +141,34 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator
                 return;
             }
 
-            // Dispatch all pages concurrently. CopilotRequestThrottle (3-second
-            // SemaphoreSlim gate) serializes the outgoing SDK calls, but model response
-            // wait times overlap — giving a real wall-time reduction of roughly
-            // 3s × (N-1) + max(response_time) vs N × response_time sequentially.
-            // Each task writes to its own pageResults[idx] slot (no contention).
-            // CopilotReviewWaiter observes CompletedPages via polling — order-agnostic.
+            // Dispatch pages in batches of MaxConcurrentPages. Within a batch,
+            // CopilotRequestThrottle (3-second SemaphoreSlim gate) serializes the outgoing
+            // SDK calls; we then await every batch before starting the next one. This caps
+            // the number of simultaneously in-flight Copilot requests — the GitHub backend
+            // rate-limits larger fan-outs and silently re-queues the overflow, which
+            // otherwise doubles wall-clock time. Each task writes to its own
+            // pageResults[idx] slot (no contention). CopilotReviewWaiter observes
+            // CompletedPages via polling — order-agnostic.
             var pageResults = new CopilotPageReviewResult[allocation.TotalPages];
-            var pageTasks = new Task[allocation.TotalPages];
-            for (var pageIdx = 0; pageIdx < allocation.TotalPages; pageIdx++)
+            var batchSize = Math.Max(1, _options.Value.MaxConcurrentPages);
+            for (var batchStart = 0; batchStart < allocation.TotalPages; batchStart += batchSize)
             {
-                var idx = pageIdx;
-                var pageSlice = allocation.Pages[idx];
-                var pageNumber = pageSlice.PageNumber;
-                var (enrichedContent, filePaths) = BuildPageInput(pageSlice, enrichment);
-                pageTasks[idx] = Task.Run(async () =>
+                var batchEnd = Math.Min(batchStart + batchSize, allocation.TotalPages);
+                var batchTasks = new Task[batchEnd - batchStart];
+                for (var pageIdx = batchStart; pageIdx < batchEnd; pageIdx++)
                 {
-                    pageResults[idx] = await ReviewPageAndTrackAsync(
-                        job, pageNumber, enrichedContent, filePaths, ct);
-                }, ct);
+                    var idx = pageIdx;
+                    var pageSlice = allocation.Pages[idx];
+                    var pageNumber = pageSlice.PageNumber;
+                    var (enrichedContent, filePaths) = BuildPageInput(pageSlice, enrichment);
+                    batchTasks[idx - batchStart] = Task.Run(async () =>
+                    {
+                        pageResults[idx] = await ReviewPageAndTrackAsync(
+                            job, pageNumber, enrichedContent, filePaths, ct);
+                    }, ct);
+                }
+                await Task.WhenAll(batchTasks);
             }
-            await Task.WhenAll(pageTasks);
 
             // Feature 021: consolidated finding validation across all pages.
             // Runs once after all pages complete (not per-page) to minimize Copilot calls.

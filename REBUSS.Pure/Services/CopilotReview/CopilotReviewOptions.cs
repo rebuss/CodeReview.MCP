@@ -82,4 +82,13 @@ public sealed class CopilotReviewOptions
     /// Bounds token usage for validation calls. Feature 021 (FR-016).
     /// </summary>
     public int MaxScopeLines { get; set; } = 150;
+
+    /// <summary>
+    /// Maximum number of pages reviewed concurrently. The orchestrator dispatches pages in
+    /// batches of this size, awaits every response in the batch, then starts the next batch.
+    /// Caps the number of simultaneously in-flight Copilot requests — the GitHub Copilot
+    /// backend rate-limits a larger fan-out and silently re-queues the overflow, doubling
+    /// wall-clock time. Values &lt; 1 are clamped to 1. Default <c>6</c>.
+    /// </summary>
+    public int MaxConcurrentPages { get; set; } = 6;
 }
