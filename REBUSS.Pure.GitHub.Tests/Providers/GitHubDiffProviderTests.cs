@@ -316,6 +316,116 @@ public class GitHubDiffProviderTests
         Assert.NotNull(delFile.SkipReason);
     }
 
+    // --- Patch fast path: GitHub returns the unified-diff `patch` field for each file,
+    //     and the provider should consume it without making any per-file content fetches. ---
+
+    [Fact]
+    public async Task GetDiffAsync_UsesPatchField_NoContentFetches()
+    {
+        _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);
+        _apiClient.GetPullRequestFilesAsync(42, Arg.Any<CancellationToken>()).Returns("""
+            [
+                {
+                    "filename": "src/File.cs",
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 1,
+                    "patch": "@@ -1,1 +1,1 @@\n-old line\n+new line"
+                }
+            ]
+            """);
+
+        var result = await _provider.GetDiffAsync(42);
+
+        // Hunks were built from the patch — content endpoint was never hit.
+        await _apiClient.DidNotReceive().GetFileContentAtRefAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        Assert.Single(result.Files);
+        Assert.Single(result.Files[0].Hunks);
+        var lines = result.Files[0].Hunks[0].Lines;
+        Assert.Equal('-', lines[0].Op);
+        Assert.Equal("old line", lines[0].Text);
+        Assert.Equal('+', lines[1].Op);
+        Assert.Equal("new line", lines[1].Text);
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_ManyFilesWithPatch_ZeroContentFetches()
+    {
+        const string patch = "@@ -1,1 +1,1 @@\n-old\n+new";
+        var fileEntries = string.Join(",", Enumerable.Range(1, 25).Select(i =>
+            $$"""
+              {
+                  "filename": "src/F{{i}}.cs",
+                  "status": "modified",
+                  "additions": 1,
+                  "deletions": 1,
+                  "patch": "{{patch.Replace("\n", "\\n")}}"
+              }
+              """));
+        _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);
+        _apiClient.GetPullRequestFilesAsync(42, Arg.Any<CancellationToken>()).Returns($"[{fileEntries}]");
+
+        var result = await _provider.GetDiffAsync(42);
+
+        Assert.Equal(25, result.Files.Count);
+        await _apiClient.DidNotReceive().GetFileContentAtRefAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_FallsBack_WhenPatchMissing()
+    {
+        // GitHub omits `patch` for binary or oversized diffs — provider must fall back
+        // to fetching base + head and re-diffing.
+        _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);
+        _apiClient.GetPullRequestFilesAsync(42, Arg.Any<CancellationToken>()).Returns("""
+            [
+                { "filename": "src/Huge.cs", "status": "modified", "additions": 0, "deletions": 0 }
+            ]
+            """);
+        _apiClient.GetFileContentAtRefAsync("bbb222", "src/Huge.cs", Arg.Any<CancellationToken>()).Returns("old");
+        _apiClient.GetFileContentAtRefAsync("aaa111", "src/Huge.cs", Arg.Any<CancellationToken>()).Returns("new");
+
+        var result = await _provider.GetDiffAsync(42);
+
+        await _apiClient.Received(1).GetFileContentAtRefAsync("bbb222", "src/Huge.cs", Arg.Any<CancellationToken>());
+        await _apiClient.Received(1).GetFileContentAtRefAsync("aaa111", "src/Huge.cs", Arg.Any<CancellationToken>());
+        Assert.Single(result.Files);
+        Assert.NotEmpty(result.Files[0].Hunks);
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_MixedPatchAndNoPatch_FetchesOnlyMissing()
+    {
+        _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);
+        _apiClient.GetPullRequestFilesAsync(42, Arg.Any<CancellationToken>()).Returns("""
+            [
+                {
+                    "filename": "src/WithPatch.cs",
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 1,
+                    "patch": "@@ -1,1 +1,1 @@\n-old\n+new"
+                },
+                { "filename": "src/NoPatch.cs", "status": "modified", "additions": 0, "deletions": 0 }
+            ]
+            """);
+        _apiClient.GetFileContentAtRefAsync("bbb222", "src/NoPatch.cs", Arg.Any<CancellationToken>()).Returns("old");
+        _apiClient.GetFileContentAtRefAsync("aaa111", "src/NoPatch.cs", Arg.Any<CancellationToken>()).Returns("new");
+
+        var result = await _provider.GetDiffAsync(42);
+
+        // Patched file → no fetch
+        await _apiClient.DidNotReceive().GetFileContentAtRefAsync(
+            Arg.Any<string>(), "src/WithPatch.cs", Arg.Any<CancellationToken>());
+        // Patchless file → both refs fetched
+        await _apiClient.Received(1).GetFileContentAtRefAsync("bbb222", "src/NoPatch.cs", Arg.Any<CancellationToken>());
+        await _apiClient.Received(1).GetFileContentAtRefAsync("aaa111", "src/NoPatch.cs", Arg.Any<CancellationToken>());
+        Assert.Equal(2, result.Files.Count);
+    }
+
     private void SetupStandardMocks()
     {
         _apiClient.GetPullRequestDetailsAsync(42, Arg.Any<CancellationToken>()).Returns(PrDetailsJson);

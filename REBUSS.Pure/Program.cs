@@ -98,8 +98,14 @@ namespace REBUSS.Pure
                 // Replace the host's default configuration with our pre-built one
                 builder.Services.AddSingleton<IConfiguration>(configuration);
 
-                // Configure logging: all output to stderr (Constitution Principle II)
+                // Configure logging: all output to stderr (Constitution Principle II).
+                // The `Logging:LogLevel` rules from appsettings.json must be wired to our
+                // explicit configuration — Host.CreateApplicationBuilder() reads from the
+                // process working directory which, for MCP servers spawned by an IDE, is not
+                // the executable directory. Without this line our LogLevel filters silently
+                // never apply and every category logs at Information.
                 builder.Logging.ClearProviders();
+                builder.Logging.AddConfiguration(configuration.GetSection("Logging"));
                 builder.Logging.AddConsole(options =>
                 {
                     options.LogToStandardErrorThreshold = LogLevel.Trace;

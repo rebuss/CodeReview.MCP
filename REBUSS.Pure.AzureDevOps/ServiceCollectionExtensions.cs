@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
     {
         // Options + validation + post-configure resolution
         services.Configure<AzureDevOpsOptions>(configuration.GetSection(AzureDevOpsOptions.SectionName));
+        services.Configure<AzureDevOpsDiffOptions>(configuration.GetSection(AzureDevOpsDiffOptions.SectionName));
         services.AddSingleton<IValidateOptions<AzureDevOpsOptions>, AzureDevOpsOptionsValidator>();
         services.AddSingleton<IGitRemoteDetector, GitRemoteDetector>();
         services.AddSingleton<ILocalConfigStore, LocalConfigStore>();

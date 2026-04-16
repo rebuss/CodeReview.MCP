@@ -167,12 +167,74 @@ validation, and auth chains — with no real use case.
 | Aspect | Azure DevOps | GitHub |
 |---|---|---|
 | **Base/head commit resolution** | Iterations API: `GetPullRequestIterationsAsync` → `ParseLast` → `BaseCommit` / `TargetCommit` | PR details JSON: `ParseWithCommits` extracts `base.sha` / `head.sha` directly |
-| **File content fetch** | `GetFileContentAtCommitAsync(commitId, path)` — by commit SHA | `GetFileContentAtRefAsync(ref, path)` — by any git ref (SHA, branch) |
-| **File content parallelism** | Sequential: `await base`, then `await target` | Parallel: `Task.WhenAll(baseTask, headTask)` per file |
+| **Primary diff strategy** | Per-file `items` API (default) or full repo ZIP archive (above threshold) — see "Diff Fetch Strategies" below | Pre-built unified `patch` field from `/pulls/{n}/files` (default), per-file content fetch as fallback |
+| **API requests per N-file PR** | 2N (per-file path) or 2 (ZIP path, when N > `ZipFallbackThreshold`) | 1 (paginated `/pulls/files`) when patches present; 2N only for files where GitHub omitted the patch |
 | **Auth failure detection** | `AuthenticationDelegatingHandler` checks `Content-Type` for HTML on 2xx | `GitHubAuthenticationHandler` checks HTTP 401 or 403 status codes |
 | **Parser count** | 3 parsers (metadata, iteration, file changes) | 2 parsers (PR details with commits, file changes) |
 | **Auth token format** | PAT → Basic (`base64(:pat)`), CLI token → Bearer | All tokens → Bearer |
 | **GitHub-specific headers** | N/A | `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `User-Agent: REBUSS-Pure/1.0` |
+
+### Diff Fetch Strategies
+
+Both providers must produce a `List<DiffHunk>` per changed file, but the way they obtain
+that data is dictated by what each platform's REST API offers.
+
+#### GitHub — `patch` field fast path (default)
+
+`/pulls/{n}/files` returns each changed file with a unified-diff `patch` field already
+computed by GitHub:
+
+```
+GET /pulls/42/files
+[
+  { "filename": "src/F.cs", "status": "modified", "additions": 1, "deletions": 1,
+    "patch": "@@ -1,1 +1,1 @@\n-old\n+new" },
+  ...
+]
+```
+
+`GitHubFileChangesParser.ParseWithPatches` extracts the patch alongside metadata, and
+`GitHubPatchHunkParser.Parse` converts the unified diff to `List<DiffHunk>` in-process.
+**Total API requests: 1 (paginated) regardless of file count.**
+
+GitHub omits the `patch` field for binary files and for diffs exceeding ~3000 lines.
+For these, `GitHubDiffProvider.BuildFileDiffsAsync` falls back to the legacy path:
+`Parallel.ForEachAsync` (max 5) over the missing files, fetching base + head content via
+`IGitHubApiClient.GetFileContentAtRefAsync` and rebuilding hunks via `IStructuredDiffBuilder`.
+The `IsFullFileRewrite` check applies only on this fallback path (the patch-based path
+trusts GitHub's diff).
+
+#### Azure DevOps — heuristic per-file vs ZIP fallback
+
+Azure DevOps' REST API has **no unified-patch endpoint**. The diff must be rebuilt locally
+from base + target file contents. Two paths are chosen at runtime based on the changed-file
+count and the configured `AzureDevOpsDiffOptions.ZipFallbackThreshold` (default 30):
+
+- **Per-file path** (count ≤ threshold): `Parallel.ForEachAsync` (max 15) per file, with
+  `Task.WhenAll(baseTask, targetTask)` of `IAzureDevOpsApiClient.GetFileContentAtCommitAsync`.
+  Cost: **2N items API requests**. Cheap for small PRs, fast over the wire.
+
+- **ZIP fallback path** (count > threshold): downloads base + target repository archives in
+  parallel via `AzureDevOpsRepositoryArchiveProvider.DownloadRepositoryZipAsync`, extracts
+  both into a temp directory under `rebuss-repo-{pid}/diff-{guid}/`, then reads file contents
+  from disk via `Parallel.ForEach`. Cost: **2 ZIP requests + bandwidth for full repo
+  contents twice**. Bounded request count protects against Azure DevOps' TSTU rate limits
+  on large refactor PRs.
+
+The threshold default of 30 is calibrated against ADO's documented 200 TSTU / 5 min throttle
+limit (each `items` call is ~1–2 TSTU; 30 files × 2 = 60 calls leaves headroom for
+the other PR-data requests in the same window). Setting `ZipFallbackThreshold = 0` disables
+the ZIP path entirely (always per-file).
+
+**DI cycle avoidance:** `AzureDevOpsDiffProvider` injects `AzureDevOpsRepositoryArchiveProvider`
+as the **concrete type**, not `IRepositoryArchiveProvider`. The interface alias resolves to
+`AzureDevOpsScmClient`, which already depends on the diff provider — taking the interface
+would create a cycle.
+
+**Temp directory cleanup:** the ZIP path uses `try/finally` to delete its instance
+directory on completion (success or failure). The parent `rebuss-repo-{pid}/` is also
+cleaned up by `RepositoryDownloadOrchestrator.OnShutdown` and by `RepositoryCleanupService`
+on next startup if the process crashes — both already key off the same PID prefix.
 
 ## 3. Authentication & Token Management
 

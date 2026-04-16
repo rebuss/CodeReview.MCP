@@ -261,10 +261,26 @@ Located next to the server executable. All fields are optional — auto-detected
     "OrganizationName": "",
     "ProjectName": "",
     "RepositoryName": "",
-    "PersonalAccessToken": ""
+    "PersonalAccessToken": "",
+    "Diff": {
+      "ZipFallbackThreshold": 30
+    }
   }
 }
 ```
+
+The optional `Diff:ZipFallbackThreshold` controls how the diff provider fetches per-file
+content. For PRs with **N ≤ threshold** changed files the provider issues 2N `items`
+requests (one per side). Above the threshold it downloads the base + target repository
+ZIPs once each and reads file contents from disk, bounding API request count to two
+regardless of file count — this avoids Azure DevOps' per-window TSTU rate limits on
+large refactor PRs.
+
+- **Default `30`** — keeps small PRs on the cheap per-file path while protecting large
+  PRs from throttling.
+- **`0`** — disables the ZIP path entirely (always per-file, regardless of count).
+- **Higher value** — appropriate when running against a private Azure DevOps Server
+  with no practical rate limits, or when bandwidth is constrained.
 
 **GitHub:**
 
