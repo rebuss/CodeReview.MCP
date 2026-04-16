@@ -227,6 +227,63 @@ public class PrEnrichmentOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task CompletedJob_DisposesCts_ReleasesKernelHandles()
+    {
+        // Regression: the job's linked CancellationTokenSource allocates kernel wait
+        // handles. The orchestrator must dispose it after the background body completes
+        // or handles leak for process lifetime.
+        _diffCache.GetOrFetchDiffAsync(42, "sha", Arg.Any<CancellationToken>()).Returns(EmptyDiff("sha"));
+
+        _orchestrator.TriggerEnrichment(42, "sha", 5000);
+        await _orchestrator.WaitForEnrichmentAsync(42, CancellationToken.None);
+
+        // Allow the fire-and-forget Dispose continuation to schedule.
+        var cts = await WaitForJobCtsDisposedAsync(42);
+        Assert.Throws<ObjectDisposedException>(() => _ = cts.Token);
+    }
+
+    [Fact]
+    public async Task Dispose_CancelsAndDisposesAllJobs()
+    {
+        // Jobs in flight at orchestrator Dispose must have their Cts cancelled + released.
+        var gate = new TaskCompletionSource<PullRequestDiff>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _diffCache.GetOrFetchDiffAsync(42, "sha", Arg.Any<CancellationToken>()).Returns(gate.Task);
+
+        _orchestrator.TriggerEnrichment(42, "sha", 5000);
+        var cts = GetJobCts(42);
+
+        _orchestrator.Dispose();
+
+        // Cts was cancelled before disposal so the background body unblocks.
+        gate.TrySetCanceled();
+        Assert.Throws<ObjectDisposedException>(() => _ = cts.Token);
+    }
+
+    private CancellationTokenSource GetJobCts(int prNumber)
+    {
+        var jobsField = typeof(PrEnrichmentOrchestrator).GetField(
+            "_jobs",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var jobs = (System.Collections.IDictionary)jobsField.GetValue(_orchestrator)!;
+        var job = jobs[prNumber]!;
+        var ctsProp = job.GetType().GetProperty("Cts")!;
+        return (CancellationTokenSource)ctsProp.GetValue(job)!;
+    }
+
+    private async Task<CancellationTokenSource> WaitForJobCtsDisposedAsync(int prNumber, int timeoutMs = 2000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var cts = GetJobCts(prNumber);
+            try { _ = cts.Token; }
+            catch (ObjectDisposedException) { return cts; }
+            await Task.Delay(15);
+        }
+        throw new Xunit.Sdk.XunitException($"Timed out waiting for PR #{prNumber} Cts to be disposed");
+    }
+
+    [Fact]
     public async Task ConcurrentDistinctPrs_RunInParallel_NeitherBlocksTheOther()
     {
         // FR-009 — distinct PRs must not serialize.

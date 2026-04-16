@@ -234,22 +234,28 @@ internal sealed partial class FindingValidator
             handle = await _sessionFactory.CreateSessionAsync(model, ct).ConfigureAwait(false);
 
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            string? capturedContent = null;
+            var contentBuilder = new StringBuilder();
 
             using var subscription = handle.On(evt =>
             {
                 switch (evt)
                 {
                     case AssistantMessageEvent msg:
-                        capturedContent = msg.Data?.Content;
+                        // Phased-output models (e.g. thinking + response) emit multiple
+                        // AssistantMessageEvents per session; accumulate all non-empty
+                        // Content so we resolve the TCS with the full response on idle.
+                        var chunk = msg.Data?.Content;
+                        if (!string.IsNullOrEmpty(chunk))
+                            contentBuilder.Append(chunk);
                         break;
                     case SessionErrorEvent err:
                         tcs.TrySetException(new InvalidOperationException(
                             err.Data?.Message ?? "session error (no message)"));
                         break;
                     case SessionIdleEvent:
-                        if (!string.IsNullOrWhiteSpace(capturedContent))
-                            tcs.TrySetResult(capturedContent!);
+                        var captured = contentBuilder.ToString();
+                        if (!string.IsNullOrWhiteSpace(captured))
+                            tcs.TrySetResult(captured);
                         else
                             tcs.TrySetException(new InvalidOperationException(
                                 "session idle without assistant message content"));

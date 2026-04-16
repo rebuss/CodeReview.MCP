@@ -53,8 +53,9 @@ public static class GitHubPatchHunkParser
 
             if (line.Length == 0)
             {
-                // Empty line inside a hunk represents a blank context line.
-                current.Lines.Add(new DiffLine { Op = ' ', Text = string.Empty });
+                // A real blank context line is encoded as `" "` (length 1) in unified diffs.
+                // An empty element here comes from Split('\n') on a trailing or doubled newline;
+                // emitting a synthetic context line would shift alignment and corrupt the hunk.
                 continue;
             }
 

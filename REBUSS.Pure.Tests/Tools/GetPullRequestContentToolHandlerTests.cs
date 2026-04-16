@@ -502,13 +502,22 @@ public class GetPullRequestContentToolHandlerTests
             .Returns(Task.CompletedTask);
 
         // Complete the review only after the polling loop has iterated at least once.
-        _ = Task.Run(async () =>
+        // Retain the helper handle (don't discard with `_ =`): if the polling loop never
+        // runs — because of a bug in ExecuteAsync — the helper would hang forever along
+        // with the handler. Bounded WaitAsync turns such regressions into fail-fast
+        // TimeoutExceptions, and awaiting the helper at the end surfaces any exceptions
+        // that would otherwise be silently swallowed by the fire-and-forget task.
+        var completionHelper = Task.Run(async () =>
         {
-            await snapshotCalled.Task;
+            await snapshotCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             completionTcs.SetResult(copilotResult);
         });
 
-        var blocks = (await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1)).ToList();
+        var blocks = (await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1)
+            .WaitAsync(TimeSpan.FromSeconds(10))).ToList();
+
+        // Surface any helper-task exception (and guarantee it has completed).
+        await completionHelper.WaitAsync(TimeSpan.FromSeconds(2));
 
         // Verify page-level progress was reported (at least one "K/3 pages complete" message).
         Assert.Contains(capturedMessages, m =>

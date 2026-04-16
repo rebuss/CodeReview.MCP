@@ -382,13 +382,13 @@ The orchestrator's load-bearing semantic — caller cancellation never cancels t
 | Tool | Description |
 |---|---|
 | `get_pr_metadata(prNumber, [modelName], [maxTokens])` | Returns PR metadata. Pass `modelName` or `maxTokens` to also receive `contentPaging` — total page count and per-page file breakdown for use with `get_pr_content` |
-| `get_pr_content(prNumber, pageNumber, [modelName], [maxTokens])` | Returns diff content for a specific page of the PR. Call `get_pr_metadata` with budget params first to discover the total page count |
+| `get_pr_content(prNumber, [pageNumber], [modelName], [maxTokens])` | Returns the full Copilot-assisted review for the PR in a single call. `pageNumber` is accepted for backward compatibility but ignored — all pages are returned together. Call `get_pr_metadata` with budget params first if you want a breakdown of the planned page count |
 
 ### Local Self-Review Tools (no authentication needed)
 
 | Tool | Description |
 |---|---|
-| `get_local_content(pageNumber, [scope], [modelName], [maxTokens])` | Returns diff content for a specific page of local uncommitted changes. Page allocation is computed internally — no separate metadata call needed |
+| `get_local_content([pageNumber], [scope], [modelName], [maxTokens])` | Returns the full Copilot-assisted review for local changes in a single call. Page allocation is computed internally. `pageNumber` is accepted for backward compatibility but ignored — all pages are returned together. No separate metadata call needed |
 
 **Scopes for local tools:**
 
@@ -402,17 +402,17 @@ The orchestrator's load-bearing semantic — caller cancellation never cancels t
 
 ## Review Workflows
 
-### PR Review — paginated (recommended)
+### PR Review (recommended)
 
 ```
-get_pr_metadata(prNumber, modelName)          ← discovers total pages via contentPaging
-  → loop: get_pr_content(prNumber, page, modelName)  ← one page at a time until hasMorePages = false
+get_pr_metadata(prNumber, modelName)   ← optional: reports the planned page count via contentPaging
+get_pr_content(prNumber, modelName)    ← returns the full Copilot-assisted review in one call
 ```
 
-### Self-Review — paginated (recommended)
+### Self-Review (recommended)
 
 ```
-get_local_content(page, scope, modelName)     ← computes pages internally; loop until hasMorePages = false
+get_local_content(scope, modelName)    ← computes pages internally and returns the full review in one call
 ```
 
 ---

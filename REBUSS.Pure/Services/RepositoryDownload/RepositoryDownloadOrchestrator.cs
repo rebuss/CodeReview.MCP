@@ -23,6 +23,7 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
 
     private RepositoryDownloadState _state = new();
     private CancellationTokenSource? _downloadCts;
+    private long _runCounter;
 
     public RepositoryDownloadOrchestrator(
         IRepositoryArchiveProvider archiveProvider,
@@ -39,7 +40,7 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
         lifetime.ApplicationStopping.Register(OnShutdown);
     }
 
-    public void TriggerDownloadAsync(int prNumber, string commitRef)
+    public void TriggerDownload(int prNumber, string commitRef)
     {
         lock (_lock)
         {
@@ -68,7 +69,21 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
             }
 
             _downloadCts = new CancellationTokenSource();
-            var cts = _downloadCts;
+            // Evaluate the token immediately (it's a struct, captured by value). Do NOT
+            // capture the CancellationTokenSource via a closure — the next TriggerDownload
+            // call may Dispose() it before Task.Run schedules the lambda, and `cts.Token`
+            // on a disposed CTS throws ObjectDisposedException.
+            var ctsToken = _downloadCts.Token;
+
+            // Per-run unique paths so a superseded task and its replacement — possibly
+            // sharing a prNumber with a different commit — cannot race each other on
+            // Directory.Delete / ZipFile.ExtractToDirectory against the same directory.
+            // The cancelled task cleans up *its own* paths in the OCE branch; the winning
+            // task publishes its path to `_state.ExtractedPath` under the same lock that
+            // arbitrates "am I still current?".
+            var runId = Interlocked.Increment(ref _runCounter);
+            var zipPath = Path.Combine(_instanceDir, $"{prNumber}-{runId}.zip");
+            var extractDir = Path.Combine(_instanceDir, $"{prNumber}-{runId}");
 
             _state = new RepositoryDownloadState
             {
@@ -77,7 +92,7 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
                 Status = DownloadStatus.Downloading
             };
 
-            _state.DownloadTask = Task.Run(() => ExecuteDownloadAsync(prNumber, commitRef, cts.Token));
+            _state.DownloadTask = Task.Run(() => ExecuteDownloadAsync(prNumber, commitRef, zipPath, extractDir, ctsToken));
         }
     }
 
@@ -112,11 +127,9 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
         }
     }
 
-    private async Task ExecuteDownloadAsync(int prNumber, string commitRef, CancellationToken ct)
+    private async Task ExecuteDownloadAsync(
+        int prNumber, string commitRef, string zipPath, string extractDir, CancellationToken ct)
     {
-        var zipPath = Path.Combine(_instanceDir, $"{prNumber}.zip");
-        var extractDir = Path.Combine(_instanceDir, $"{prNumber}");
-
         try
         {
             Directory.CreateDirectory(_instanceDir);
@@ -125,11 +138,21 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
 
             await _archiveProvider.DownloadRepositoryZipAsync(commitRef, zipPath, ct);
 
+            bool superseded;
             lock (_lock)
             {
-                if (_state.PrNumber != prNumber || _state.CommitRef != commitRef)
-                    return; // Superseded by a new download request
-                _state.Status = DownloadStatus.Extracting;
+                superseded = _state.PrNumber != prNumber || _state.CommitRef != commitRef;
+                if (!superseded)
+                    _state.Status = DownloadStatus.Extracting;
+            }
+
+            if (superseded)
+            {
+                // Superseded after download completed but before we could start extracting.
+                // Clean up our own per-run zip so it does not linger in the instance
+                // directory — the winning run has its own unique paths (see TriggerDownload).
+                TryDeleteFile(zipPath);
+                return;
             }
 
             _logger.LogInformation("Extracting repository ZIP for PR #{PrNumber}", prNumber);
@@ -144,10 +167,20 @@ public class RepositoryDownloadOrchestrator : IRepositoryDownloadOrchestrator
 
             lock (_lock)
             {
-                if (_state.PrNumber != prNumber || _state.CommitRef != commitRef)
-                    return;
-                _state.Status = DownloadStatus.Ready;
-                _state.ExtractedPath = extractDir;
+                superseded = _state.PrNumber != prNumber || _state.CommitRef != commitRef;
+                if (!superseded)
+                {
+                    _state.Status = DownloadStatus.Ready;
+                    _state.ExtractedPath = extractDir;
+                }
+            }
+
+            if (superseded)
+            {
+                // Superseded between extract and publication — our extract artifact is
+                // orphaned (the winning run uses its own extractDir). Clean it up.
+                TryDeleteDirectory(extractDir);
+                return;
             }
 
             _logger.LogInformation("Repository ready for PR #{PrNumber} at {ExtractDir}", prNumber, extractDir);

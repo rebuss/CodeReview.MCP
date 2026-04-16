@@ -37,7 +37,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
         _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(tcs.Task);
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
 
         var state = _orchestrator.GetState();
         Assert.Equal(DownloadStatus.Downloading, state.Status);
@@ -63,10 +63,10 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
         await _orchestrator.GetExtractedPathAsync();
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
         await _orchestrator.GetExtractedPathAsync();
 
         Assert.Equal(1, callCount);
@@ -86,10 +86,10 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
         await _orchestrator.GetExtractedPathAsync();
 
-        _orchestrator.TriggerDownloadAsync(99, "def456");
+        _orchestrator.TriggerDownload(99, "def456");
         await _orchestrator.GetExtractedPathAsync();
 
         Assert.Equal(2, callCount);
@@ -104,7 +104,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
         _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new HttpRequestException("Network error"));
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
         await _orchestrator.GetExtractedPathAsync();
 
         var state = _orchestrator.GetState();
@@ -125,7 +125,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
 
         var path = await _orchestrator.GetExtractedPathAsync();
 
@@ -147,7 +147,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
         await _orchestrator.GetExtractedPathAsync();
 
         Assert.NotNull(zipPath);
@@ -167,7 +167,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
                 CreateMinimalZip(destPath);
             });
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
 
         var resultTask = _orchestrator.GetExtractedPathAsync();
         Assert.False(resultTask.IsCompleted);
@@ -185,7 +185,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
         _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new HttpRequestException("fail"));
 
-        _orchestrator.TriggerDownloadAsync(42, "abc123");
+        _orchestrator.TriggerDownload(42, "abc123");
 
         var path = await _orchestrator.GetExtractedPathAsync();
         Assert.Null(path);
@@ -227,7 +227,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
             _archiveProvider, _lifetime, new[] { handler1, handler2 },
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
 
-        orchestrator.TriggerDownloadAsync(42, "abc123");
+        orchestrator.TriggerDownload(42, "abc123");
         await orchestrator.GetExtractedPathAsync();
         await Task.WhenAll(handler1Called.Task, handler2Called.Task);
 
@@ -247,7 +247,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
             _archiveProvider, _lifetime, new[] { handler },
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
 
-        orchestrator.TriggerDownloadAsync(42, "abc123");
+        orchestrator.TriggerDownload(42, "abc123");
         await orchestrator.GetExtractedPathAsync();
 
         await handler.DidNotReceive().OnRepositoryReadyAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -277,7 +277,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
             _archiveProvider, _lifetime, new[] { handler1, handler2 },
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
 
-        orchestrator.TriggerDownloadAsync(42, "abc123");
+        orchestrator.TriggerDownload(42, "abc123");
         await orchestrator.GetExtractedPathAsync();
         await handler2Called.Task;
 
@@ -300,7 +300,7 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
             _archiveProvider, _lifetime, Array.Empty<IRepositoryReadyHandler>(),
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
 
-        orchestrator.TriggerDownloadAsync(42, "abc123");
+        orchestrator.TriggerDownload(42, "abc123");
         var path = await orchestrator.GetExtractedPathAsync();
 
         var state = orchestrator.GetState();
@@ -334,17 +334,70 @@ public class RepositoryDownloadOrchestratorTests : IDisposable
             NullLogger<RepositoryDownloadOrchestrator>.Instance);
 
         // Start first PR
-        orchestrator.TriggerDownloadAsync(42, "abc123");
+        orchestrator.TriggerDownload(42, "abc123");
         await orchestrator.GetExtractedPathAsync();
         await handlerStarted.Task; // Handler is running
 
         // Start new PR while handler is still running — should not throw
-        orchestrator.TriggerDownloadAsync(99, "def456");
+        orchestrator.TriggerDownload(99, "def456");
         handlerContinue.SetResult(); // Let handler finish
 
         await orchestrator.GetExtractedPathAsync();
         var state = orchestrator.GetState();
         Assert.Equal(99, state.PrNumber);
+    }
+
+    [Fact]
+    public async Task TriggerDownload_SamePrDifferentCommit_UsesDistinctExtractPaths_NoFilesystemCollision()
+    {
+        // Regression: Before the per-run-unique-path fix, same-PR different-commit
+        // retriggers produced two tasks competing for the same `{prNumber}` extractDir
+        // and `{prNumber}.zip`. A superseded Task A, mid-extract, could collide with
+        // Task B on Directory.Delete / ZipFile.ExtractToDirectory.
+        var gateA = new TaskCompletionSource();
+        var gateB = new TaskCompletionSource();
+        var destinationPathsSeen = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var callIndex = 0;
+
+        _archiveProvider.DownloadRepositoryZipAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var destPath = callInfo.ArgAt<string>(1);
+                destinationPathsSeen.Add(destPath);
+                var idx = Interlocked.Increment(ref callIndex);
+                // First call (Task A) blocks on gateA — simulates slow download so supersession
+                // races in while A is mid-flight. Second call (Task B) blocks on gateB.
+                if (idx == 1) await gateA.Task;
+                else await gateB.Task;
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                CreateMinimalZip(destPath);
+            });
+
+        // Task A: PR 42, commit "old"
+        _orchestrator.TriggerDownload(42, "old");
+        var taskA = _orchestrator.GetState().DownloadTask;
+
+        // Task B: same PR, different commit — supersedes A
+        _orchestrator.TriggerDownload(42, "new");
+        var taskB = _orchestrator.GetState().DownloadTask;
+
+        // Release both — A completes first but should observe supersession before
+        // publishing state (and clean up its own zip). B completes and wins.
+        gateA.SetResult();
+        gateB.SetResult();
+
+        // Deterministic wait — ensures A's mock has finished registering its destPath
+        // and A has exited via the supersede-cleanup path before assertions.
+        await Task.WhenAll(taskA, taskB);
+
+        var state = _orchestrator.GetState();
+
+        // Two distinct zip destinations must have been requested (no path reuse).
+        Assert.Equal(2, destinationPathsSeen.Count);
+        Assert.Equal(2, destinationPathsSeen.Distinct().Count());
+        Assert.Equal("new", state.CommitRef);
+        Assert.Equal(DownloadStatus.Ready, state.Status);
+        Assert.NotNull(state.ExtractedPath);
     }
 
     private static void CreateMinimalZip(string path)

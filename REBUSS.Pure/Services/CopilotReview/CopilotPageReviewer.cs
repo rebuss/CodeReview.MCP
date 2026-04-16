@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -74,26 +75,31 @@ internal sealed class CopilotPageReviewer : ICopilotPageReviewer
             handle = await _sessionFactory.CreateSessionAsync(_options.Value.Model, ct).ConfigureAwait(false);
 
             // Event-driven response collection:
-            //   AssistantMessageEvent → capture Content
-            //   SessionIdleEvent      → complete the TCS (with captured content, or empty → failure)
+            //   AssistantMessageEvent → accumulate Content (phased-output models emit
+            //                           multiple events per session — thinking + response)
+            //   SessionIdleEvent      → complete the TCS with the accumulated content,
+            //                           or with an error when no content was captured
             //   SessionErrorEvent     → complete the TCS with an exception
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            string? capturedContent = null;
+            var contentBuilder = new StringBuilder();
 
             using var subscription = handle.On(evt =>
             {
                 switch (evt)
                 {
                     case AssistantMessageEvent msg:
-                        capturedContent = msg.Data?.Content;
+                        var chunk = msg.Data?.Content;
+                        if (!string.IsNullOrEmpty(chunk))
+                            contentBuilder.Append(chunk);
                         break;
                     case SessionErrorEvent err:
                         tcs.TrySetException(new InvalidOperationException(
                             err.Data?.Message ?? "session error (no message)"));
                         break;
                     case SessionIdleEvent:
-                        if (!string.IsNullOrWhiteSpace(capturedContent))
-                            tcs.TrySetResult(capturedContent!);
+                        var captured = contentBuilder.ToString();
+                        if (!string.IsNullOrWhiteSpace(captured))
+                            tcs.TrySetResult(captured);
                         else
                             tcs.TrySetException(new InvalidOperationException(
                                 "session idle without assistant message content"));

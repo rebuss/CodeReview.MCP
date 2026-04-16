@@ -16,13 +16,9 @@ public partial class StructuralChangeEnricher : IDiffEnricher
     private const int MaxAnnotations = 15;
 
     private static readonly Regex HeaderLineRegex = HeaderLinePattern();
-    private static readonly Regex HunkHeaderRegex = HunkHeaderPattern();
 
     [GeneratedRegex(@"^=== .+ ===\s*$", RegexOptions.Multiline)]
     private static partial Regex HeaderLinePattern();
-
-    [GeneratedRegex(@"^@@ ", RegexOptions.Multiline)]
-    private static partial Regex HunkHeaderPattern();
 
     private readonly DiffSourceResolver _sourceResolver;
     private readonly ILogger<StructuralChangeEnricher> _logger;

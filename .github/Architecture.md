@@ -420,7 +420,7 @@ needed. See recipe 5.4 in `ProjectConventions.md`.
 ### Trigger
 
 When `get_pr_metadata` is called, the handler fires a background download via
-`IRepositoryDownloadOrchestrator.TriggerDownloadAsync(prNumber, commitRef)`.
+`IRepositoryDownloadOrchestrator.TriggerDownload(prNumber, commitRef)`.
 This is fire-and-forget — the metadata response returns immediately without waiting.
 
 ### Commit Selection
@@ -450,7 +450,7 @@ to the target commit, because a stale archive is worse than none for the pipelin
 
 ```
 get_pr_metadata → MetadataHandler
-  → _downloadOrchestrator.TriggerDownloadAsync(prNumber, metadata.LastMergeSourceCommitId)
+  → _downloadOrchestrator.TriggerDownload(prNumber, metadata.LastMergeSourceCommitId)
     → Background Task.Run:
       1. IRepositoryArchiveProvider.DownloadRepositoryZipAsync(commitRef, zipPath)
          (Azure DevOps: Items API ?$format=zip | GitHub: /zipball/{ref})
@@ -640,7 +640,7 @@ parse → resolve scopes → severity-order → token-budget pages → SDK call(
 | Parse | `FindingParser.Parse` | Per-page Markdown → `ParsedFinding[]` + the unparseable remainder (free-form prose preserved verbatim, FR-012). The regex is a tolerant safety net over what `copilot-page-review.md` demands: swallows leading list markers (`- `, `* `, `1. `), and for the line expression accepts `42`, `~42`, `≈42`, `42-50`, `approx 42`, `(line unknown)` — the first integer is extracted; "unknown" yields `LineNumber == null` |
 | Threshold | orchestrator | If total findings > `MaxValidatableFindings` (default 40) → skip validation entirely (likely a systemic issue) |
 | Resolve scopes | `FindingScopeResolver` | **Non-`.cs`** ⇒ `NotCSharp` (passthrough, no Copilot call). **Missing source** ⇒ `SourceUnavailable`. **`.cs` with source** — smart-line + fallback chain: (1) if `LineNumber == null`, ask `FindingLineResolver` (in `RoslynProcessor`) to locate a line from identifiers cited in backticks in the description; (2) run `FindingScopeExtractor` at that line — when the method body exceeds `MaxScopeLines` (default 150), truncate with a window ±`MaxScopeLines/2` plus `// ... (X lines omitted) ...` markers; (3) if (2) fails (line on a `using`/top-level/malformed syntax), retry `FindingLineResolver` with the original line as a hint and re-run (2); (4) still failing ⇒ whole-file fallback: truncate source to `MaxScopeLines × 2` centred on the middle with a `// ... (X lines omitted from middle) ...` marker, scope name tagged `<entire file: {path}>`, **ResolutionFailure.None** so it still reaches Copilot. This chain was added after observing that Copilot frequently omits line numbers or writes approximations for file-level findings — previously those would silently short-circuit to `ScopeNotFound → Uncertain` and skip validation |
-| Phase 1 verdicts | `FindingValidator` | Deterministic, no Copilot call: `NotCSharp` → `Valid` (passthrough), `SourceUnavailable` → `Uncertain`. Note: `ScopeNotFound` is no longer reachable for `.cs` findings — the whole-file fallback keeps them in the Copilot-bound set |
+| Phase 1 verdicts | `FindingValidator` | Deterministic, no Copilot call: `NotCSharp` → `Valid` (passthrough), `SourceUnavailable` → `Uncertain`. `ScopeNotFound` → `Uncertain` is retained as a **defensive mapping** (pinned by `ValidateAsync_ScopeNotFound_MapsToUncertainWithoutCopilotCall`) — the whole-file fallback in `FindingScopeResolver` means no current code path produces `ScopeNotFound` for `.cs` findings, but the validator must stay resilient if a future producer reintroduces this state |
 | Severity order | `FindingSeverityOrderer.Order` | Stable sort by severity rank: `critical=0`, `major=1`, `minor=2`, unknown last. Ensures the most important issues land in the first SDK call's prompt |
 | Token budgeting | `IPageAllocator` + `ITokenEstimator` | Build one synthetic `PackingCandidate` per finding+scope pair, with `EstimatedTokens` from `EstimateTokenCount` over the per-finding prompt section. Allocate against `ReviewBudgetTokens − templateOverhead` so the wrapping prompt template (loaded once and measured) is accounted for. **Token budget — not a fixed batch size — controls how many findings fit per Copilot SDK call.** This is the same mechanism used to paginate the original review pass |
 | SDK calls | `FindingValidator.ValidatePageAsync` | One `ICopilotSessionFactory.CreateSessionAsync` call per allocator page. Inspection writer kind = `validation-{pageNumber}`. Response parsed via index-based regex (`**Finding {N}: VALID\|FALSE_POSITIVE\|UNCERTAIN**`) so verdict mapping is order-independent |

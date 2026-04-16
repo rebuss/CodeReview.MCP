@@ -114,13 +114,13 @@ public class GitHubPatchHunkParserTests
     }
 
     [Fact]
-    public void Parse_EmptyContextLineInsideHunk_TreatedAsBlankContext()
+    public void Parse_TrueBlankContextLine_EncodedAsSpacePrefix_ProducesBlankContext()
     {
-        // After a hunk header, a blank line is a context line for an empty source line.
+        // Unified-diff encoding: a blank context line is `" "` (a single-space prefix).
         const string patch =
             "@@ -1,3 +1,3 @@\n" +
             " before\n" +
-            "\n" +
+            " \n" +
             " after";
 
         var hunks = GitHubPatchHunkParser.Parse(patch);
@@ -129,6 +129,43 @@ public class GitHubPatchHunkParserTests
         Assert.Equal(3, hunks[0].Lines.Count);
         Assert.Equal(' ', hunks[0].Lines[1].Op);
         Assert.Equal(string.Empty, hunks[0].Lines[1].Text);
+    }
+
+    [Fact]
+    public void Parse_EmptyStringFromSplit_NotSyntheticContext()
+    {
+        // Regression: Split('\n') yields an empty element wherever two newlines meet (or at
+        // trailing-newline). These are not real blank context lines (`""` != `" "`) and must
+        // be skipped — otherwise the hunk gains a spurious context line and misaligns.
+        const string patch =
+            "@@ -1,2 +1,2 @@\n" +
+            " before\n" +
+            "\n" +
+            " after";
+
+        var hunks = GitHubPatchHunkParser.Parse(patch);
+
+        Assert.Single(hunks);
+        Assert.Equal(2, hunks[0].Lines.Count);
+        Assert.Equal(' ', hunks[0].Lines[0].Op);
+        Assert.Equal("before", hunks[0].Lines[0].Text);
+        Assert.Equal(' ', hunks[0].Lines[1].Op);
+        Assert.Equal("after", hunks[0].Lines[1].Text);
+    }
+
+    [Fact]
+    public void Parse_TrailingNewline_DoesNotAppendSpuriousContextLine()
+    {
+        // Classic Split('\n') trap: patch ends with '\n' → last element is "". Previously
+        // this emitted an extra blank context line on every hunk with a trailing newline.
+        const string patch = "@@ -1,1 +1,1 @@\n-old\n+new\n";
+
+        var hunks = GitHubPatchHunkParser.Parse(patch);
+
+        var hunk = Assert.Single(hunks);
+        Assert.Equal(2, hunk.Lines.Count);
+        Assert.Equal('-', hunk.Lines[0].Op);
+        Assert.Equal('+', hunk.Lines[1].Op);
     }
 
     [Fact]

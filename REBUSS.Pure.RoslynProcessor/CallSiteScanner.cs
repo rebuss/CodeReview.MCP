@@ -119,12 +119,23 @@ public class CallSiteScanner
 
     private static bool IsCallSiteContext(IdentifierNameSyntax identifier)
     {
-        var parent = identifier.Parent;
-        return parent is InvocationExpressionSyntax
-            or MemberAccessExpressionSyntax
-            or ObjectCreationExpressionSyntax
-            or BaseListSyntax
-            or SimpleBaseTypeSyntax;
+        // Positional check: an IdentifierName can be either the *role* we care about
+        // (callable/member/type) or an unrelated neighbour (receiver, argument, etc.)
+        // under the same parent. For each parent kind only the role-matching slot counts,
+        // otherwise a local variable named the same as a target (e.g. `obj.Target()` when
+        // the target list contains "obj") would be recorded as a false-positive call site.
+        return identifier.Parent switch
+        {
+            // Foo(...) — must be the invoked expression, not nested inside an Argument.
+            InvocationExpressionSyntax inv => inv.Expression == identifier,
+            // obj.Member — only the Name (member) slot is a reference to the target.
+            MemberAccessExpressionSyntax ma => ma.Name == identifier,
+            // new Foo(...) — must be the instantiated Type slot.
+            ObjectCreationExpressionSyntax oc => oc.Type == identifier,
+            // class C : Base — the base type reference.
+            SimpleBaseTypeSyntax sbt => sbt.Type == identifier,
+            _ => false,
+        };
     }
 
     private static IEnumerable<string> EnumerateCsFiles(string repoRoot, string? resolvedExclude)

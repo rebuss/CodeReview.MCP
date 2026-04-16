@@ -21,8 +21,13 @@ public static class StructuralChangeDetector
         var beforeTypes = GetTypeDeclarations(beforeRoot);
         var afterTypes = GetTypeDeclarations(afterRoot);
 
-        var beforeTypeMap = beforeTypes.ToDictionary(GetTypeName, t => t);
-        var afterTypeMap = afterTypes.ToDictionary(GetTypeName, t => t);
+        var beforeTypeMap = new Dictionary<string, TypeDeclarationSyntax>();
+        foreach (var t in beforeTypes)
+            beforeTypeMap.TryAdd(GetTypeName(t), t);
+
+        var afterTypeMap = new Dictionary<string, TypeDeclarationSyntax>();
+        foreach (var t in afterTypes)
+            afterTypeMap.TryAdd(GetTypeName(t), t);
 
         // Detect added/removed types
         foreach (var name in afterTypeMap.Keys.Except(beforeTypeMap.Keys))
@@ -87,7 +92,14 @@ public static class StructuralChangeDetector
 
     private static string GetTypeName(TypeDeclarationSyntax type)
     {
-        return type.Identifier.Text;
+        var namespaceParts = new List<string>();
+        foreach (var ns in type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>())
+            namespaceParts.Insert(0, ns.Name.ToString());
+
+        var qualifier = string.Join(".", namespaceParts);
+        return string.IsNullOrEmpty(qualifier)
+            ? type.Identifier.Text
+            : $"{qualifier}.{type.Identifier.Text}";
     }
 
     private static string GetTypeKindName(TypeDeclarationSyntax type)
@@ -153,14 +165,50 @@ public static class StructuralChangeDetector
 
         var beforeMap = new Dictionary<string, MemberDeclarationSyntax>();
         foreach (var (key, member) in beforeMembers)
-            beforeMap.TryAdd(key, member); // First occurrence wins for overloads
+            beforeMap.TryAdd(key, member);
 
         var afterMap = new Dictionary<string, MemberDeclarationSyntax>();
         foreach (var (key, member) in afterMembers)
             afterMap.TryAdd(key, member);
 
+        var addedKeys = afterMap.Keys.Except(beforeMap.Keys).ToList();
+        var removedKeys = beforeMap.Keys.Except(afterMap.Keys).ToList();
+
+        // Pair 1:1 orphans sharing the same name+kind as SignatureChanged (e.g. the sole
+        // overload of Foo had its parameter list changed — treat as one signature change,
+        // not remove+add). Real overload additions/removals keep multiple entries per name
+        // and fall through as MemberAdded/MemberRemoved.
+        var pairedBefore = new HashSet<string>();
+        var pairedAfter = new HashSet<string>();
+
+        var removedByGroup = removedKeys.GroupBy(k => MemberGroupKey(beforeMap[k]));
+        var addedByGroup = addedKeys.GroupBy(k => MemberGroupKey(afterMap[k]))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var group in removedByGroup)
+        {
+            if (group.Count() != 1) continue;
+            if (!addedByGroup.TryGetValue(group.Key, out var addedInGroup)) continue;
+            if (addedInGroup.Count != 1) continue;
+
+            var beforeKey = group.First();
+            var afterKey = addedInGroup[0];
+            var beforeMember = beforeMap[beforeKey];
+            var afterMember = afterMap[afterKey];
+
+            changes.Add(new StructuralChange
+            {
+                Kind = StructuralChangeKind.SignatureChanged,
+                Description = FormatSignatureChanged(beforeMember, afterMember, afterKey),
+                LineNumber = afterMember.GetLocation().GetLineSpan().StartLinePosition.Line + 1
+            });
+
+            pairedBefore.Add(beforeKey);
+            pairedAfter.Add(afterKey);
+        }
+
         // Added members
-        foreach (var key in afterMap.Keys.Except(beforeMap.Keys))
+        foreach (var key in addedKeys.Where(k => !pairedAfter.Contains(k)))
         {
             var member = afterMap[key];
             changes.Add(new StructuralChange
@@ -172,7 +220,7 @@ public static class StructuralChangeDetector
         }
 
         // Removed members
-        foreach (var key in beforeMap.Keys.Except(afterMap.Keys))
+        foreach (var key in removedKeys.Where(k => !pairedBefore.Contains(k)))
         {
             var member = beforeMap[key];
             changes.Add(new StructuralChange
@@ -217,18 +265,46 @@ public static class StructuralChangeDetector
     {
         return member switch
         {
-            MethodDeclarationSyntax m => $"method:{m.Identifier.Text}",
-            ConstructorDeclarationSyntax => "method:.ctor",
+            MethodDeclarationSyntax m => $"method:{m.Identifier.Text}({FormatParamTypeKey(m.ParameterList)})",
+            ConstructorDeclarationSyntax c => $"method:.ctor({FormatParamTypeKey(c.ParameterList)})",
             PropertyDeclarationSyntax p => $"property:{p.Identifier.Text}",
             FieldDeclarationSyntax f => f.Declaration.Variables.Count > 0
                 ? $"field:{f.Declaration.Variables[0].Identifier.Text}" : null,
-            IndexerDeclarationSyntax => "property:this[]",
-            OperatorDeclarationSyntax o => $"method:operator {o.OperatorToken.Text}",
+            IndexerDeclarationSyntax i => $"property:this[{FormatIndexerParamTypeKey(i.ParameterList)}]",
+            OperatorDeclarationSyntax o => $"method:operator {o.OperatorToken.Text}({FormatParamTypeKey(o.ParameterList)})",
             EventDeclarationSyntax e => $"event:{e.Identifier.Text}",
             EventFieldDeclarationSyntax ef => ef.Declaration.Variables.Count > 0
                 ? $"event:{ef.Declaration.Variables[0].Identifier.Text}" : null,
             _ => null
         };
+    }
+
+    private static string FormatParamTypeKey(ParameterListSyntax paramList)
+    {
+        return string.Join(",", paramList.Parameters.Select(p => p.Type?.ToString().Trim() ?? "?"));
+    }
+
+    private static string MemberGroupKey(MemberDeclarationSyntax member)
+    {
+        return member switch
+        {
+            MethodDeclarationSyntax m => $"method:{m.Identifier.Text}",
+            ConstructorDeclarationSyntax => "method:.ctor",
+            PropertyDeclarationSyntax p => $"property:{p.Identifier.Text}",
+            FieldDeclarationSyntax f => f.Declaration.Variables.Count > 0
+                ? $"field:{f.Declaration.Variables[0].Identifier.Text}" : "field:?",
+            IndexerDeclarationSyntax => "property:this[]",
+            OperatorDeclarationSyntax o => $"method:operator {o.OperatorToken.Text}",
+            EventDeclarationSyntax e => $"event:{e.Identifier.Text}",
+            EventFieldDeclarationSyntax ef => ef.Declaration.Variables.Count > 0
+                ? $"event:{ef.Declaration.Variables[0].Identifier.Text}" : "event:?",
+            _ => "other:?"
+        };
+    }
+
+    private static string FormatIndexerParamTypeKey(BracketedParameterListSyntax paramList)
+    {
+        return string.Join(",", paramList.Parameters.Select(p => p.Type?.ToString().Trim() ?? "?"));
     }
 
     private static bool SignaturesEqual(MemberDeclarationSyntax a, MemberDeclarationSyntax b)

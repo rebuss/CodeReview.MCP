@@ -210,4 +210,41 @@ public class CallSiteScannerTests : IDisposable
         var result = Assert.Single(results);
         Assert.True(result.TotalCount > 0, "Base class reference should be detected");
     }
+
+    [Fact]
+    public async Task ScanAsync_ReceiverWithSameNameAsTarget_NotCountedAsCallSite()
+    {
+        // Regression: `obj.Something()` where `obj` and `Something` are both
+        // IdentifierNames under a MemberAccessExpression. Only the Name slot
+        // (member being accessed) should be counted — the receiver (obj) is a
+        // local variable unrelated to the method we track.
+        WriteFile("src/Caller.cs", @"class Caller {
+    void Run() {
+        var ProcessOrder = new object();     // local variable with target name
+        ProcessOrder.ToString();             // ProcessOrder as receiver — must NOT count
+        ProcessOrder.Equals(this);           // same
+    }
+}");
+        var targets = new[] { new CallSiteTarget { Name = "ProcessOrder", Reason = "changed" } };
+
+        var results = await _scanner.ScanAsync(_tempDir, targets, null, CancellationToken.None);
+
+        var result = Assert.Single(results);
+        Assert.Equal(0, result.TotalCount);
+        Assert.Empty(result.Locations);
+    }
+
+    [Fact]
+    public async Task ScanAsync_MemberAccessWithTargetAsName_Counted()
+    {
+        // Positive side of the same fix: when the target name appears as the
+        // member slot (`obj.ProcessOrder`), it must still be counted.
+        WriteFile("src/Caller.cs", "class Caller { void Run(object svc) { svc.ProcessOrder(); } }");
+        var targets = new[] { new CallSiteTarget { Name = "ProcessOrder", Reason = "changed" } };
+
+        var results = await _scanner.ScanAsync(_tempDir, targets, null, CancellationToken.None);
+
+        var result = Assert.Single(results);
+        Assert.Equal(1, result.TotalCount);
+    }
 }

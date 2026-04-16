@@ -12,6 +12,7 @@ namespace REBUSS.Pure.Services.RepositoryDownload;
 public class RepositoryCleanupService : IHostedService
 {
     private readonly ILogger<RepositoryCleanupService> _logger;
+    private Task? _cleanupTask;
 
     public RepositoryCleanupService(ILogger<RepositoryCleanupService> logger)
     {
@@ -20,14 +21,20 @@ public class RepositoryCleanupService : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        CleanupOrphanedDirectories();
+        // Directory.EnumerateDirectories + Process.GetProcessById + recursive deletes are
+        // synchronous and can be expensive on a cluttered %TEMP% — offload so the hosted
+        // services pipeline (and therefore MCP handshake) is not blocked. The sweep only
+        // touches directories belonging to *other* PIDs, so there is no race with the
+        // in-process orchestrator.
+        _cleanupTask = Task.Run(CleanupOrphanedDirectories, CancellationToken.None);
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        // Shutdown cleanup is handled by RepositoryDownloadOrchestrator via IHostApplicationLifetime
-        return Task.CompletedTask;
+        // Shutdown cleanup is handled by RepositoryDownloadOrchestrator via IHostApplicationLifetime.
+        // Return the in-flight cleanup task (if still running) so shutdown waits politely.
+        return _cleanupTask ?? Task.CompletedTask;
     }
 
     private void CleanupOrphanedDirectories()

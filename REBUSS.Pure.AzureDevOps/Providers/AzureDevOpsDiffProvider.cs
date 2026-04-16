@@ -373,7 +373,7 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             var normalized = diffFilePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
 
             var direct = Path.Combine(rootPath, normalized);
-            if (File.Exists(direct))
+            if (File.Exists(direct) && IsWithin(rootPath, direct))
                 return direct;
 
             // Fallback: a single wrapper directory at the archive root (Azure DevOps does this
@@ -384,11 +384,32 @@ namespace REBUSS.Pure.AzureDevOps.Providers
             if (topLevelDirs.Length == 1 && topLevelFiles.Length == 0)
             {
                 var wrapped = Path.Combine(topLevelDirs[0], normalized);
-                if (File.Exists(wrapped))
+                if (File.Exists(wrapped) && IsWithin(rootPath, wrapped))
                     return wrapped;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Defence-in-depth: rejects paths that, after resolving <c>..</c> segments / absolute
+        /// roots, escape the extracted archive root. The diff paths originate from the Azure
+        /// DevOps API (generally trusted) but we never blindly read from a path that canonicalizes
+        /// outside <paramref name="rootPath"/>.
+        /// </summary>
+        private static bool IsWithin(string rootPath, string candidatePath)
+        {
+            var rootFull = Path.GetFullPath(rootPath);
+            var candidateFull = Path.GetFullPath(candidatePath);
+
+            if (!rootFull.EndsWith(Path.DirectorySeparatorChar))
+                rootFull += Path.DirectorySeparatorChar;
+
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            return candidateFull.StartsWith(rootFull, comparison);
         }
 
         private void TryDelete(string path)

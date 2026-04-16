@@ -49,6 +49,27 @@ public class CopilotPageReviewerTests
     }
 
     [Fact]
+    public async Task ReviewPage_MultipleAssistantMessageEvents_AccumulatesContent()
+    {
+        // Phased-output models (thinking + response) emit multiple AssistantMessageEvents
+        // per session. All non-empty Content fragments must be accumulated — previous
+        // "last one wins" behavior silently truncated responses.
+        var factory = new FakeSessionFactory();
+        factory.OnSendAsync = (handle, prompt) =>
+        {
+            handle.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m1", Content = "part A\n" } });
+            handle.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m1", Content = "part B" } });
+            handle.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+        };
+
+        var reviewer = CreateReviewer(factory);
+        var result = await reviewer.ReviewPageAsync("pr:42", 1, "diff content");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("part A\npart B", result.ReviewText);
+    }
+
+    [Fact]
     public async Task ReviewPage_SessionErrorEvent_ReturnsFailureNeverPropagates()
     {
         var factory = new FakeSessionFactory();

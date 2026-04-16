@@ -775,4 +775,101 @@ public class AzureDevOpsDiffProviderTests
             writer.Write(content);
         }
     }
+
+    // ─── TryResolveFilePath: path-traversal defence ─────────────────────────────
+
+    public class TryResolveFilePathTests : IDisposable
+    {
+        private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"adotr-{Guid.NewGuid():N}");
+
+        public void Dispose()
+        {
+            try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { }
+        }
+
+        [Fact]
+        public void NormalPath_ReturnsResolvedFile()
+        {
+            var rootDir = Path.Combine(_tempDir, "archive");
+            var srcDir = Path.Combine(rootDir, "src");
+            Directory.CreateDirectory(srcDir);
+            File.WriteAllText(Path.Combine(srcDir, "File.cs"), "class C { }");
+
+            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "src/File.cs");
+
+            Assert.NotNull(resolved);
+            Assert.Equal(Path.Combine(rootDir, "src", "File.cs"), resolved);
+        }
+
+        [Fact]
+        public void ParentTraversalEscape_ReturnsNull()
+        {
+            // Attacker-supplied diff path escaping the archive root via `..`.
+            var rootDir = Path.Combine(_tempDir, "archive");
+            Directory.CreateDirectory(rootDir);
+
+            // Plant a file OUTSIDE the root that would be reached by the traversal.
+            var outsideDir = Path.Combine(_tempDir, "outside");
+            Directory.CreateDirectory(outsideDir);
+            File.WriteAllText(Path.Combine(outsideDir, "secret.cs"), "secret");
+
+            // ../outside/secret.cs  ← resolves outside rootDir
+            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../outside/secret.cs");
+
+            Assert.Null(resolved);
+        }
+
+        [Fact]
+        public void ParentTraversalViaWrapper_ReturnsNull()
+        {
+            // Wrapper layout: archive/commit-abc/src/File.cs. A `..` traversal from inside
+            // the wrapper must not reach siblings or the temp root.
+            var rootDir = Path.Combine(_tempDir, "archive");
+            var wrapper = Path.Combine(rootDir, "commit-abc");
+            Directory.CreateDirectory(wrapper);
+
+            // Create a sibling directory next to rootDir and a file inside it.
+            var outsideDir = Path.Combine(_tempDir, "outside");
+            Directory.CreateDirectory(outsideDir);
+            File.WriteAllText(Path.Combine(outsideDir, "secret.cs"), "secret");
+
+            // Without the guard, wrapper fallback + `..` segments could escape.
+            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../../outside/secret.cs");
+
+            Assert.Null(resolved);
+        }
+
+        [Fact]
+        public void LookalikeSiblingPrefix_ReturnsNull()
+        {
+            // rootDir = archive, a sibling named archive-evil whose full path starts with "archive"
+            // would pass a naive StartsWith check that forgot the trailing separator.
+            var rootDir = Path.Combine(_tempDir, "archive");
+            var evilDir = Path.Combine(_tempDir, "archive-evil");
+            Directory.CreateDirectory(rootDir);
+            Directory.CreateDirectory(evilDir);
+            File.WriteAllText(Path.Combine(evilDir, "payload.cs"), "x");
+
+            // The normalized candidate becomes .../archive-evil/payload.cs — outside rootDir.
+            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../archive-evil/payload.cs");
+
+            Assert.Null(resolved);
+        }
+
+        [Fact]
+        public void WrapperFallback_StillResolvesLegitimatePaths()
+        {
+            // Azure DevOps occasionally nests the archive under a single commit-named directory.
+            var rootDir = Path.Combine(_tempDir, "archive");
+            var wrapper = Path.Combine(rootDir, "repo-abc123");
+            var srcDir = Path.Combine(wrapper, "src");
+            Directory.CreateDirectory(srcDir);
+            File.WriteAllText(Path.Combine(srcDir, "File.cs"), "class C { }");
+
+            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "src/File.cs");
+
+            Assert.NotNull(resolved);
+            Assert.Equal(Path.Combine(wrapper, "src", "File.cs"), resolved);
+        }
+    }
 }

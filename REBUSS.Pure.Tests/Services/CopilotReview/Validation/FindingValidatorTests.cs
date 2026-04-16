@@ -140,6 +140,13 @@ public class FindingValidatorTests
         Assert.Equal(0, factory.CreateSessionCalls);
     }
 
+    // NOTE: Dead-path safeguard. `FindingScopeResolver` no longer emits
+    // `ScopeResolutionFailure.ScopeNotFound` for `.cs` findings (the whole-file
+    // fallback always yields `ResolutionFailure.None`, see Architecture.md §6b).
+    // The enum value is kept because the validator's pre-filter must stay resilient
+    // if any future producer reintroduces this state — unmapped failure values
+    // would fall into the Copilot-bound branch and waste SDK calls. This test
+    // pins the defensive mapping in place.
     [Fact]
     public async Task ValidateAsync_ScopeNotFound_MapsToUncertainWithoutCopilotCall()
     {
@@ -190,6 +197,36 @@ public class FindingValidatorTests
         Assert.Equal(FindingVerdict.FalsePositive, result[1].Verdict);
         Assert.Equal(FindingVerdict.Uncertain, result[2].Verdict);
         Assert.Equal(1, factory.CreateSessionCalls); // single page → single Copilot call
+    }
+
+    [Fact]
+    public async Task ValidateAsync_MultipleAssistantMessageEvents_AccumulatesContent()
+    {
+        // Phased-output models (e.g. thinking + response phases) may emit multiple
+        // AssistantMessageEvents per session. All non-empty Content fragments must be
+        // accumulated — the previous "last one wins" behavior truncated responses.
+        var factory = new FakeSessionFactory();
+        factory.OnSendAsync = (h, _) =>
+        {
+            h.PushEvent(new AssistantMessageEvent
+            {
+                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** — part A\n" }
+            });
+            h.PushEvent(new AssistantMessageEvent
+            {
+                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 2: FALSE_POSITIVE** — part B" }
+            });
+            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+        };
+
+        var validator = CreateValidator(factory);
+        var input = new[] { Resolved(MakeFinding(0)), Resolved(MakeFinding(1)) };
+
+        var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(FindingVerdict.Valid, result[0].Verdict);
+        Assert.Equal(FindingVerdict.FalsePositive, result[1].Verdict);
     }
 
     [Fact]

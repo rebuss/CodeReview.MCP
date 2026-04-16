@@ -258,8 +258,8 @@ public class GetPullRequestMetadataToolHandlerTests
         // LastMergeSourceCommitId is the PR HEAD; the archive must be downloaded at that
         // commit so downstream consumers (DiffSourceResolver, CallSiteEnricher,
         // FindingScopeResolver) see post-change source. Never the merge-base commit.
-        _downloadOrchestrator.Received(1).TriggerDownloadAsync(42, "abc123");
-        _downloadOrchestrator.DidNotReceive().TriggerDownloadAsync(42, "def456");
+        _downloadOrchestrator.Received(1).TriggerDownload(42, "abc123");
+        _downloadOrchestrator.DidNotReceive().TriggerDownload(42, "def456");
     }
 
     [Fact]
@@ -282,7 +282,7 @@ public class GetPullRequestMetadataToolHandlerTests
 
         await _handler.ExecuteAsync(prNumber: 42);
 
-        _downloadOrchestrator.DidNotReceive().TriggerDownloadAsync(Arg.Any<int>(), Arg.Any<string>());
+        _downloadOrchestrator.DidNotReceive().TriggerDownload(Arg.Any<int>(), Arg.Any<string>());
     }
 
     // ─── Error handling ───────────────────────────────────────────────────────

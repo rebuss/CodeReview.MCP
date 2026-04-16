@@ -196,6 +196,41 @@ public class DiffSourceResolverTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolveAsync_FirstCallerCancelled_SecondCallerStillGetsResult()
+    {
+        // The shared Lazy<Task<>> must not inherit the first caller's CancellationToken —
+        // otherwise cancelling caller A faults the shared task for caller B with a
+        // still-valid token.
+        var wrapperDir = Path.Combine(_tempDir, "repo-abc123");
+        var srcDir = Path.Combine(wrapperDir, "src");
+        Directory.CreateDirectory(srcDir);
+        File.WriteAllText(Path.Combine(srcDir, "File.cs"), "class C { }");
+
+        var gate = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _orchestrator.GetExtractedPathAsync(Arg.Any<CancellationToken>()).Returns(_ => gate.Task);
+
+        var diff = "=== src/File.cs (edit: +1 -1) ===\n@@ -1,1 +1,1 @@\n-old\n+class C { }";
+
+        using var ctsA = new CancellationTokenSource();
+        var taskA = _resolver.ResolveAsync(diff, ctsA.Token);
+        var taskB = _resolver.ResolveAsync(diff, CancellationToken.None);
+
+        // Cancel caller A before the orchestrator resolves.
+        ctsA.Cancel();
+
+        // Release the orchestrator so the shared task completes successfully.
+        gate.SetResult(_tempDir);
+
+        // Caller A observes its own cancellation.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => taskA);
+
+        // Caller B still gets the successful result — not an OCE inherited from A.
+        var resultB = await taskB;
+        Assert.NotNull(resultB);
+        Assert.Equal("src/File.cs", resultB.FilePath);
+    }
+
+    [Fact]
     public async Task ResolveAsync_DifferentFilePaths_ResolveSeparately()
     {
         var wrapperDir = Path.Combine(_tempDir, "repo-abc123");

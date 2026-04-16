@@ -199,17 +199,55 @@ public class StructuralChangeDetectorTests
     }
 
     [Fact]
-    public void DetectChanges_OverloadedMethods_FirstOccurrenceMatched()
+    public void DetectChanges_NewOverloadAdded_DetectedAsMemberAdded()
     {
-        // Overloaded methods have same name — MemberKey matches first occurrence
+        // New Process(bool) overload added while existing overloads are unchanged.
+        // Previously this was invisible — name-only key collided with first overload.
         var before = "class C { void Process(int x) { } void Process(string s) { } }";
-        var after = "class C { void Process(int x, bool flag) { } void Process(string s) { } }";
+        var after = "class C { void Process(int x) { } void Process(string s) { } void Process(bool b) { } }";
 
         var changes = Detect(before, after);
 
-        // Should detect signature change for the first overload
+        Assert.Contains(changes, c => c.Kind == StructuralChangeKind.MemberAdded
+                                      && c.Description.Contains("Process"));
+    }
+
+    [Fact]
+    public void DetectChanges_OverloadRemoved_DetectedAsMemberRemoved()
+    {
+        // Remove the string overload; int overload remains. Previously: undetected.
+        var before = "class C { void Process(int x) { } void Process(string s) { } }";
+        var after = "class C { void Process(int x) { } }";
+
+        var changes = Detect(before, after);
+
+        Assert.Contains(changes, c => c.Kind == StructuralChangeKind.MemberRemoved
+                                      && c.Description.Contains("Process"));
+    }
+
+    [Fact]
+    public void DetectChanges_OverloadSignatureChangeOnNonFirst_Detected()
+    {
+        // Return type change on the string overload — previously invisible because
+        // the first occurrence (int overload) won the key collision.
+        var before = "class C { void Process(int x) { } void Process(string s) { } }";
+        var after = "class C { void Process(int x) { } int Process(string s) { return 0; } }";
+
+        var changes = Detect(before, after);
+
         Assert.Contains(changes, c => c.Kind == StructuralChangeKind.SignatureChanged
                                       && c.Description.Contains("Process"));
+    }
+
+    [Fact]
+    public void DetectChanges_ConstructorOverloadAdded_Detected()
+    {
+        var before = "class C { public C(int x) { } }";
+        var after = "class C { public C(int x) { } public C(string s) { } }";
+
+        var changes = Detect(before, after);
+
+        Assert.Contains(changes, c => c.Kind == StructuralChangeKind.MemberAdded);
     }
 
     [Fact]
@@ -223,6 +261,18 @@ public class StructuralChangeDetectorTests
         var change = Assert.Single(changes);
         Assert.Equal(StructuralChangeKind.MemberAdded, change.Kind);
         Assert.Contains("_count", change.Description);
+    }
+
+    [Fact]
+    public void DetectChanges_DuplicateSimpleNameInDifferentNamespaces_DoesNotThrow()
+    {
+        var before = "namespace A { class Foo { } } namespace B { class Foo { } }";
+        var after = "namespace A { class Foo { public int X; } } namespace B { class Foo { } }";
+
+        var changes = Detect(before, after);
+
+        Assert.Contains(changes, c => c.Kind == StructuralChangeKind.MemberAdded
+                                      && c.Description.Contains("X"));
     }
 
     [Fact]

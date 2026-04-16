@@ -13,7 +13,7 @@ public interface IRepositoryDownloadOrchestrator
     /// No-op if a download for the same PR/commit is already in progress or completed.
     /// If a different PR is requested, cancels the old download and starts a new one.
     /// </summary>
-    void TriggerDownloadAsync(int prNumber, string commitRef);
+    void TriggerDownload(int prNumber, string commitRef);
 
     /// <summary>Returns the current download state.</summary>
     RepositoryDownloadState GetState();

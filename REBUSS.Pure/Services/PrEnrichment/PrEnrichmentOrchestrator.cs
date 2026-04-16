@@ -9,7 +9,7 @@ using REBUSS.Pure.Tools.Shared;
 namespace REBUSS.Pure.Services.PrEnrichment;
 
 /// <inheritdoc cref="IPrEnrichmentOrchestrator"/>
-public sealed class PrEnrichmentOrchestrator : IPrEnrichmentOrchestrator
+public sealed class PrEnrichmentOrchestrator : IPrEnrichmentOrchestrator, IDisposable
 {
     private readonly IPullRequestDiffCache _diffCache;
     private readonly ITokenEstimator _tokenEstimator;
@@ -74,8 +74,34 @@ public sealed class PrEnrichmentOrchestrator : IPrEnrichmentOrchestrator
             // Assign ResultTask BEFORE inserting into _jobs so that WaitForEnrichmentAsync
             // (which reads _jobs without the lock) never sees a null ResultTask.
             job.ResultTask = Task.Run(() => BackgroundBodyAsync(job, safeBudgetTokens), CancellationToken.None);
+
+            // Release Cts kernel handles once the background body completes (success,
+            // cancellation via supersession, or failure). Discard — the continuation is
+            // fire-and-forget and must never throw.
+            _ = job.ResultTask.ContinueWith(
+                static (_, state) => ((PrEnrichmentJob)state!).Dispose(),
+                job,
+                CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.Default);
+
             _jobs[prNumber] = job;
         }
+    }
+
+    /// <summary>
+    /// Cancels every in-flight job and disposes its <see cref="CancellationTokenSource"/>.
+    /// Invoked by DI on singleton teardown. Idempotent.
+    /// </summary>
+    public void Dispose()
+    {
+        foreach (var job in _jobs.Values)
+        {
+            try { job.Cts.Cancel(); }
+            catch (ObjectDisposedException) { /* already disposed */ }
+            job.Dispose();
+        }
+        _jobs.Clear();
     }
 
     public Task<PrEnrichmentResult> WaitForEnrichmentAsync(int prNumber, CancellationToken ct)

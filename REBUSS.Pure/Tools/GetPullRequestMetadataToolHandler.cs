@@ -109,7 +109,7 @@ namespace REBUSS.Pure.Tools
                 // shifts line numbers, causing SourceUnavailable drops and false-positive verdicts
                 // during finding validation.
                 if (!string.IsNullOrEmpty(metadata.LastMergeSourceCommitId))
-                    _downloadOrchestrator.TriggerDownloadAsync(prNumber.Value, metadata.LastMergeSourceCommitId);
+                    _downloadOrchestrator.TriggerDownload(prNumber.Value, metadata.LastMergeSourceCommitId);
 
                 // Eager Copilot SDK initialization: start in background so it overlaps with enrichment.
                 // Fire-and-forget — failure is captured in CopilotClientProvider._startException
