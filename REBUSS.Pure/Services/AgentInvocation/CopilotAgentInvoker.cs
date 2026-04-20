@@ -14,7 +14,7 @@ namespace REBUSS.Pure.Services.AgentInvocation;
 /// </summary>
 /// <remarks>
 /// Extracted from the previously inlined session+events block in
-/// <c>CopilotPageReviewer</c> / <c>FindingValidator</c> so the same one-shot
+/// <c>AgentPageReviewer</c> / <c>FindingValidator</c> so the same one-shot
 /// contract can be served by either GitHub Copilot or Claude Code CLI.
 /// </remarks>
 public sealed class CopilotAgentInvoker : IAgentInvoker

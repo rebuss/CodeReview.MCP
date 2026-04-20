@@ -196,10 +196,8 @@ namespace REBUSS.Pure
             // IAgentInvoker — one-shot prompt→text abstraction over Copilot SDK or Claude CLI.
             // Selection is driven by --agent on the command line (carried through mcp.json args);
             // when the flag is absent, Copilot is the default to preserve existing behavior.
-            // TODO (follow-up): thread IAgentInvoker through CopilotPageReviewer and
-            // FindingValidator so the Claude path can actually drive the review orchestrator
-            // at runtime. Without that wiring, selecting --agent claude currently only affects
-            // init-time config and setup — runtime review still uses the Copilot code path.
+            // Consumed by AgentPageReviewer and FindingValidator — both are agent-agnostic
+            // since the refactor, so --agent claude actually drives the runtime review path.
             if (string.Equals(agent, CliArgumentParser.AgentClaude, StringComparison.OrdinalIgnoreCase))
             {
                 services.AddSingleton<REBUSS.Pure.Core.Services.AgentInvocation.IAgentInvoker,
@@ -212,7 +210,7 @@ namespace REBUSS.Pure
             }
 
             services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
-            services.AddSingleton<ICopilotPageReviewer, CopilotPageReviewer>();
+            services.AddSingleton<IAgentPageReviewer, AgentPageReviewer>();
 
             // Feature 022 — Copilot inspection (internal diagnostic, env-var gated).
             // REBUSS_COPILOT_INSPECT=1|true|True registers the filesystem writer; any other
@@ -222,25 +220,25 @@ namespace REBUSS.Pure
             if (inspectEnabled)
             {
                 services.AddSingleton<
-                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
-                    REBUSS.Pure.Services.CopilotReview.Inspection.FileSystemCopilotInspectionWriter>();
+                    REBUSS.Pure.Services.CopilotReview.Inspection.IAgentInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.FileSystemAgentInspectionWriter>();
             }
             else
             {
                 services.AddSingleton<
-                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
-                    REBUSS.Pure.Services.CopilotReview.Inspection.NoOpCopilotInspectionWriter>();
+                    REBUSS.Pure.Services.CopilotReview.Inspection.IAgentInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.NoOpAgentInspectionWriter>();
             }
 
             // Feature 021 — Finding validation pipeline (false positive reduction).
-            // Registered unconditionally; CopilotReviewOrchestrator short-circuits at
+            // Registered unconditionally; AgentReviewOrchestrator short-circuits at
             // runtime based on CopilotReviewOptions.ValidateFindings (per Principle V
             // deferred resolution — the flag is read at first review, not at DI time).
             services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.FindingScopeResolver>();
             services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.FindingValidator>();
 
-            services.AddSingleton<ICopilotReviewOrchestrator, CopilotReviewOrchestrator>();
-            services.AddSingleton<CopilotReviewWaiter>();
+            services.AddSingleton<IAgentReviewOrchestrator, AgentReviewOrchestrator>();
+            services.AddSingleton<AgentReviewWaiter>();
 
             // Context Window Awareness
             services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));

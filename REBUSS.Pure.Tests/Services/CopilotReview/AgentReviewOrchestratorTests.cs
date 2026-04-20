@@ -14,24 +14,24 @@ using REBUSS.Pure.Services.PrEnrichment;
 namespace REBUSS.Pure.Tests.Services.CopilotReview;
 
 /// <summary>
-/// Unit tests for <see cref="CopilotReviewOrchestrator"/> — feature 013 Phase 3 US1 (T028).
+/// Unit tests for <see cref="AgentReviewOrchestrator"/> — feature 013 Phase 3 US1 (T028).
 /// Retry-specific scenarios (partial failure, all-failed with file paths) arrive in T037 (US3).
 /// </summary>
-public class CopilotReviewOrchestratorTests
+public class AgentReviewOrchestratorTests
 {
-    private static CopilotReviewOrchestrator Create(
-        ICopilotPageReviewer pageReviewer,
+    private static AgentReviewOrchestrator Create(
+        IAgentPageReviewer pageReviewer,
         IPageAllocator? pageAllocator = null,
         int budget = 128_000)
     {
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
-        return new CopilotReviewOrchestrator(
+        return new AgentReviewOrchestrator(
             pageReviewer,
             pageAllocator ?? BuildAllocator(),
             Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = budget }),
             lifetime,
-            NullLogger<CopilotReviewOrchestrator>.Instance);
+            NullLogger<AgentReviewOrchestrator>.Instance);
         // Note: FindingValidator and FindingScopeResolver are left at null — tests
         // operate in opt-out mode (feature 021 US4). The orchestrator must produce
         // unchanged review text when either dependency is null.
@@ -81,9 +81,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TriggerReview_AllPagesSucceed_ResultContainsAllPages()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -99,9 +99,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TriggerReview_Idempotent_SamePrDoesNotRetrigger()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         var enrichment = BuildEnrichment();
@@ -118,7 +118,7 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TryGetSnapshot_BeforeTrigger_ReturnsNull()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         var orchestrator = Create(reviewer);
         Assert.Null(orchestrator.TryGetSnapshot("pr:999"));
         await Task.CompletedTask;
@@ -127,9 +127,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TryGetSnapshot_AfterCompletion_ReturnsReadyWithResult()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -137,7 +137,7 @@ public class CopilotReviewOrchestratorTests
 
         var snapshot = orchestrator.TryGetSnapshot("pr:42");
         Assert.NotNull(snapshot);
-        Assert.Equal(CopilotReviewStatus.Ready, snapshot!.Status);
+        Assert.Equal(AgentReviewStatus.Ready, snapshot!.Status);
         Assert.NotNull(snapshot.Result);
         Assert.Equal("pr:42", snapshot.Result!.ReviewKey);
     }
@@ -145,9 +145,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TryGetSnapshot_AfterCompletion_ExposesTotalAndCompletedPages()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -165,13 +165,13 @@ public class CopilotReviewOrchestratorTests
         // Regression: jobs must be pruned from `_jobs` after their TTL expires, otherwise
         // the dictionary grows unboundedly in long-running MCP servers. The TTL is
         // configured via CopilotReviewOptions.JobRetentionMinutes.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
-        var orchestrator = new CopilotReviewOrchestrator(
+        var orchestrator = new AgentReviewOrchestrator(
             reviewer,
             BuildAllocator(),
             // Very short retention — test triggers, waits, then re-triggers and expects the
@@ -182,13 +182,13 @@ public class CopilotReviewOrchestratorTests
                 JobRetentionMinutes = 1,
             }),
             lifetime,
-            NullLogger<CopilotReviewOrchestrator>.Instance);
+            NullLogger<AgentReviewOrchestrator>.Instance);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
 
         // Rewind CompletedAt to force the sweep to consider the job stale.
-        var jobsField = typeof(CopilotReviewOrchestrator)
+        var jobsField = typeof(AgentReviewOrchestrator)
             .GetField("_jobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var jobs = (System.Collections.IDictionary)jobsField.GetValue(orchestrator)!;
         var job = jobs["pr:42"]!;
@@ -209,13 +209,13 @@ public class CopilotReviewOrchestratorTests
     {
         // JobRetentionMinutes = 0 disables the sweep (opt-in retention for tests /
         // short-lived processes). Even with an "old" CompletedAt, the job survives.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
-        var orchestrator = new CopilotReviewOrchestrator(
+        var orchestrator = new AgentReviewOrchestrator(
             reviewer,
             BuildAllocator(),
             Options.Create(new CopilotReviewOptions
@@ -224,13 +224,13 @@ public class CopilotReviewOrchestratorTests
                 JobRetentionMinutes = 0, // disabled
             }),
             lifetime,
-            NullLogger<CopilotReviewOrchestrator>.Instance);
+            NullLogger<AgentReviewOrchestrator>.Instance);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
 
         // Rewind CompletedAt — should still NOT evict because retention is disabled.
-        var jobsField = typeof(CopilotReviewOrchestrator)
+        var jobsField = typeof(AgentReviewOrchestrator)
             .GetField("_jobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var jobs = (System.Collections.IDictionary)jobsField.GetValue(orchestrator)!;
         var job = jobs["pr:42"]!;
@@ -249,7 +249,7 @@ public class CopilotReviewOrchestratorTests
     public async Task DisposeAsync_NoJobsInFlight_CompletesImmediately()
     {
         // Empty job dictionary path — nothing to await, should return instantly.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         var orchestrator = Create(reviewer);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -265,9 +265,9 @@ public class CopilotReviewOrchestratorTests
     {
         // Completed job — BackgroundTask is already finished, DisposeAsync awaits a
         // completed Task and returns.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -287,8 +287,8 @@ public class CopilotReviewOrchestratorTests
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(shutdownCts.Token);
 
-        var gate = new TaskCompletionSource<CopilotPageReviewResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var gate = new TaskCompletionSource<AgentPageReviewResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
             {
@@ -301,12 +301,12 @@ public class CopilotReviewOrchestratorTests
                 });
             });
 
-        var orchestrator = new CopilotReviewOrchestrator(
+        var orchestrator = new AgentReviewOrchestrator(
             reviewer,
             BuildAllocator(),
             Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = 128_000 }),
             lifetime,
-            NullLogger<CopilotReviewOrchestrator>.Instance);
+            NullLogger<AgentReviewOrchestrator>.Instance);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
 
@@ -329,7 +329,7 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task TriggerReview_EmptyAllocation_ReturnsEmptyResult()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         var orchestrator = Create(reviewer, pageAllocator: BuildAllocator(numberOfPages: 0));
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -345,16 +345,16 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task ReviewPage_TransientFailureThenSuccess_RecoveredAfterRetry()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         var callCount = 0;
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
             {
                 callCount++;
                 if (callCount <= 2)
-                    return Task.FromResult(CopilotPageReviewResult.Failure(
+                    return Task.FromResult(AgentPageReviewResult.Failure(
                         ci.Arg<int>(), Array.Empty<string>(), "transient", 1));
-                return Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "recovered", 1));
+                return Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "recovered", 1));
             });
 
         // Single-page allocator so the failure count is predictable.
@@ -372,9 +372,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task ReviewPage_AllThreeAttemptsFail_ResultMarkedFailedWithFilePaths()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Failure(
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Failure(
                 ci.Arg<int>(), Array.Empty<string>(), "persistent error", 1)));
 
         var orchestrator = Create(reviewer, BuildAllocator(numberOfPages: 1));
@@ -399,14 +399,14 @@ public class CopilotReviewOrchestratorTests
     public async Task Orchestrator_PartialFailure_ResultContainsBothSuccessAndFailureEntries()
     {
         // Page 1 always succeeds, page 2 always fails.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
             {
                 var pageNumber = ci.Arg<int>();
                 return Task.FromResult(pageNumber == 1
-                    ? CopilotPageReviewResult.Success(pageNumber, "page 1 ok", 1)
-                    : CopilotPageReviewResult.Failure(pageNumber, Array.Empty<string>(), "page 2 broken", 1));
+                    ? AgentPageReviewResult.Success(pageNumber, "page 1 ok", 1)
+                    : AgentPageReviewResult.Failure(pageNumber, Array.Empty<string>(), "page 2 broken", 1));
             });
 
         var orchestrator = Create(reviewer, BuildAllocator(numberOfPages: 2));
@@ -424,9 +424,9 @@ public class CopilotReviewOrchestratorTests
     [Fact]
     public async Task Orchestrator_AllPagesFail_ResultReturnsAllFailedNotException()
     {
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Failure(
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Failure(
                 ci.Arg<int>(), Array.Empty<string>(), "down", 1)));
 
         var orchestrator = Create(reviewer, BuildAllocator(numberOfPages: 3));
@@ -448,9 +448,9 @@ public class CopilotReviewOrchestratorTests
     public async Task TriggerReview_PrAndLocalKeys_ProduceIndependentJobs()
     {
         // Arrange: reviewer that always succeeds.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1));
+            .Returns(ci => AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1));
 
         var orchestrator = Create(reviewer);
         var prEnrichment = BuildEnrichment(fileCount: 2);
@@ -470,8 +470,8 @@ public class CopilotReviewOrchestratorTests
         var localSnapshot = orchestrator.TryGetSnapshot("local:staged:/repo");
         Assert.NotNull(prSnapshot);
         Assert.NotNull(localSnapshot);
-        Assert.Equal(CopilotReviewStatus.Ready, prSnapshot!.Status);
-        Assert.Equal(CopilotReviewStatus.Ready, localSnapshot!.Status);
+        Assert.Equal(AgentReviewStatus.Ready, prSnapshot!.Status);
+        Assert.Equal(AgentReviewStatus.Ready, localSnapshot!.Status);
 
         // Snapshots are truly independent — querying a non-existent key returns null.
         Assert.Null(orchestrator.TryGetSnapshot("pr:999"));
@@ -492,7 +492,7 @@ public class CopilotReviewOrchestratorTests
         var concurrentCalls = 0;
         var peakConcurrency = 0;
 
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(async ci =>
             {
@@ -510,7 +510,7 @@ public class CopilotReviewOrchestratorTests
                 await gate.Task;
 
                 lock (countLock) { concurrentCalls--; }
-                return CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1);
+                return AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1);
             });
 
         var orchestrator = Create(reviewer, BuildAllocator(numberOfPages: pageCount));
@@ -532,11 +532,11 @@ public class CopilotReviewOrchestratorTests
     public async Task TriggerReview_PropagatesReviewKeyToPageReviewer()
     {
         // Feature 022: orchestrator must pass the review key as the first argument to
-        // ICopilotPageReviewer.ReviewPageAsync so the inspection writer can group output
+        // IAgentPageReviewer.ReviewPageAsync so the inspection writer can group output
         // under a per-PR subdirectory.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(ci.Arg<int>(), "ok", 1)));
 
         var orchestrator = Create(reviewer);
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
@@ -553,9 +553,9 @@ public class CopilotReviewOrchestratorTests
     {
         // When FindingValidator is null (opt-out path — spec US4), the orchestrator
         // must return the original review text without appending a validation footer.
-        var reviewer = Substitute.For<ICopilotPageReviewer>();
+        var reviewer = Substitute.For<IAgentPageReviewer>();
         reviewer.ReviewPageAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(ci => Task.FromResult(CopilotPageReviewResult.Success(
+            .Returns(ci => Task.FromResult(AgentPageReviewResult.Success(
                 ci.Arg<int>(),
                 "**[critical]** `src/A.cs` (line 5): untouched finding",
                 1)));

@@ -269,7 +269,7 @@ internal static class PlainTextFormatter
     /// on failure renders the list of file paths that were on the failed page plus the
     /// last-attempt reason (FR-007a, Clarification Q1).
     /// </summary>
-    public static string FormatCopilotPageReviewBlock(CopilotPageReviewResult result)
+    public static string FormatCopilotPageReviewBlock(AgentPageReviewResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         var sb = new StringBuilder();

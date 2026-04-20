@@ -97,7 +97,7 @@ public class PlainTextFormatterTests
     [Fact]
     public void FormatCopilotPageReviewBlock_Success_ContainsReviewText()
     {
-        var result = CopilotPageReviewResult.Success(
+        var result = AgentPageReviewResult.Success(
             pageNumber: 3, reviewText: "Found a null ref bug", attemptsMade: 1);
 
         var text = PlainTextFormatter.FormatCopilotPageReviewBlock(result);
@@ -110,7 +110,7 @@ public class PlainTextFormatterTests
     [Fact]
     public void FormatCopilotPageReviewBlock_Failure_ContainsFailedFilePathsAndReason()
     {
-        var result = CopilotPageReviewResult.Failure(
+        var result = AgentPageReviewResult.Failure(
             pageNumber: 4,
             failedFilePaths: new[] { "src/A.cs", "src/B.cs" },
             errorMessage: "network timeout",

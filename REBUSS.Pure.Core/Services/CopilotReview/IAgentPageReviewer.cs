@@ -3,20 +3,21 @@ using REBUSS.Pure.Core.Models.CopilotReview;
 namespace REBUSS.Pure.Core.Services.CopilotReview;
 
 /// <summary>
-/// Reviews a single page of enriched PR content via GitHub Copilot and returns the
-/// outcome. Implementations MUST NEVER throw — failures are returned as
-/// <see cref="CopilotPageReviewResult.Failure"/> so the orchestrator's retry loop
+/// Reviews a single page of enriched PR content through the configured
+/// <see cref="AgentInvocation.IAgentInvoker"/> (Copilot SDK or Claude CLI) and returns
+/// the outcome. Implementations MUST NEVER throw — failures are returned as
+/// <see cref="AgentPageReviewResult.Failure"/> so the orchestrator's retry loop
 /// (research.md Decision 3) can count attempts uniformly regardless of whether the
-/// underlying SDK call succeeded, returned empty, or threw.
+/// underlying agent call succeeded, returned empty, or threw.
 /// </summary>
-public interface ICopilotPageReviewer
+public interface IAgentPageReviewer
 {
     /// <summary>
     /// Sends <paramref name="enrichedPageContent"/> plus the embedded review instruction
-    /// template to Copilot and collects the response. On success, returns
-    /// <see cref="CopilotPageReviewResult.Success"/>; on any failure (empty response,
+    /// template to the agent and collects the response. On success, returns
+    /// <see cref="AgentPageReviewResult.Success"/>; on any failure (empty response,
     /// session error, thrown exception), returns
-    /// <see cref="CopilotPageReviewResult.Failure"/> with an empty
+    /// <see cref="AgentPageReviewResult.Failure"/> with an empty
     /// <c>FailedFilePaths</c> list — the orchestrator fills in the file paths because
     /// only the orchestrator knows which files were on the page.
     /// </summary>
@@ -25,7 +26,7 @@ public interface ICopilotPageReviewer
     /// Used by the optional inspection writer (feature 022) to group captured prompts and
     /// responses under a per-PR subdirectory. No other downstream consumer uses this value.
     /// </param>
-    Task<CopilotPageReviewResult> ReviewPageAsync(
+    Task<AgentPageReviewResult> ReviewPageAsync(
         string reviewKey,
         int pageNumber,
         string enrichedPageContent,

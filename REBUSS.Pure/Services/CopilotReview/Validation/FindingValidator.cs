@@ -1,12 +1,12 @@
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Services.AgentInvocation;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview.Inspection;
 
@@ -34,22 +34,22 @@ internal sealed partial class FindingValidator
         RegexOptions.IgnoreCase)]
     private static partial Regex VerdictPattern();
 
-    private readonly ICopilotSessionFactory _sessionFactory;
+    private readonly IAgentInvoker _agentInvoker;
     private readonly IOptions<CopilotReviewOptions> _options;
-    private readonly ICopilotInspectionWriter _inspection;
+    private readonly IAgentInspectionWriter _inspection;
     private readonly IPageAllocator _pageAllocator;
     private readonly ITokenEstimator _tokenEstimator;
     private readonly ILogger<FindingValidator> _logger;
 
     public FindingValidator(
-        ICopilotSessionFactory sessionFactory,
+        IAgentInvoker agentInvoker,
         IOptions<CopilotReviewOptions> options,
-        ICopilotInspectionWriter inspection,
+        IAgentInspectionWriter inspection,
         IPageAllocator pageAllocator,
         ITokenEstimator tokenEstimator,
         ILogger<FindingValidator> logger)
     {
-        _sessionFactory = sessionFactory;
+        _agentInvoker = agentInvoker;
         _options = options;
         _inspection = inspection;
         _pageAllocator = pageAllocator;
@@ -71,7 +71,7 @@ internal sealed partial class FindingValidator
     ///   is back-filled with a conservative <see cref="FindingVerdict.Valid"/> fallback so
     ///   callers can index without null-checks.</item>
     /// </list>
-    /// <c>CopilotReviewOrchestrator</c> relies on this to slice the validator's flat
+    /// <c>AgentReviewOrchestrator</c> relies on this to slice the validator's flat
     /// output per page via <c>validated[offset + j]</c> — any drift would silently
     /// mis-attribute verdicts to the wrong finding.
     /// </para>
@@ -243,60 +243,19 @@ internal sealed partial class FindingValidator
 
         await _inspection.WritePromptAsync(reviewKey, inspectionKind, prompt, ct).ConfigureAwait(false);
 
-        ICopilotSessionHandle? handle = null;
-        try
-        {
-            handle = await _sessionFactory.CreateSessionAsync(model, ct).ConfigureAwait(false);
+        // IMPORTANT: on failure, let the exception propagate — the outer ValidateAsync
+        // catch block (FR-012 fallback) fills every finding in this page with a
+        // conservative Valid verdict. Swallowing here would skip that fallback and
+        // leave verdict slots null.
+        var responseText = await _agentInvoker
+            .InvokeAsync(prompt, model, ct)
+            .ConfigureAwait(false);
 
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var contentBuilder = new StringBuilder();
+        await _inspection.WriteResponseAsync(reviewKey, inspectionKind, responseText, ct).ConfigureAwait(false);
 
-            using var subscription = handle.On(evt =>
-            {
-                switch (evt)
-                {
-                    case AssistantMessageEvent msg:
-                        // Phased-output models (e.g. thinking + response) emit multiple
-                        // AssistantMessageEvents per session; accumulate every non-null
-                        // Content fragment so we resolve the TCS with the full response
-                        // on idle. Empty strings are legitimate stream chunks and must be
-                        // appended (no-op for StringBuilder — silently dropping them would
-                        // obscure what the model actually emitted); only null is filtered.
-                        var chunk = msg.Data?.Content;
-                        if (chunk is not null)
-                            contentBuilder.Append(chunk);
-                        break;
-                    case SessionErrorEvent err:
-                        tcs.TrySetException(new InvalidOperationException(
-                            err.Data?.Message ?? "session error (no message)"));
-                        break;
-                    case SessionIdleEvent:
-                        var captured = contentBuilder.ToString();
-                        if (!string.IsNullOrWhiteSpace(captured))
-                            tcs.TrySetResult(captured);
-                        else
-                            tcs.TrySetException(new InvalidOperationException(
-                                "session idle without assistant message content"));
-                        break;
-                }
-            });
+        VerifyResponseOrder(responseText, pageBatch, reviewKey, pageNumber);
 
-            await handle.SendAsync(prompt, ct).ConfigureAwait(false);
-            var responseText = await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
-
-            await _inspection.WriteResponseAsync(reviewKey, inspectionKind, responseText, ct).ConfigureAwait(false);
-
-            VerifyResponseOrder(responseText, pageBatch, reviewKey, pageNumber);
-
-            return ParseVerdicts(responseText, pageBatch);
-        }
-        finally
-        {
-            if (handle is not null)
-            {
-                try { await handle.DisposeAsync().ConfigureAwait(false); } catch { /* swallow */ }
-            }
-        }
+        return ParseVerdicts(responseText, pageBatch);
     }
 
     /// <summary>

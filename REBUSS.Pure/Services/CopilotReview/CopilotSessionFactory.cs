@@ -12,7 +12,7 @@ namespace REBUSS.Pure.Services.CopilotReview;
 /// never depends on the concrete <see cref="CopilotSession"/> type. Per research.md Decision 8.
 /// <para>
 /// <b>Thread-safety:</b> <see cref="CreateSessionAsync"/> is safe to call concurrently
-/// and is in fact called that way by <c>CopilotReviewOrchestrator</c> (parallel page
+/// and is in fact called that way by <c>AgentReviewOrchestrator</c> (parallel page
 /// batches). Reasoning, in order of the call:
 /// <list type="bullet">
 ///   <item><see cref="ICopilotClientProvider.TryEnsureStartedAsync"/> is already

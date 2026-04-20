@@ -2,7 +2,7 @@ namespace REBUSS.Pure.Core.Services.CopilotReview;
 
 /// <summary>
 /// Opaque handle to an in-flight Copilot review session. Abstraction exists so
-/// <c>CopilotPageReviewer</c> can be unit-tested against a fake session without
+/// <c>CopilotAgentInvoker</c> can be unit-tested against a fake session without
 /// needing to mock the concrete <c>CopilotSession</c> class from the SDK (which has
 /// non-virtual methods). Per research.md Decision 8.
 /// </summary>

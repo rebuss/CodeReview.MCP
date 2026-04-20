@@ -32,3 +32,4 @@ REBUSS.Pure.RoslynProcessor/bin/
 REBUSS.Pure.RoslynProcessor/obj/
 .claude/
 Files/
+.mcp.json

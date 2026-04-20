@@ -3,15 +3,15 @@ using REBUSS.Pure.Services.CopilotReview.Inspection;
 namespace REBUSS.Pure.Tests.Services.CopilotReview.Inspection;
 
 /// <summary>
-/// Tests for <see cref="NoOpCopilotInspectionWriter"/>. Feature 022. Verifies both methods
+/// Tests for <see cref="NoOpAgentInspectionWriter"/>. Feature 022. Verifies both methods
 /// are no-ops and return completed tasks without touching any resource.
 /// </summary>
-public class NoOpCopilotInspectionWriterTests
+public class NoOpAgentInspectionWriterTests
 {
     [Fact]
     public void WritePromptAsync_ReturnsCompletedTaskSynchronously()
     {
-        var writer = new NoOpCopilotInspectionWriter();
+        var writer = new NoOpAgentInspectionWriter();
 
         var task = writer.WritePromptAsync("pr:42", "page-1-review", "anything", CancellationToken.None);
 
@@ -21,7 +21,7 @@ public class NoOpCopilotInspectionWriterTests
     [Fact]
     public void WriteResponseAsync_ReturnsCompletedTaskSynchronously()
     {
-        var writer = new NoOpCopilotInspectionWriter();
+        var writer = new NoOpAgentInspectionWriter();
 
         var task = writer.WriteResponseAsync("pr:42", "page-1-review", "anything", CancellationToken.None);
 
@@ -31,7 +31,7 @@ public class NoOpCopilotInspectionWriterTests
     [Fact]
     public async Task WritePromptAndResponseAsync_ManyCalls_NoneThrow()
     {
-        var writer = new NoOpCopilotInspectionWriter();
+        var writer = new NoOpAgentInspectionWriter();
 
         for (var i = 0; i < 100; i++)
         {

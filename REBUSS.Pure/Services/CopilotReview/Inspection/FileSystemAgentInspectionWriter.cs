@@ -8,7 +8,7 @@ namespace REBUSS.Pure.Services.CopilotReview.Inspection;
 /// <summary>
 /// Captures prompts and responses to files under a per-user local directory.
 /// Feature 022 (internal diagnostic). Env-var-gated at DI composition — when the gate is off,
-/// <see cref="NoOpCopilotInspectionWriter"/> is registered instead.
+/// <see cref="NoOpAgentInspectionWriter"/> is registered instead.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,7 +21,7 @@ namespace REBUSS.Pure.Services.CopilotReview.Inspection;
 /// <b>Security audit (feature 022, T023 — 2026-04-14):</b> Grep-verified that the
 /// <c>content</c> parameter passed to <see cref="WritePromptAsync"/> /
 /// <see cref="WriteResponseAsync"/> flows only from (a) the review-prompt template + enriched
-/// page content assembled by <c>CopilotPageReviewer</c>, and (b) the Copilot response text.
+/// page content assembled by <c>AgentPageReviewer</c>, and (b) the Copilot response text.
 /// No auth material (<c>GitHubToken</c>, <c>REBUSS_COPILOT_TOKEN</c>, <c>Bearer</c>,
 /// <c>Authorization</c>, session IDs) is sourced from any call site. Patterns checked:
 /// <c>GitHubToken</c>, <c>REBUSS_COPILOT_TOKEN</c>, <c>Bearer\s</c>, <c>Authorization</c>,
@@ -31,7 +31,7 @@ namespace REBUSS.Pure.Services.CopilotReview.Inspection;
 /// matches — the writer is filesystem-only, satisfying FR-014.
 /// </para>
 /// </remarks>
-internal sealed class FileSystemCopilotInspectionWriter : ICopilotInspectionWriter
+internal sealed class FileSystemAgentInspectionWriter : IAgentInspectionWriter
 {
     internal const string InspectionSubdirName = "copilot-inspection";
     private const string TimestampFormat = "yyyyMMdd-HHmmss-fff";
@@ -40,7 +40,7 @@ internal sealed class FileSystemCopilotInspectionWriter : ICopilotInspectionWrit
     private static readonly TimeSpan RetentionMaxAge = TimeSpan.FromHours(24);
 
     private readonly string _baseDirectory;
-    private readonly ILogger<FileSystemCopilotInspectionWriter> _logger;
+    private readonly ILogger<FileSystemAgentInspectionWriter> _logger;
 
     // Per-safeKey mutable counter. Principle VI exception (feature 022 Complexity Tracking).
     // Wrapper class is required because `Interlocked.Increment` needs a ref to a heap field;
@@ -53,7 +53,7 @@ internal sealed class FileSystemCopilotInspectionWriter : ICopilotInspectionWrit
     /// <see cref="Path.GetTempPath"/> if the AppData path is not available (e.g., sandboxed
     /// environments). Kicks off fire-and-forget retention cleanup.
     /// </summary>
-    public FileSystemCopilotInspectionWriter(ILogger<FileSystemCopilotInspectionWriter> logger)
+    public FileSystemAgentInspectionWriter(ILogger<FileSystemAgentInspectionWriter> logger)
         : this(ResolveBaseDirectory(logger), logger)
     {
     }
@@ -62,9 +62,9 @@ internal sealed class FileSystemCopilotInspectionWriter : ICopilotInspectionWrit
     /// Test constructor — accepts an explicit base directory so tests can point at a temp dir
     /// and never touch real <c>%LOCALAPPDATA%</c>. Feature 022 tests use this exclusively.
     /// </summary>
-    internal FileSystemCopilotInspectionWriter(
+    internal FileSystemAgentInspectionWriter(
         string baseDirectory,
-        ILogger<FileSystemCopilotInspectionWriter> logger)
+        ILogger<FileSystemAgentInspectionWriter> logger)
     {
         _baseDirectory = baseDirectory;
         _logger = logger;
@@ -176,7 +176,7 @@ internal sealed class FileSystemCopilotInspectionWriter : ICopilotInspectionWrit
     /// Resolves the base directory: AppData local → Path.GetTempPath() fallback. Always logs
     /// which path was chosen so maintainers can locate captured material.
     /// </summary>
-    private static string ResolveBaseDirectory(ILogger<FileSystemCopilotInspectionWriter> logger)
+    private static string ResolveBaseDirectory(ILogger<FileSystemAgentInspectionWriter> logger)
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrWhiteSpace(appData))

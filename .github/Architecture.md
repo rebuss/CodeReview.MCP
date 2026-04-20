@@ -566,11 +566,11 @@ orchestrators exist because `IOptions<T>` cannot express in-flight `Task`
 lifecycles, and a static class would make tests impossible without process
 restart.
 
-## 6b. Copilot Review Pipeline (CopilotReviewOrchestrator)
+## 6b. Copilot Review Pipeline (AgentReviewOrchestrator)
 
 ### Why batched parallel dispatch
 
-`CopilotReviewOrchestrator` coordinates server-side Copilot review of every page
+`AgentReviewOrchestrator` coordinates server-side Copilot review of every page
 of enriched content. Pages are dispatched **in batches** (`CopilotReviewOptions.MaxConcurrentPages`,
 default 6): for each batch the orchestrator launches one `Task.Run` per page,
 awaits `Task.WhenAll` on the batch, then starts the next batch. Within a batch
@@ -597,11 +597,11 @@ where `B = min(MaxConcurrentPages, remaining pages)` and `S = MinRequestInterval
 | `CompletedPages` counter | `Interlocked.Increment` — lock-free atomic |
 | `CurrentActivity` | `volatile string?` — last writer wins (cosmetic) |
 | `Status`, `Result`, `ErrorMessage` | Guarded by `_lock` |
-| Job dictionary | `ConcurrentDictionary<string, CopilotReviewJob>` |
+| Job dictionary | `ConcurrentDictionary<string, AgentReviewJob>` |
 
 ### Progress observation
 
-`CopilotReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
+`AgentReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
 (`CopilotReviewProgressPollingIntervalMs`, default 2000ms) and emits two kinds of
 IDE notifications:
 
@@ -625,7 +625,7 @@ message can never be re-emitted after a counter tick.
 Each page gets up to 3 attempts (`MaxAttemptsPerPage = 3`) inside
 `ReviewPageWithRetryAsync`. No backoff — retries fire immediately. On exhaustion,
 the orchestrator fills in `FailedFilePaths` (only it knows which files were on
-the page) and returns a `CopilotPageReviewResult.Failure`.
+the page) and returns a `AgentPageReviewResult.Failure`.
 
 ### Finding validation pipeline (Feature 021)
 
@@ -658,7 +658,7 @@ review output.
 #### What gets logged where
 
 - `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each Copilot SDK
-  exchange. Kinds in use: `page-{N}-review` from `CopilotPageReviewer`,
+  exchange. Kinds in use: `page-{N}-review` from `AgentPageReviewer`,
   `validation-{N}` from `FindingValidator`. There is no separate "summary" file —
   the validation prompt is itself the consolidated dump of every finding (with
   scope source) and the response carries every verdict, so they double as the

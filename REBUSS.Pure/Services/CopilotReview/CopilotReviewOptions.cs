@@ -126,7 +126,7 @@ public sealed class CopilotReviewOptions
     /// <summary>
     /// How long a completed / failed / cancelled review job is retained in the orchestrator's
     /// in-memory dictionary before it is swept. Without this cap, a long-running MCP server
-    /// accumulates one job entry (plus its <c>CopilotReviewResult</c>, page texts, and task
+    /// accumulates one job entry (plus its <c>AgentReviewResult</c>, page texts, and task
     /// references) per reviewed PR for the lifetime of the process. Sweep is opportunistic —
     /// runs under the trigger lock on each <c>TriggerReview</c> call.
     /// <para>

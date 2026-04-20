@@ -7,7 +7,7 @@ namespace REBUSS.Pure.Core.Services.CopilotReview;
 /// <para>
 /// <b>Thread-safety contract:</b> implementations MUST be safe to call concurrently from
 /// multiple threads. The review pipeline dispatches pages in parallel batches
-/// (<c>CopilotReviewOrchestrator.BackgroundBodyAsync</c>), so each batch fires several
+/// (<c>AgentReviewOrchestrator.BackgroundBodyAsync</c>), so each batch fires several
 /// <see cref="CreateSessionAsync"/> calls simultaneously. Fake implementations used in
 /// tests should avoid shared mutable state, or guard it with synchronization — otherwise
 /// they silently re-introduce a concurrency bug that production code does not have.

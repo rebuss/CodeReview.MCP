@@ -18,12 +18,12 @@ namespace REBUSS.Pure.Services.CopilotReview;
 /// Source-agnostic — serves both PR reviews and local self-reviews via string-based
 /// review keys. Mirrors the <c>PrEnrichmentOrchestrator</c> trigger/wait/snapshot pattern.
 /// </summary>
-internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IAsyncDisposable
+internal sealed class AgentReviewOrchestrator : IAgentReviewOrchestrator, IAsyncDisposable
 {
-    private readonly ICopilotPageReviewer _pageReviewer;
+    private readonly IAgentPageReviewer _pageReviewer;
     private readonly IPageAllocator _pageAllocator;
     private readonly IOptions<CopilotReviewOptions> _options;
-    private readonly ILogger<CopilotReviewOrchestrator> _logger;
+    private readonly ILogger<AgentReviewOrchestrator> _logger;
     private readonly CancellationToken _shutdownToken;
 
     // Feature 021: optional finding validator. Null when ValidateFindings == false
@@ -31,15 +31,15 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     private readonly FindingValidator? _findingValidator;
     private readonly FindingScopeResolver? _findingScopeResolver;
 
-    private readonly ConcurrentDictionary<string, CopilotReviewJob> _jobs = new();
+    private readonly ConcurrentDictionary<string, AgentReviewJob> _jobs = new();
     private readonly object _lock = new();
 
-    public CopilotReviewOrchestrator(
-        ICopilotPageReviewer pageReviewer,
+    public AgentReviewOrchestrator(
+        IAgentPageReviewer pageReviewer,
         IPageAllocator pageAllocator,
         IOptions<CopilotReviewOptions> options,
         IHostApplicationLifetime lifetime,
-        ILogger<CopilotReviewOrchestrator> logger,
+        ILogger<AgentReviewOrchestrator> logger,
         FindingValidator? findingValidator = null,
         FindingScopeResolver? findingScopeResolver = null)
     {
@@ -62,7 +62,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             // Opportunistic TTL sweep: reclaim memory from long-completed jobs before
             // deciding idempotency. Without this, `_jobs` grows unboundedly in a
             // long-running MCP server (one entry per reviewed PR forever, each holding
-            // the full CopilotReviewResult text and background task references).
+            // the full AgentReviewResult text and background task references).
             SweepStaleJobs();
 
             // Idempotent — cache key is reviewKey only.
@@ -71,10 +71,10 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             if (_jobs.ContainsKey(reviewKey))
                 return;
 
-            var job = new CopilotReviewJob
+            var job = new AgentReviewJob
             {
                 ReviewKey = reviewKey,
-                Completion = new TaskCompletionSource<CopilotReviewResult>(
+                Completion = new TaskCompletionSource<AgentReviewResult>(
                     TaskCreationOptions.RunContinuationsAsynchronously),
             };
             _jobs[reviewKey] = job;
@@ -113,7 +113,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     /// body is either in its catch(OCE) branch or about to be. We await the in-flight tasks
     /// with a bounded timeout so shutdown cannot hang on a misbehaving body while still
     /// giving the graceful-cancellation path a chance to finish — update Status, publish
-    /// ErrorMessage, and signal pending waiters through <see cref="CopilotReviewJob.Completion"/>.
+    /// ErrorMessage, and signal pending waiters through <see cref="AgentReviewJob.Completion"/>.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -137,7 +137,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
         }
     }
 
-    public Task<CopilotReviewResult> WaitForReviewAsync(string reviewKey, CancellationToken ct)
+    public Task<AgentReviewResult> WaitForReviewAsync(string reviewKey, CancellationToken ct)
     {
         if (!_jobs.TryGetValue(reviewKey, out var job))
             throw new InvalidOperationException($"No Copilot review job for key '{reviewKey}'");
@@ -146,14 +146,14 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
         return job.Completion.Task.WaitAsync(ct);
     }
 
-    public CopilotReviewSnapshot? TryGetSnapshot(string reviewKey)
+    public AgentReviewSnapshot? TryGetSnapshot(string reviewKey)
     {
         if (!_jobs.TryGetValue(reviewKey, out var job))
             return null;
 
         lock (_lock)
         {
-            return new CopilotReviewSnapshot
+            return new AgentReviewSnapshot
             {
                 ReviewKey = job.ReviewKey,
                 Status = job.Status,
@@ -166,7 +166,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
         }
     }
 
-    private async Task BackgroundBodyAsync(CopilotReviewJob job, IEnrichmentResult enrichment)
+    private async Task BackgroundBodyAsync(AgentReviewJob job, IEnrichmentResult enrichment)
     {
         var ct = _shutdownToken;
         try
@@ -185,16 +185,16 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             // Empty-allocation fast path (edge case: empty PR / zero pages).
             if (allocation.TotalPages == 0)
             {
-                var emptyResult = new CopilotReviewResult
+                var emptyResult = new AgentReviewResult
                 {
                     ReviewKey = job.ReviewKey,
-                    PageReviews = Array.Empty<CopilotPageReviewResult>(),
+                    PageReviews = Array.Empty<AgentPageReviewResult>(),
                     CompletedAt = DateTimeOffset.UtcNow,
                 };
                 lock (_lock)
                 {
                     job.Result = emptyResult;
-                    job.Status = CopilotReviewStatus.Ready;
+                    job.Status = AgentReviewStatus.Ready;
                     job.CompletedAt = DateTimeOffset.UtcNow;
                 }
                 job.Completion.TrySetResult(emptyResult);
@@ -208,9 +208,9 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             // the number of simultaneously in-flight Copilot requests — the GitHub backend
             // rate-limits larger fan-outs and silently re-queues the overflow, which
             // otherwise doubles wall-clock time. Each task writes to its own
-            // pageResults[idx] slot (no contention). CopilotReviewWaiter observes
+            // pageResults[idx] slot (no contention). AgentReviewWaiter observes
             // CompletedPages via polling — order-agnostic.
-            var pageResults = new CopilotPageReviewResult[allocation.TotalPages];
+            var pageResults = new AgentPageReviewResult[allocation.TotalPages];
             var batchSize = Math.Max(1, _options.Value.MaxConcurrentPages);
             for (var batchStart = 0; batchStart < allocation.TotalPages; batchStart += batchSize)
             {
@@ -255,7 +255,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
                 }
             }
 
-            var result = new CopilotReviewResult
+            var result = new AgentReviewResult
             {
                 ReviewKey = job.ReviewKey,
                 PageReviews = pageResults,
@@ -270,7 +270,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             lock (_lock)
             {
                 job.Result = result;
-                job.Status = CopilotReviewStatus.Ready;
+                job.Status = AgentReviewStatus.Ready;
                 job.CompletedAt = DateTimeOffset.UtcNow;
             }
 
@@ -285,7 +285,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             _logger.LogInformation("Copilot review for '{ReviewKey}' cancelled by shutdown", job.ReviewKey);
             lock (_lock)
             {
-                job.Status = CopilotReviewStatus.Failed;
+                job.Status = AgentReviewStatus.Failed;
                 job.ErrorMessage = "cancelled";
                 job.CompletedAt = DateTimeOffset.UtcNow;
             }
@@ -296,7 +296,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             _logger.LogWarning(ex, Resources.LogCopilotReviewFailed, job.ReviewKey, ex.Message);
             lock (_lock)
             {
-                job.Status = CopilotReviewStatus.Failed;
+                job.Status = AgentReviewStatus.Failed;
                 job.ErrorMessage = ex.Message;
                 job.CompletedAt = DateTimeOffset.UtcNow;
             }
@@ -312,8 +312,8 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     /// exhausting retries). Cancellation (<see cref="OperationCanceledException"/>) is
     /// re-thrown without incrementing — the orchestrator-level catch handles that state.
     /// </summary>
-    private async Task<CopilotPageReviewResult> ReviewPageAndTrackAsync(
-        CopilotReviewJob job,
+    private async Task<AgentPageReviewResult> ReviewPageAndTrackAsync(
+        AgentReviewJob job,
         int pageNumber,
         string enrichedContent,
         IReadOnlyList<string> filePathsOnPage,
@@ -328,12 +328,12 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     /// Consolidated post-review validation across all successfully reviewed pages.
     /// Parses findings from every succeeded page, resolves enclosing scopes, validates
     /// them via a single Copilot pass (internally batched by <see cref="FindingValidator"/>),
-    /// and rebuilds each page's <see cref="CopilotPageReviewResult.ReviewText"/> with
+    /// and rebuilds each page's <see cref="AgentPageReviewResult.ReviewText"/> with
     /// false-positives removed and uncertain findings tagged. Feature 021.
     /// </summary>
     private async Task ValidateAllFindingsAsync(
-        CopilotReviewJob job,
-        CopilotPageReviewResult[] pageResults,
+        AgentReviewJob job,
+        AgentPageReviewResult[] pageResults,
         CancellationToken ct)
     {
         // Phase 1: parse findings from all successful pages, tracking page origin.
@@ -401,7 +401,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             offset += findings.Count;
 
             var filteredText = FindingFilterer.Apply(remainder, pageValidated);
-            pageResults[pageIndex] = CopilotPageReviewResult.Success(
+            pageResults[pageIndex] = AgentPageReviewResult.Success(
                 pageResults[pageIndex].PageNumber, filteredText,
                 attemptsMade: pageResults[pageIndex].AttemptsMade);
         }
@@ -450,13 +450,13 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     }
 
     /// <summary>
-    /// Wraps <see cref="ICopilotPageReviewer.ReviewPageAsync"/> in a bounded 3-attempt retry
+    /// Wraps <see cref="IAgentPageReviewer.ReviewPageAsync"/> in a bounded 3-attempt retry
     /// loop per Clarification Q1 / research.md Decision 3. No backoff — retries fire
     /// immediately. On exhaustion, returns a failure result with the file paths that were
     /// on this page so the IDE agent can surface them for manual follow-up.
     /// </summary>
-    private async Task<CopilotPageReviewResult> ReviewPageWithRetryAsync(
-        CopilotReviewJob job,
+    private async Task<AgentPageReviewResult> ReviewPageWithRetryAsync(
+        AgentReviewJob job,
         int pageNumber,
         string enrichedContent,
         IReadOnlyList<string> filePathsOnPage,
@@ -475,7 +475,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             // message, making the progress feed flip-flop between pages. The monotonic
             // CompletedPages counter (emitted as "X/Y pages complete" by the waiter) is the
             // sole page-level progress signal. Per-attempt retries are visible in the log.
-            CopilotPageReviewResult result;
+            AgentPageReviewResult result;
             try
             {
                 result = await _pageReviewer.ReviewPageAsync(job.ReviewKey, pageNumber, enrichedContent, ct).ConfigureAwait(false);
@@ -487,7 +487,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
             catch (Exception ex)
             {
                 // Contract says the reviewer never throws; defence-in-depth: treat as failed attempt.
-                result = CopilotPageReviewResult.Failure(
+                result = AgentPageReviewResult.Failure(
                     pageNumber, Array.Empty<string>(), ex.Message, attemptsMade: attempt);
             }
 
@@ -499,7 +499,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
                     Resources.LogCopilotReviewPageCompleted,
                     job.ReviewKey, pageNumber, attempt, sw.ElapsedMilliseconds);
                 // Re-wrap so AttemptsMade reflects the retry that succeeded.
-                return CopilotPageReviewResult.Success(pageNumber, result.ReviewText!, attempt);
+                return AgentPageReviewResult.Success(pageNumber, result.ReviewText!, attempt);
             }
 
             lastError = result.ErrorMessage ?? "empty response";
@@ -510,7 +510,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
 
         // All 3 attempts exhausted — fill in the file paths (the orchestrator is the only
         // component that knows which files were on this page) and return the failure.
-        return CopilotPageReviewResult.Failure(
+        return AgentPageReviewResult.Failure(
             pageNumber, filePathsOnPage, lastError, attemptsMade: MaxAttemptsPerPage);
     }
 
@@ -537,17 +537,17 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
     /// and the <see cref="ConcurrentDictionary{TKey, TValue}"/> for concurrent add/lookup.
     /// Narrow exception to Principle VI (see plan.md Constitution Check VI).
     /// </summary>
-    private sealed class CopilotReviewJob
+    private sealed class AgentReviewJob
     {
         public required string ReviewKey { get; init; }
-        public CopilotReviewStatus Status { get; set; } = CopilotReviewStatus.Reviewing;
-        public CopilotReviewResult? Result { get; set; }
+        public AgentReviewStatus Status { get; set; } = AgentReviewStatus.Reviewing;
+        public AgentReviewResult? Result { get; set; }
         public string? ErrorMessage { get; set; }
-        public required TaskCompletionSource<CopilotReviewResult> Completion { get; init; }
+        public required TaskCompletionSource<AgentReviewResult> Completion { get; init; }
 
         /// <summary>
         /// Handle for the fire-and-forget background body. Set once inside the creation
-        /// lock; awaited on shutdown (<see cref="CopilotReviewOrchestrator.DisposeAsync"/>)
+        /// lock; awaited on shutdown (<see cref="AgentReviewOrchestrator.DisposeAsync"/>)
         /// so the process does not terminate before graceful-cancellation finishes.
         /// </summary>
         public Task? BackgroundTask { get; set; }
@@ -563,7 +563,7 @@ internal sealed class CopilotReviewOrchestrator : ICopilotReviewOrchestrator, IA
 
         /// <summary>
         /// Timestamp of when the job reached a terminal state (Ready / Failed). Used by
-        /// the TTL sweep in <see cref="CopilotReviewOrchestrator.TriggerReview"/> to evict
+        /// the TTL sweep in <see cref="AgentReviewOrchestrator.TriggerReview"/> to evict
         /// stale entries. <c>null</c> while the job is still in progress.
         /// </summary>
         public DateTimeOffset? CompletedAt { get; set; }

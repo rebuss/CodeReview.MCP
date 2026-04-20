@@ -28,8 +28,8 @@ namespace REBUSS.Pure.Tools
         private readonly ILocalEnrichmentOrchestrator _enrichmentOrchestrator;
         private readonly IOptions<WorkflowOptions> _workflowOptions;
         private readonly ICopilotAvailabilityDetector _copilotAvailability;
-        private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator;
-        private readonly CopilotReviewWaiter _copilotReviewWaiter;
+        private readonly IAgentReviewOrchestrator _copilotReviewOrchestrator;
+        private readonly AgentReviewWaiter _copilotReviewWaiter;
         private readonly IProgressReporter _progressReporter;
         private readonly ILogger<GetLocalContentToolHandler> _logger;
 
@@ -38,8 +38,8 @@ namespace REBUSS.Pure.Tools
             ILocalEnrichmentOrchestrator enrichmentOrchestrator,
             IOptions<WorkflowOptions> workflowOptions,
             ICopilotAvailabilityDetector copilotAvailability,
-            ICopilotReviewOrchestrator copilotReviewOrchestrator,
-            CopilotReviewWaiter copilotReviewWaiter,
+            IAgentReviewOrchestrator copilotReviewOrchestrator,
+            AgentReviewWaiter copilotReviewWaiter,
             IProgressReporter progressReporter,
             ILogger<GetLocalContentToolHandler> logger)
         {
@@ -159,7 +159,7 @@ namespace REBUSS.Pure.Tools
         }
 
         private static List<ContentBlock> BuildCopilotAssistedBlocks(
-            string scopeString, Core.Models.CopilotReview.CopilotReviewResult copilotResult)
+            string scopeString, Core.Models.CopilotReview.AgentReviewResult copilotResult)
         {
             var blocks = new List<ContentBlock>(copilotResult.PageReviews.Count + 1);
 
