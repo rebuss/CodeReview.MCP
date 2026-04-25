@@ -106,4 +106,20 @@ public class ClaudeCliAgentInvokerTests
         Assert.Contains("stdout: body", detail);
         Assert.Contains("stderr: boom", detail);
     }
+
+    [Theory]
+    [InlineData("claude-sonnet-4.6", "claude-sonnet-4-6")]
+    [InlineData("claude-opus-4.7", "claude-opus-4-7")]
+    [InlineData("claude-haiku-4.5-20251001", "claude-haiku-4-5-20251001")]
+    [InlineData("claude-sonnet-4-6", "claude-sonnet-4-6")]
+    [InlineData("sonnet", "sonnet")]
+    public void NormalizeModelForClaudeCli_ConvertsDottedCopilotIdsToHyphenated(string input, string expected)
+    {
+        // Regression guard: when --agent claude is selected the shared
+        // CopilotReviewOptions.Model value (Copilot uses dotted versions like
+        // "claude-sonnet-4.6") was forwarded verbatim to `claude -p --model`,
+        // which 404s. The normalizer must rewrite dots to hyphens and leave
+        // already-canonical ids untouched.
+        Assert.Equal(expected, ClaudeCliAgentInvoker.NormalizeModelForClaudeCli(input));
+    }
 }

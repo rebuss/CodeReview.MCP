@@ -59,7 +59,7 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
         if (!string.IsNullOrWhiteSpace(model))
         {
             args.Add("--model");
-            args.Add(model);
+            args.Add(NormalizeModelForClaudeCli(model));
         }
 
         var psi = new ProcessStartInfo
@@ -122,6 +122,17 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
     /// </summary>
     internal static bool ShouldUseBareMode(Func<string, string?> envLookup) =>
         !string.IsNullOrWhiteSpace(envLookup(ApiKeyEnvVar));
+
+    /// <summary>
+    /// Translates the shared <c>CopilotReviewOptions.Model</c> value into the
+    /// canonical Claude model id form. Copilot's catalogue uses dotted versions
+    /// (e.g. <c>claude-sonnet-4.6</c>); the Claude CLI rejects those with HTTP 404
+    /// and accepts only the hyphenated form (<c>claude-sonnet-4-6</c>). All current
+    /// Anthropic model ids use hyphens, so dot→hyphen substitution is safe here
+    /// and idempotent for already-correct ids.
+    /// </summary>
+    internal static string NormalizeModelForClaudeCli(string model) =>
+        model.Replace('.', '-');
 
     /// <summary>
     /// Builds the operator-facing detail line for a non-zero exit. Includes both
