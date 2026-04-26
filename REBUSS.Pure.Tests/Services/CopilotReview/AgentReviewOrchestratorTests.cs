@@ -76,6 +76,7 @@ public class AgentReviewOrchestratorTests
             Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
             SafeBudgetTokens = 128_000,
             CompletedAt = DateTimeOffset.UtcNow,
+            RawFileChangesFromDiff = fileCount,
         };
 
     [Fact]

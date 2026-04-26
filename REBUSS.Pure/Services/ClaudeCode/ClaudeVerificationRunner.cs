@@ -50,8 +50,12 @@ public sealed class ClaudeVerificationRunner : IClaudeVerificationProbe
         (int ExitCode, string StdOut, string StdErr) r;
         try
         {
+            // Prepend the executable so the injected 2-arg runner receives the same
+            // "exe args" command-string shape the in-process path uses. Without this,
+            // a runner shared with InitCommand sees only the args fragment and cannot
+            // tell a Claude probe apart from a `gh`/`az` call routed through it.
             r = _processRunner is not null
-                ? await _processRunner(probeArgs, cts.Token)
+                ? await _processRunner($"{_claudeExe} {probeArgs}", cts.Token)
                 : await RunAsync(_claudeExe, probeArgs, cts.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

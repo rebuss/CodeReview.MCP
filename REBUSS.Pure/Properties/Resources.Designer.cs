@@ -466,6 +466,15 @@ namespace REBUSS.Pure.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to git {Args} failed (exit {ExitCode}): {StdErr}.
+        /// </summary>
+        internal static string LogLocalGitClientCommandFailed {
+            get {
+                return ResourceManager.GetString("LogLocalGitClientCommandFailed", resourceCulture)!;
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Could not determine current branch.
         /// </summary>
         internal static string LogLocalGitClientCouldNotDetermineBranch {
@@ -543,6 +552,42 @@ namespace REBUSS.Pure.Properties {
         internal static string LogLocalReviewProviderFilesCompleted {
             get {
                 return ResourceManager.GetString("LogLocalReviewProviderFilesCompleted", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Fetching unified diff: scope={Scope}, root={Root}.
+        /// </summary>
+        internal static string LogLocalReviewProviderFetchingUnifiedDiff {
+            get {
+                return ResourceManager.GetString("LogLocalReviewProviderFetchingUnifiedDiff", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Unified diff parsed: scope={Scope}, {FileCount} file(s), {ElapsedMs}ms.
+        /// </summary>
+        internal static string LogLocalReviewProviderUnifiedDiffCompleted {
+            get {
+                return ResourceManager.GetString("LogLocalReviewProviderUnifiedDiffCompleted", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to git status reports {ChangedFileCount} modified file(s) for scope '{Scope}', but the unified diff returned no content...
+        /// </summary>
+        internal static string ErrorLocalContradictionGuard {
+            get {
+                return ResourceManager.GetString("ErrorLocalContradictionGuard", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to PR #{PrNumber} metadata reports {ChangedFileCount} changed file(s), but the diff returned no content...
+        /// </summary>
+        internal static string ErrorPrContradictionGuard {
+            get {
+                return ResourceManager.GetString("ErrorPrContradictionGuard", resourceCulture);
             }
         }
 

@@ -125,6 +125,23 @@ namespace REBUSS.Pure.Tools
                 await _progressReporter.ReportAsync(progress, 2, null,
                     "Enrichment complete — checking review mode", cancellationToken);
 
+                // Contradiction guard: PR metadata declares N changed files but the diff
+                // payload is empty. Lazy-fetch metadata when we don't already have it
+                // (snapshot path) — happy-path callers pay no extra round trip.
+                if (result.RawFileChangesFromDiff == 0)
+                {
+                    var meta = await _metadataProvider.GetMetadataAsync(prNumber.Value, cancellationToken);
+                    if (meta.ChangedFilesCount > 0)
+                    {
+                        _logger.LogWarning(
+                            "Contradiction guard tripped (PR #{Pr}): metadata reports {ChangedFileCount} changed file(s) but diff payload is empty",
+                            prNumber, meta.ChangedFilesCount);
+                        throw new McpException(string.Format(
+                            Resources.ErrorPrContradictionGuard,
+                            prNumber.Value, meta.ChangedFilesCount));
+                    }
+                }
+
                 bool copilotAvailable;
                 try
                 {

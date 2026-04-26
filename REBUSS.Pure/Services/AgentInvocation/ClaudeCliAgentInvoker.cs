@@ -90,9 +90,15 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
         string stdout, stderr;
         try
         {
-            stdout = await process.StandardOutput.ReadToEndAsync(cts.Token).ConfigureAwait(false);
-            stderr = await process.StandardError.ReadToEndAsync(cts.Token).ConfigureAwait(false);
+            // Drain stdout and stderr concurrently — sequential reads can deadlock
+            // when the CLI fills the stderr pipe buffer while we're still consuming
+            // stdout (the child blocks on the unread pipe and never closes stdout).
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
             await process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+            stdout = await stdoutTask.ConfigureAwait(false);
+            stderr = await stderrTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

@@ -2198,20 +2198,28 @@ public class InitCommandTests
     [Fact]
     public void BuildConfigContent_UseMcpServersKey_EmitsMcpServers()
     {
+        // BuildConfigContent expects pre-JSON-escaped paths (it interpolates raw into the
+        // template), so the literal `C:\\repo` here represents an already-escaped path —
+        // not a typo. `MergeConfigContent` differs: it uses Utf8JsonWriter and takes raw
+        // paths. The path-content assertion locks that contract so a future regression
+        // (e.g. accidental re-escaping) would fail this test.
         var content = InitCommand.BuildConfigContent("exe", @"C:\\repo", null, useMcpServersKey: true, agent: "claude");
 
         Assert.Contains("\"mcpServers\"", content);
         Assert.DoesNotContain("\"servers\":", content);
         Assert.Contains("\"--agent\", \"claude\"", content);
+        Assert.Contains(@"""--repo"", ""C:\\repo""", content);
     }
 
     [Fact]
     public void BuildConfigContent_DefaultKeyIsServers()
     {
+        // Same pre-escaped-path contract as the test above.
         var content = InitCommand.BuildConfigContent("exe", @"C:\\repo", null);
 
         Assert.Contains("\"servers\"", content);
         Assert.DoesNotContain("\"mcpServers\"", content);
+        Assert.Contains(@"""--repo"", ""C:\\repo""", content);
     }
 
     [Fact]

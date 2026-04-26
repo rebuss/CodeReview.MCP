@@ -75,8 +75,9 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | `REBUSS.Pure.Core\Shared\DiffEdit.cs` | Line-level edit operation | � (`readonly record struct DiffEdit`) |
 | `REBUSS.Pure.Core\Shared\IDiffAlgorithm.cs` | Interface: line-level diff algorithm | `DiffEdit` |
 | `REBUSS.Pure.Core\Shared\DiffPlexDiffAlgorithm.cs` | Myers-based diff algorithm backed by DiffPlex NuGet library; uses a `private static readonly Differ` instance (thread-safe, shared); throws `InvalidOperationException` for invariant violations (context gap mismatch, trailing line count mismatch) | `IDiffAlgorithm`, `DiffEdit`, `DiffPlex.Differ` |
-| `REBUSS.Pure.Core\Shared\IStructuredDiffBuilder.cs` | Interface: produces `List<DiffHunk>` | `DiffHunk` |
-| `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
+| `REBUSS.Pure.Core\Shared\IStructuredDiffBuilder.cs` | Interface: produces `List<DiffHunk>` from base/target file contents (used by PR providers — GitHub/AzureDevOps) | `DiffHunk` |
+| `REBUSS.Pure.Core\Shared\StructuredDiffBuilder.cs` | Builds structured hunks from base/target content (PR-side; local-side uses `UnifiedPatchParser` directly off `git diff -p`) | `IStructuredDiffBuilder`, `IDiffAlgorithm`, `DiffHunk`, `DiffLine`, `DiffEdit` |
+| `REBUSS.Pure.Core\Shared\UnifiedPatchParser.cs` | Parses unified-diff (`git diff -p`) output. `ParseMultiFile` → `List<FileChange>` (full output); `ParseHunks` → `List<DiffHunk>` (single-file hunk-only patches, e.g. GitHub's per-file `patch`). Authoritative source for local self-review diffs — replaces the `2 × git show` per file path that contended with IDE git extensions. | `FileChange`, `DiffHunk`, `DiffLine` |
 | `REBUSS.Pure.Core\Shared\ICodeProcessor.cs` | Interface: async diff processing pipeline hook for enriching/transforming diffs at specific stages | `ICodeProcessor` — `AddBeforeAfterContext(string diff, CancellationToken ct) → Task<string>` |
 | `REBUSS.Pure.Core\Shared\IDiffEnricher.cs` | Interface: a unit of diff enrichment with ordering and applicability check; chained by `CompositeCodeProcessor` | `IDiffEnricher` — `Order`, `CanEnrich(string)`, `EnrichAsync(string, CancellationToken)` |
 | `REBUSS.Pure.Core\Shared\DiffLanguage.cs` | `DiffLanguage` enum (13 languages + Unknown) + `DiffLanguageDetector` static class: centralized language detection from diff headers; used by all enrichers for `CanEnrich`. Also exposes `IsAlreadyEnriched(string)` for the centralized idempotence short-circuit in `CompositeCodeProcessor` (feature 011) | `DiffLanguageDetector` — `Detect(string)`, `IsCSharp(string)`, `IsSkipped(string)`, `IsAlreadyEnriched(string)` |
@@ -267,10 +268,10 @@ Full codebase context is included below (file-role map, dependency graph, DI reg
 | File | Role | Depends on |
 |---|---|---|
 | `REBUSS.Pure\Services\LocalReview\ILocalGitClient.cs` | Interface: local git operations; defines `LocalFileStatus` record | � |
-| `REBUSS.Pure\Services\LocalReview\LocalGitClient.cs` | Runs git child processes; uses `diff --name-status` for all scopes; exposes `WorkingTreeRef` and `IndexRef` (Feature 023) sentinels routed through `BuildShowArgs` — `WorkingTreeRef` reads the file from disk, `IndexRef` invokes `git show :<path>` (stage-0 index content), any other ref invokes `git show <ref>:<path>`. `IndexRef` enables `local:staged` validation to read the exact bytes the diff under review represented (FR-001a). Handles repos without HEAD (no commits) via optimistic catch-and-retry: tries HEAD-based commands first, verifies HEAD absence with `rev-parse --verify HEAD` only on failure, then falls back to `diff --cached` (staged) or `status --porcelain` (working-tree); BranchDiff throws `GitCommandException` when no HEAD. Eliminates the extra `rev-parse` process in the common case. Redirects stdin on child processes to prevent MCP stdio deadlocks. | `ILocalGitClient` |
+| `REBUSS.Pure\Services\LocalReview\LocalGitClient.cs` | Runs git child processes. Status enumeration via `diff --name-status` (`BuildStatusArgs`). **Diff fetching for review** via `GetUnifiedDiffAsync` (`BuildDiffArgs`) — single `git diff --no-color --no-ext-diff -U3` invocation per scope (P0 fix: replaces the prior 2N-process `git show` storm that contended with IDE git extensions). Sentinels `WorkingTreeRef` and `IndexRef` (Feature 023) routed through `BuildShowArgs` — `WorkingTreeRef` reads the file from disk, `IndexRef` invokes `git show :<path>` (stage-0 index content), any other ref invokes `git show <ref>:<path>`. `IndexRef` is used by `local:staged` finding validation to read the exact bytes the diff under review represented (FR-001a). Handles repos without HEAD (no commits) via optimistic catch-and-retry: tries HEAD-based commands first, verifies HEAD absence with `rev-parse --verify HEAD` only on failure, then falls back to `diff --cached` (staged) or `status --porcelain` (working-tree); BranchDiff throws `GitCommandException` when no HEAD. `git show` failures now log at Warning level (was Debug) so silent self-review failures become visible. Redirects stdin on child processes to prevent MCP stdio deadlocks. | `ILocalGitClient` |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewScope.cs` | Value type: `WorkingTree`, `Staged`, `BranchDiff(base)` + `Parse(string?)` | � |
-| `REBUSS.Pure\Services\LocalReview\ILocalReviewProvider.cs` | Interface: lists local files + diffs; defines `LocalReviewFiles` model | `PullRequestDiff`, `PullRequestFileInfo`, `PullRequestFilesSummary` |
-| `REBUSS.Pure\Services\LocalReview\LocalReviewProvider.cs` | Orchestrates git client + diff builder + file classifier | `IWorkspaceRootProvider` (from Core), `ILocalGitClient`, `IStructuredDiffBuilder`, `IFileClassifier`, domain models |
+| `REBUSS.Pure\Services\LocalReview\ILocalReviewProvider.cs` | Interface: lists local files + diffs; exposes `GetFilesAsync`, `GetFileDiffAsync` (single file), and `GetAllFileDiffsAsync` (whole scope, used by enrichment orchestrator). Defines `LocalReviewFiles` model | `PullRequestDiff`, `PullRequestFileInfo`, `PullRequestFilesSummary` |
+| `REBUSS.Pure\Services\LocalReview\LocalReviewProvider.cs` | Orchestrates git client + unified-patch parser + file classifier. `GetAllFileDiffsAsync` runs one `git diff -p` per scope and parses with `UnifiedPatchParser`; `GetFileDiffAsync` is a thin filter on top. Applies binary/generated skip reasons by classifier. No longer takes `IStructuredDiffBuilder` — local diffs are sourced from git's own output, not re-diffed in C#. | `IWorkspaceRootProvider` (from Core), `ILocalGitClient`, `IFileClassifier`, `UnifiedPatchParser`, domain models |
 | `REBUSS.Pure\Services\LocalReview\LocalReviewExceptions.cs` | `LocalRepositoryNotFoundException`, `LocalFileNotFoundException`, `GitCommandException` | � |
 
 ### Diff enrichment pipeline (REBUSS.Pure\Services)
@@ -504,6 +505,7 @@ Note: As of the plain-text ContentBlock refactor, most JSON output DTOs have bee
 | `REBUSS.Pure.Core.Tests\Classification\FileClassifierTests.cs` | `FileClassifier` |
 | `REBUSS.Pure.Core.Tests\Shared\StructuredDiffBuilderTests.cs` | `StructuredDiffBuilder` — hunk generation, edge cases |
 | `REBUSS.Pure.Core.Tests\Shared\DiffPlexDiffAlgorithmTests.cs` | `DiffPlexDiffAlgorithm` — core edit behavior + concurrent-call stability |
+| `REBUSS.Pure.Core.Tests\Shared\UnifiedPatchParserTests.cs` | `UnifiedPatchParser` — `ParseHunks` (single-file) and `ParseMultiFile` (full `git diff -p`): modified, added, deleted, renamed, binary, multi-file, CRLF, multi-hunk Additions/Deletions accumulation |
 | `REBUSS.Pure.AzureDevOps.Tests\Providers\AzureDevOpsDiffProviderTests.cs` | `AzureDevOpsDiffProvider` — full diff/file diff, skip behavior, `IsFullFileRewrite`, `GetSkipReason`, ZIP-fallback heuristic (under/at/above threshold paths, hunk correctness when reading from extracted archives, added-file handling when missing from base archive, threshold=0 disables ZIP path, temp directory cleanup); ZIP test helpers write real archives via `System.IO.Compression.ZipArchive` |
 | `REBUSS.Pure.AzureDevOps.Tests\Providers\AzureDevOpsFilesProviderTests.cs` | `AzureDevOpsFilesProvider` — file list, status mapping, summary, path stripping, last iteration selection, no-iterations edge case; uses mocked `IAzureDevOpsApiClient` + real `FileChangesParser`/`IterationInfoParser` |
 | `REBUSS.Pure.AzureDevOps.Tests\Parsers\PullRequestMetadataParserTests.cs` | `PullRequestMetadataParser` |
@@ -643,7 +645,11 @@ FileClassification / FileCategory
 
 DiffEdit
   ? DiffPlexDiffAlgorithm [Core]                 (produces)
-  ? StructuredDiffBuilder [Core]                  (consumes: ComputeHunks, FormatHunk)
+  ? StructuredDiffBuilder [Core]                  (consumes: ComputeHunks, FormatHunk; PR-side only)
+
+UnifiedPatchParser [Core]
+  ? GitHubPatchHunkParser [GitHub]                (delegates: thin wrapper over ParseHunks for per-file patches)
+  ? LocalReviewProvider [Pure]                    (consumes: ParseMultiFile against `git diff -p` output)
 
 PullRequestFiles / PullRequestFileInfo / PullRequestFilesSummary
   ? AzureDevOpsFilesProvider [AzureDevOps]        (produces)
@@ -959,7 +965,7 @@ services.AddSingleton<RemoteArchiveSourceProvider>();
 services.AddSingleton<LocalWorkspaceSourceProvider>();
 services.AddSingleton<IFindingSourceProviderSelector, FindingSourceProviderSelector>();
 services.AddSingleton<FindingScopeResolver>(); // ctor now: IFindingSourceProviderSelector + ILogger
-services.AddSingleton<FindingValidator>(); // ctor: ICopilotSessionFactory + IOptions<CopilotReviewOptions> + IAgentInspectionWriter + IPageAllocator + ITokenEstimator + ILogger
+services.AddSingleton<FindingValidator>(); // ctor: IAgentInvoker + IOptions<CopilotReviewOptions> + IAgentInspectionWriter + IPageAllocator + ITokenEstimator + ILogger
 
 services.AddSingleton<IAgentReviewOrchestrator, AgentReviewOrchestrator>();
 services.AddSingleton<AgentReviewWaiter>();

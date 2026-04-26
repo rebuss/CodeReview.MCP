@@ -703,13 +703,14 @@ Mechanics:
 Pre-fix vs. post-fix behavior summary: pre-fix, all `local:*` reviews silently produced
 `SourceUnavailable → Uncertain` for every `.cs` finding because `DiffSourceResolver`
 was wired to the PR-archive download path that local reviews never populate. Post-fix,
-local reviews reach Copilot with the correct after-state and produce `Valid` /
-`FalsePositive` / `Uncertain` verdicts indistinguishable from PR mode.
+local reviews reach the configured agent with the correct after-state and produce
+`Valid` / `FalsePositive` / `Uncertain` verdicts indistinguishable from PR mode.
 
 #### What gets logged where
 
-- `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each Copilot SDK
-  exchange. Kinds in use: `page-{N}-review` from `AgentPageReviewer`,
+- `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each agent
+  exchange (Copilot SDK or Claude CLI, behind the `IAgentInvoker` seam).
+  Kinds in use: `page-{N}-review` from `AgentPageReviewer`,
   `validation-{N}` from `FindingValidator`. There is no separate "summary" file —
   the validation prompt is itself the consolidated dump of every finding (with
   scope source) and the response carries every verdict, so they double as the
@@ -723,14 +724,68 @@ local reviews reach Copilot with the correct after-state and produce `Valid` /
 
 `LocalReviewScope` is a sealed class with private constructor and static factory methods:
 
-| Scope | Factory | Git Command | Base Ref | Target Ref |
-|---|---|---|---|---|
-| **WorkingTree** | `WorkingTree()` | `diff --name-status HEAD` | `HEAD` | `WORKING_TREE` (filesystem) |
-| **Staged** | `Staged()` | `diff --name-status --cached HEAD` | `HEAD` | `:0` (index) |
-| **BranchDiff** | `BranchDiff(base)` | `diff --name-status {base}...HEAD` | `{base}` | `HEAD` |
+| Scope | Factory | Status command | Diff command (P0) |
+|---|---|---|---|
+| **WorkingTree** | `WorkingTree()` | `diff --name-status HEAD` | `diff --no-color --no-ext-diff -U3 HEAD` |
+| **Staged** | `Staged()` | `diff --name-status --cached HEAD` | `diff --no-color --no-ext-diff -U3 --cached HEAD` |
+| **BranchDiff** | `BranchDiff(base)` | `diff --name-status {base}...HEAD` | `diff --no-color --no-ext-diff -U3 {base}...HEAD` |
 
 `Parse(string?)` maps user input: `null`/empty/`"working-tree"` → WorkingTree,
 `"staged"` → Staged, anything else → BranchDiff with that value as base.
+
+### Diff fetching: single git invocation per scope
+
+`LocalReviewProvider.GetAllFileDiffsAsync` fetches the entire scope's diff in one
+`git diff -p` invocation via `ILocalGitClient.GetUnifiedDiffAsync`. The output is
+parsed by `UnifiedPatchParser.ParseMultiFile` into `List<FileChange>` directly —
+no base/target file content reads, no C#-side re-diff.
+
+**Why one process per scope:** the prior implementation called
+`GetFileContentAtRefAsync` twice per file (base + target) and re-diffed in C# via
+`IStructuredDiffBuilder`. With N changed files this spawned 2N git child processes
+in parallel. Under IDE load — VS Code's Git extension constantly running its own
+git operations on the same `.git` directory, plus AV process-startup penalties —
+this contended badly: process startup ballooned to ~8 s per call, and any failed
+`git show` was silently swallowed (caught, null returned, treated as "no diff" by
+the diff builder). Result: empty self-review with a "no staged changes" message
+even when the user had staged 10 files. Sourcing the diff from `git diff -p` is
+authoritative (matches what the user sees in the CLI), uses one process, and
+contention with the IDE's git extension is no longer a concern.
+
+`--no-ext-diff` bypasses any external diff driver configured in the user's
+`.gitconfig`; `-U3` matches git's default context but is set explicitly so output
+is stable regardless of `diff.context` config. `--no-color` keeps ANSI escapes
+out of the parser.
+
+**`UnifiedPatchParser`** lives in `REBUSS.Pure.Core.Shared` and exposes two entry
+points: `ParseMultiFile` (full output starting with `diff --git`) and
+`ParseHunks` (single-file hunk-only patches, used by GitHub's per-file `patch`
+field — `GitHubPatchHunkParser` is now a thin wrapper). It recognises
+`new file`, `deleted file`, `rename from/to`, and `Binary files ... differ`
+markers and resolves the file path from `+++ b/<path>` (with fallback to the
+`diff --git` header for binary files where git omits `+++`).
+
+### Contradiction guard (`get_local_content` and `get_pr_content`)
+
+Even with the new pipeline, an upstream signal mismatch (git status reports N
+modified files / PR metadata reports N changed files, but the diff payload is
+empty) is now treated as an error rather than a silent "nothing to review." Both
+content tool handlers throw `McpException` (`IsError=true` over the wire) so the
+calling AI agent sees an explicit failure instead of interpreting an empty
+result as "all good."
+
+Detection signals carried on `LocalEnrichmentResult` / `PrEnrichmentResult`:
+
+| Field | Source | Used by |
+|---|---|---|
+| `RawChangedFileCount` (local) | `git diff --name-status` count | `GetLocalContentToolHandler` |
+| `RawFileChangesFromDiff` (local) | `UnifiedPatchParser.ParseMultiFile(...).Count` | same |
+| `RawFileChangesFromDiff` (PR) | provider's diff `Files.Count` | `GetPullRequestContentToolHandler` (compared lazily against `meta.ChangedFilesCount`) |
+
+The guard fires only when the diff payload is empty AND status/metadata reports
+work to do. Files dropped legitimately as binary/generated (parser produced N,
+classifier filtered all N) do **not** trip the guard — that's a successful
+"nothing reviewable here" outcome.
 
 ### Git Process Spawning
 
@@ -738,6 +793,13 @@ local reviews reach Copilot with the correct after-state and produce `Valid` /
 `UseShellExecute = false`, `CreateNoWindow = true`, `RedirectStandardOutput/Error`).
 Parsing is minimal — only `--name-status` output (tab-delimited: `STATUS\tpath`)
 and `status --porcelain` output are supported.
+
+`git show` failures (used by the finding validator's
+`LocalWorkspaceSourceProvider` for staged-content reads, and by the no-HEAD
+fallback paths) now log at **Warning** level (was Debug). Distinguishing a
+legitimate "file does not exist at this ref" from a transient invocation
+failure (concurrent index access, AV interference) requires reading the stderr
+that git produced — surfacing it at Warning makes silent failures diagnosable.
 
 **`WorkingTreeRef` sentinel:** the constant `"WORKING_TREE"` is a synthetic git ref
 that signals `GetFileContentAtRefAsync` to read the file directly from the filesystem
@@ -756,20 +818,6 @@ produce `show :<path>` — semantically opaque at call sites.
 For all other refs (`HEAD`, commit SHAs, branch names), the method runs
 `git show {ref}:{path}`. If the file doesn't exist at that ref (new file,
 deleted file), the `GitCommandException` is caught and `null` is returned.
-
-### File Content Resolution
-
-`LocalReviewProvider.GetDiffRefs` determines base and target refs per scope:
-
-- **WorkingTree:** base = `HEAD` (last commit), target = `WORKING_TREE` (filesystem).
-  Captures staged + unstaged changes together.
-- **Staged:** base = `HEAD`, target = `:0` (git index). `:0` is git's staging area
-  ref, showing exactly what `git add` has staged.
-- **BranchDiff:** base = `{baseBranch}` (the merge base), target = `HEAD`.
-  Uses `{base}...HEAD` syntax in diff which finds the merge-base automatically.
-
-The resolved content strings are fed to `IStructuredDiffBuilder.Build` which
-produces `DiffHunk[]` using `LcsDiffAlgorithm` (LCS-based line diff).
 
 ## 8. Design Decisions & Rationale
 

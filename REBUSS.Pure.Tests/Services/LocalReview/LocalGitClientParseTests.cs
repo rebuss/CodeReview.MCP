@@ -180,6 +180,56 @@ public class LocalGitClientParseTests
         Assert.Equal("show abc1234:src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", "abc1234"));
     }
 
+    // --- BuildDiffArgs (P0 fix: single-process unified diff per scope) ---
+
+    [Fact]
+    public void BuildDiffArgs_Staged_WithHead_UsesDiffCachedHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 --cached HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.Staged(), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_Staged_WithoutHead_UsesDiffCachedWithoutHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 --cached",
+            InvokeBuildDiffArgs(LocalReviewScope.Staged(), hasHead: false));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_WorkingTree_WithHead_UsesDiffHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.WorkingTree(), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_WorkingTree_WithoutHead_UsesBareDiff()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3",
+            InvokeBuildDiffArgs(LocalReviewScope.WorkingTree(), hasHead: false));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_BranchDiff_WithHead_UsesTripleDot()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 main...HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.BranchDiff("main"), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_BranchDiff_WithoutHead_ThrowsGitCommandException()
+    {
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(
+            () => InvokeBuildDiffArgs(LocalReviewScope.BranchDiff("main"), hasHead: false));
+        Assert.IsType<GitCommandException>(ex.InnerException);
+    }
+
     // --- Helpers that invoke internal parsing via reflection ---
 
     private static IReadOnlyList<LocalFileStatus> InvokeParsePorcelain(string output)
@@ -216,5 +266,13 @@ public class LocalGitClientParseTests
         var args = (string)tupleType.GetField("Item1")!.GetValue(result)!;
         var mode = tupleType.GetField("Item2")!.GetValue(result)!.ToString()!;
         return (args, mode);
+    }
+
+    private static string InvokeBuildDiffArgs(LocalReviewScope scope, bool hasHead)
+    {
+        var method = typeof(LocalGitClient).GetMethod(
+            "BuildDiffArgs",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        return (string)method.Invoke(null, new object[] { scope, hasHead })!;
     }
 }

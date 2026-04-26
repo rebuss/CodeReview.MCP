@@ -194,6 +194,9 @@
   <data name="LogGetPrMetadataNotFound" xml:space="preserve">
     <value>[get_pr_metadata] Pull request not found (prNumber={PrNumber})</value>
   </data>
+  <data name="LogLocalGitClientCommandFailed" xml:space="preserve">
+    <value>git {Args} failed (exit {ExitCode}): {StdErr}</value>
+  </data>
   <data name="LogLocalGitClientCouldNotDetermineBranch" xml:space="preserve">
     <value>Could not determine current branch</value>
   </data>
@@ -220,6 +223,18 @@
   </data>
   <data name="LogLocalReviewProviderFilesCompleted" xml:space="preserve">
     <value>Local files completed: scope={Scope}, {FileCount} file(s), {ElapsedMs}ms</value>
+  </data>
+  <data name="LogLocalReviewProviderFetchingUnifiedDiff" xml:space="preserve">
+    <value>Fetching unified diff: scope={Scope}, root={Root}</value>
+  </data>
+  <data name="LogLocalReviewProviderUnifiedDiffCompleted" xml:space="preserve">
+    <value>Unified diff parsed: scope={Scope}, {FileCount} file(s), {ElapsedMs}ms</value>
+  </data>
+  <data name="ErrorLocalContradictionGuard" xml:space="preserve">
+    <value>git status reports {0} modified file(s) for scope '{1}', but the unified diff returned no content. This is a transient git failure (likely concurrent index access from your IDE's git extension or AV process-startup contention). Re-run the review; if it persists, check the server log for git stderr messages.</value>
+  </data>
+  <data name="ErrorPrContradictionGuard" xml:space="preserve">
+    <value>PR #{0} metadata reports {1} changed file(s), but the diff returned no content. This indicates an upstream provider failure (e.g. transient API error). Re-run the review; if it persists, check the server log for provider errors.</value>
   </data>
   <data name="LogMcpWorkspaceRootProviderUnexpandedVariable" xml:space="preserve">
     <value>CLI --repo value '{Path}' looks like an unexpanded variable (e.g. from VS Code on a non-VS Code client). Ignoring it — MCP roots or localRepoPath will be used instead.</value>

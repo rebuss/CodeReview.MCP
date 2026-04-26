@@ -26,6 +26,22 @@ namespace REBUSS.Pure.Services.LocalReview
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Returns the full unified-diff (<c>git diff -p</c>) for the given <paramref name="scope"/>
+        /// in a single git invocation. Caller parses the returned string with
+        /// <see cref="REBUSS.Pure.Core.Shared.UnifiedPatchParser.ParseMultiFile"/>.
+        /// </summary>
+        /// <remarks>
+        /// This is the authoritative, low-contention path for local self-review diffs.
+        /// One process per scope replaces the prior <c>2 × file count</c> parallel
+        /// <c>git show</c> invocations, eliminating the IDE-side concurrency hazard
+        /// (lock contention with VS Code's Git extension; AV process-startup penalty).
+        /// </remarks>
+        Task<string> GetUnifiedDiffAsync(
+            string repositoryRoot,
+            LocalReviewScope scope,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Returns the name of the currently checked-out branch,
         /// or <c>null</c> when in detached HEAD state.
         /// </summary>

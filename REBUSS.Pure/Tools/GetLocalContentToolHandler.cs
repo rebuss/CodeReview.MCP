@@ -115,6 +115,19 @@ namespace REBUSS.Pure.Tools
                 await _progressReporter.ReportAsync(progress, 2, null,
                     "Enrichment complete — checking review mode", cancellationToken);
 
+                // Contradiction guard: git status enumerated changed files but the unified
+                // diff returned nothing. Surface as McpException (IsError=true) so the AI
+                // agent does not interpret an empty review as "all good — no changes."
+                if (result.RawChangedFileCount > 0 && result.RawFileChangesFromDiff == 0)
+                {
+                    _logger.LogWarning(
+                        "Contradiction guard tripped (scope '{Scope}'): {ChangedFileCount} modified file(s) per git status but unified diff is empty",
+                        scopeString, result.RawChangedFileCount);
+                    throw new McpException(string.Format(
+                        Resources.ErrorLocalContradictionGuard,
+                        result.RawChangedFileCount, scopeString));
+                }
+
                 bool copilotAvailable;
                 try
                 {

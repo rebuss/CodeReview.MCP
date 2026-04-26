@@ -103,24 +103,10 @@ internal sealed class LocalEnrichmentOrchestrator : ILocalEnrichmentOrchestrator
 
             var localFiles = await _localProvider.GetFilesAsync(parsedScope, ct);
 
-            // Fetch every file's diff in parallel.
-            var fetchTasks = localFiles.Files
-                .Select(f => _localProvider.GetFileDiffAsync(f.Path, parsedScope, ct))
-                .ToList();
-            await Task.WhenAll(fetchTasks);
-
-            var diffByPath = new Dictionary<string, Core.Models.FileChange>(StringComparer.OrdinalIgnoreCase);
-            foreach (var task in fetchTasks)
-            {
-                var fc = task.Result.Files.FirstOrDefault();
-                if (fc != null)
-                    diffByPath[fc.Path] = fc;
-            }
-
-            var aggregatedDiff = new Core.Models.PullRequestDiff
-            {
-                Files = diffByPath.Values.ToList()
-            };
+            // Single git invocation for the whole scope — replaces the prior
+            // 2 × file-count parallel `git show` storm that contended with the IDE's
+            // git extension and produced empty diffs under load.
+            var aggregatedDiff = await _localProvider.GetAllFileDiffsAsync(parsedScope, ct);
 
             ct.ThrowIfCancellationRequested();
             lock (_lock) { job.Status = LocalEnrichmentStatus.Enriching; }
@@ -141,6 +127,8 @@ internal sealed class LocalEnrichmentOrchestrator : ILocalEnrichmentOrchestrator
                 Allocation = allocation,
                 SafeBudgetTokens = safeBudgetTokens,
                 CompletedAt = DateTimeOffset.UtcNow,
+                RawChangedFileCount = localFiles.Files.Count,
+                RawFileChangesFromDiff = aggregatedDiff.Files.Count,
             };
 
             lock (_lock)

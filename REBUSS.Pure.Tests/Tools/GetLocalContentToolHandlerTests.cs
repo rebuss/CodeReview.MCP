@@ -25,10 +25,10 @@ public class GetLocalContentToolHandlerTests
     private readonly IContextBudgetResolver _budgetResolver = Substitute.For<IContextBudgetResolver>();
     private readonly ILocalEnrichmentOrchestrator _enrichmentOrchestrator = Substitute.For<ILocalEnrichmentOrchestrator>();
     private readonly ICopilotAvailabilityDetector _copilotAvailability = Substitute.For<ICopilotAvailabilityDetector>();
-    private readonly IAgentReviewOrchestrator _copilotReviewOrchestrator = Substitute.For<IAgentReviewOrchestrator>();
+    private readonly IAgentReviewOrchestrator _reviewOrchestrator = Substitute.For<IAgentReviewOrchestrator>();
     private readonly IProgressReporter _progressReporter = Substitute.For<IProgressReporter>();
     private readonly WorkflowOptions _workflowOpts = new() { ContentInternalTimeoutMs = 28_000, CopilotReviewProgressPollingIntervalMs = 100 };
-    private readonly AgentReviewWaiter _copilotReviewWaiter;
+    private readonly AgentReviewWaiter _reviewWaiter;
     private readonly GetLocalContentToolHandler _handler;
 
     private static readonly IReadOnlyList<PackingCandidate> SampleCandidates = new[]
@@ -44,7 +44,7 @@ public class GetLocalContentToolHandlerTests
             ["src/B.cs"] = "=== src/B.cs ===\n+new line B",
         };
 
-    private static AgentReviewResult BuildDefaultCopilotResult() => new()
+    private static AgentReviewResult BuildDefaultReviewResult() => new()
     {
         ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
         PageReviews = new[]
@@ -81,6 +81,8 @@ public class GetLocalContentToolHandlerTests
                 }, 1, 2),
                 SafeBudgetTokens = 140000,
                 CompletedAt = DateTimeOffset.UtcNow,
+                RawChangedFileCount = 2,
+                RawFileChangesFromDiff = 2,
             });
 
         // Default: Copilot available — the handler now requires Copilot.
@@ -88,23 +90,23 @@ public class GetLocalContentToolHandlerTests
             .Returns(true);
 
         // Default copilot review result.
-        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(BuildDefaultCopilotResult());
-        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+        _reviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(BuildDefaultReviewResult());
+        _reviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
             .Returns(new AgentReviewSnapshot
             {
                 ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
                 Status = AgentReviewStatus.Ready,
                 TotalPages = 1,
                 CompletedPages = 1,
-                Result = BuildDefaultCopilotResult(),
+                Result = BuildDefaultReviewResult(),
             });
 
         _progressReporter.ReportAsync(Arg.Any<object?>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
-        _copilotReviewWaiter = new AgentReviewWaiter(
-            _copilotReviewOrchestrator,
+        _reviewWaiter = new AgentReviewWaiter(
+            _reviewOrchestrator,
             _progressReporter,
             Options.Create(_workflowOpts));
 
@@ -113,8 +115,8 @@ public class GetLocalContentToolHandlerTests
             _enrichmentOrchestrator,
             Options.Create(_workflowOpts),
             _copilotAvailability,
-            _copilotReviewOrchestrator,
-            _copilotReviewWaiter,
+            _reviewOrchestrator,
+            _reviewWaiter,
             _progressReporter,
             new AgentIdentity("copilot"),
             NullLogger<GetLocalContentToolHandler>.Instance);
@@ -234,9 +236,9 @@ public class GetLocalContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+        _reviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(copilotResult);
-        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+        _reviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
             .Returns(new AgentReviewSnapshot
             {
                 ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
@@ -270,9 +272,9 @@ public class GetLocalContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+        _reviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(copilotResult);
-        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+        _reviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
             .Returns(new AgentReviewSnapshot
             {
                 ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
@@ -310,9 +312,9 @@ public class GetLocalContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+        _reviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(copilotResult);
-        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+        _reviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
             .Returns(new AgentReviewSnapshot
             {
                 ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
@@ -366,9 +368,9 @@ public class GetLocalContentToolHandlerTests
             PageReviews = pageReviews,
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+        _reviewOrchestrator.WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(copilotResult);
-        _copilotReviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
+        _reviewOrchestrator.TryGetSnapshot(Arg.Any<string>())
             .Returns(new AgentReviewSnapshot
             {
                 ReviewKey = "local:working-tree:C:\\Projects\\MyRepo",
@@ -422,13 +424,13 @@ public class GetLocalContentToolHandlerTests
 
         // Use a very short timeout so the handler's linked CTS fires.
         var shortTimeoutOpts = new WorkflowOptions { ContentInternalTimeoutMs = 1, CopilotReviewProgressPollingIntervalMs = 100 };
-        var waiter = new AgentReviewWaiter(_copilotReviewOrchestrator, _progressReporter, Options.Create(shortTimeoutOpts));
+        var waiter = new AgentReviewWaiter(_reviewOrchestrator, _progressReporter, Options.Create(shortTimeoutOpts));
         var handler = new GetLocalContentToolHandler(
             _budgetResolver,
             _enrichmentOrchestrator,
             Options.Create(shortTimeoutOpts),
             _copilotAvailability,
-            _copilotReviewOrchestrator,
+            _reviewOrchestrator,
             waiter,
             _progressReporter,
             new AgentIdentity("copilot"),
@@ -463,6 +465,62 @@ public class GetLocalContentToolHandlerTests
         Assert.Contains("enrichment failed", text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("IOException", text);
         Assert.Contains("Disk read error", text);
+    }
+
+    // --- Contradiction guard: git status says modified but unified diff is empty ---
+
+    [Fact]
+    public async Task ExecuteAsync_DiffContradictsStatus_ThrowsMcpException()
+    {
+        // git status enumerated 5 modified files but the unified-diff parser saw none —
+        // the very failure mode that produced empty self-reviews under VS Code load.
+        _enrichmentOrchestrator.WaitForEnrichmentAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new LocalEnrichmentResult
+            {
+                RepositoryRoot = "C:\\Projects\\MyRepo",
+                CurrentBranch = "main",
+                Scope = "staged",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawChangedFileCount = 5,
+                RawFileChangesFromDiff = 0,
+            });
+
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(pageNumber: 1, scope: "staged"));
+
+        Assert.Contains("5 modified file", ex.Message);
+        Assert.Contains("staged", ex.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoContradiction_AllFilesSkipped_DoesNotThrow()
+    {
+        // Diff parser saw 3 files but classifier filtered them all (binary/generated) —
+        // legitimate "nothing to review" outcome, NOT a contradiction.
+        _enrichmentOrchestrator.WaitForEnrichmentAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new LocalEnrichmentResult
+            {
+                RepositoryRoot = "C:\\Projects\\MyRepo",
+                CurrentBranch = "main",
+                Scope = "staged",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawChangedFileCount = 3,
+                RawFileChangesFromDiff = 3,
+            });
+
+        // Should NOT throw — contradiction guard only fires when diff parser produced 0
+        // files despite status reporting changes. Here the diff produced files, the
+        // candidate filter just dropped them all.
+        var blocks = await _handler.ExecuteAsync(pageNumber: 1, scope: "staged");
+        Assert.NotNull(blocks);
     }
 
     // --- Strict mode -> CopilotUnavailableException propagated ---

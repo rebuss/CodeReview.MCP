@@ -104,7 +104,7 @@ public class PlainTextFormatterTests
             agentName: "claude", prNumber: 7, totalPages: 1, succeeded: 1, failed: 0);
 
         Assert.Contains("[review-mode: claude-assisted]", text);
-        Assert.DoesNotContain("copilot", text);
+        Assert.DoesNotContain("copilot", text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

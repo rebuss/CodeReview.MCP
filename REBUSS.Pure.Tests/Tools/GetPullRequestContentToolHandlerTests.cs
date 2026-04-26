@@ -32,9 +32,9 @@ public class GetPullRequestContentToolHandlerTests
             CopilotReviewProgressPollingIntervalMs = 50,
         });
     private readonly ICopilotAvailabilityDetector _copilotAvailability = Substitute.For<ICopilotAvailabilityDetector>();
-    private readonly IAgentReviewOrchestrator _copilotReviewOrchestrator = Substitute.For<IAgentReviewOrchestrator>();
+    private readonly IAgentReviewOrchestrator _reviewOrchestrator = Substitute.For<IAgentReviewOrchestrator>();
     private readonly IProgressReporter _progressReporter = Substitute.For<IProgressReporter>();
-    private readonly AgentReviewWaiter _copilotReviewWaiter;
+    private readonly AgentReviewWaiter _reviewWaiter;
     private readonly GetPullRequestContentToolHandler _handler;
 
     private static readonly FullPullRequestMetadata SampleMetadata = new()
@@ -75,10 +75,11 @@ public class GetPullRequestContentToolHandlerTests
             Allocation = new PageAllocation(new[] { slice }, 1, 3),
             SafeBudgetTokens = safeBudget,
             CompletedAt = DateTimeOffset.UtcNow,
+            RawFileChangesFromDiff = candidates.Length,
         };
     }
 
-    private static Core.Models.CopilotReview.AgentReviewResult BuildDefaultCopilotResult() => new()
+    private static Core.Models.CopilotReview.AgentReviewResult BuildDefaultReviewResult() => new()
     {
         ReviewKey = "pr:42",
         PageReviews = new[]
@@ -104,12 +105,12 @@ public class GetPullRequestContentToolHandlerTests
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
 
         // Default copilot review result.
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(BuildDefaultCopilotResult());
+            .Returns(BuildDefaultReviewResult());
 
-        _copilotReviewWaiter = new AgentReviewWaiter(
-            _copilotReviewOrchestrator,
+        _reviewWaiter = new AgentReviewWaiter(
+            _reviewOrchestrator,
             _progressReporter,
             _workflowOptions);
 
@@ -119,8 +120,8 @@ public class GetPullRequestContentToolHandlerTests
             _orchestrator,
             _workflowOptions,
             _copilotAvailability,
-            _copilotReviewOrchestrator,
-            _copilotReviewWaiter,
+            _reviewOrchestrator,
+            _reviewWaiter,
             _progressReporter,
             new AgentIdentity("copilot"),
             NullLogger<GetPullRequestContentToolHandler>.Instance);
@@ -128,6 +129,70 @@ public class GetPullRequestContentToolHandlerTests
 
     private static string AllText(IEnumerable<ContentBlock> blocks) =>
         string.Join("\n", blocks.Cast<TextContentBlock>().Select(b => b.Text));
+
+    private static FullPullRequestMetadata MetadataWithChangedFiles(int count) => new()
+    {
+        PullRequestId = SampleMetadata.PullRequestId,
+        Title = SampleMetadata.Title,
+        Status = SampleMetadata.Status,
+        LastMergeSourceCommitId = SampleMetadata.LastMergeSourceCommitId,
+        LastMergeTargetCommitId = SampleMetadata.LastMergeTargetCommitId,
+        CommitShas = SampleMetadata.CommitShas,
+        ChangedFilesCount = count,
+    };
+
+    // ─── Contradiction guard: PR metadata says N changed but diff is empty ────
+
+    [Fact]
+    public async Task Execute_DiffEmptyDespiteMetadataChanges_ThrowsMcpException()
+    {
+        // Diff payload is empty, but metadata says the PR has 7 changed files —
+        // upstream provider failed silently. Surface as McpException so the AI
+        // never sees a successful empty review.
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new PrEnrichmentResult
+            {
+                PrNumber = 42,
+                HeadSha = "abc123",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140_000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawFileChangesFromDiff = 0,
+            });
+        _metadataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(MetadataWithChangedFiles(7));
+
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(prNumber: 42, pageNumber: 1));
+
+        Assert.Contains("7 changed file", ex.Message);
+        Assert.Contains("#42", ex.Message);
+    }
+
+    [Fact]
+    public async Task Execute_DiffEmptyAndMetadataReportsZeroFiles_DoesNotThrow()
+    {
+        // Legitimate "PR with no changes" — both signals agree.
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new PrEnrichmentResult
+            {
+                PrNumber = 42,
+                HeadSha = "abc123",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140_000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawFileChangesFromDiff = 0,
+            });
+        _metadataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(MetadataWithChangedFiles(0));
+
+        var blocks = await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1);
+        Assert.NotNull(blocks);
+    }
 
     // ─── Cold-start path: no prior snapshot ───────────────────────────────────
 
@@ -159,7 +224,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -174,7 +239,7 @@ public class GetPullRequestContentToolHandlerTests
         Assert.Contains("no issues found", text);
         Assert.Contains("=== Page 2 Review ===", text);
         Assert.DoesNotContain("[review-mode: content-only]", text);
-        _copilotReviewOrchestrator.Received(1).TriggerReview("pr:42", Arg.Any<IEnrichmentResult>());
+        _reviewOrchestrator.Received(1).TriggerReview("pr:42", Arg.Any<IEnrichmentResult>());
     }
 
     [Fact]
@@ -192,7 +257,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -222,7 +287,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -257,7 +322,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -408,7 +473,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -469,7 +534,7 @@ public class GetPullRequestContentToolHandlerTests
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -504,7 +569,7 @@ public class GetPullRequestContentToolHandlerTests
 
         // WaitForReviewAsync completes after a short delay to allow the polling loop to run.
         var completionTcs = new TaskCompletionSource<Core.Models.CopilotReview.AgentReviewResult>();
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(completionTcs.Task);
 
@@ -512,7 +577,7 @@ public class GetPullRequestContentToolHandlerTests
         // Signal fires once the polling loop has called TryGetSnapshot at least once.
         var snapshotCallCount = 0;
         var snapshotCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _copilotReviewOrchestrator.TryGetSnapshot("pr:42")
+        _reviewOrchestrator.TryGetSnapshot("pr:42")
             .Returns(_ =>
             {
                 snapshotCallCount++;
@@ -582,7 +647,7 @@ public class GetPullRequestContentToolHandlerTests
             ex.Message.Contains(verdict.Remediation, StringComparison.Ordinal)
                 || ex.InnerException is CopilotUnavailableException { Verdict.Remediation: var r } && r == verdict.Remediation,
             $"Expected the McpException to carry the remediation string. Got: {ex.Message}");
-        _copilotReviewOrchestrator.DidNotReceive().TriggerReview(Arg.Any<string>(), Arg.Any<IEnrichmentResult>());
+        _reviewOrchestrator.DidNotReceive().TriggerReview(Arg.Any<string>(), Arg.Any<IEnrichmentResult>());
     }
 
     [Fact]

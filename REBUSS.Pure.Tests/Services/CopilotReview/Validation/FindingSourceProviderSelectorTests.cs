@@ -106,12 +106,15 @@ public class FindingSourceProviderSelectorTests
         await provider.GetAfterCodeAsync("c.cs", CancellationToken.None);
 
         // One Warning-level log in total across the three calls.
+        // Arg.AnyType matches across generic instantiations — `LogWarning(...)` calls
+        // `Log<TState>` with TState being the framework's internal log-values struct,
+        // so plain `Arg.Any<object>()` would silently miss the call.
         logger.Received(1).Log(
             Microsoft.Extensions.Logging.LogLevel.Warning,
             Arg.Any<Microsoft.Extensions.Logging.EventId>(),
-            Arg.Any<object>(),
+            Arg.Any<Arg.AnyType>(),
             Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
+            Arg.Any<Func<Arg.AnyType, Exception?, string>>());
     }
 
     [Fact]
@@ -137,8 +140,8 @@ public class FindingSourceProviderSelectorTests
         logger.Received(2).Log(
             Microsoft.Extensions.Logging.LogLevel.Warning,
             Arg.Any<Microsoft.Extensions.Logging.EventId>(),
-            Arg.Any<object>(),
+            Arg.Any<Arg.AnyType>(),
             Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
+            Arg.Any<Func<Arg.AnyType, Exception?, string>>());
     }
 }

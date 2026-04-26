@@ -83,9 +83,44 @@ namespace REBUSS.Pure.Services.LocalReview
             }
             catch (GitCommandException ex) when (ex.ExitCode != 0)
             {
-                // File does not exist at this ref (new file / deleted file)
-                _logger.LogDebug(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
+                // Either the file genuinely does not exist at this ref (new/deleted file —
+                // legitimate null) OR the git invocation failed for a transient reason
+                // (concurrent index lock, AV interference). Warning level surfaces both
+                // cases so silent self-review failures become diagnosable from logs.
+                _logger.LogWarning(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
                 return null;
+            }
+        }
+
+        public async Task<string> GetUnifiedDiffAsync(
+            string repositoryRoot,
+            LocalReviewScope scope,
+            CancellationToken cancellationToken = default)
+        {
+            // Optimistic path: assume HEAD exists (true for virtually all repositories).
+            // On failure verify HEAD absence before retrying with the no-HEAD fallback,
+            // mirroring the pattern in GetChangedFilesAsync.
+            var args = BuildDiffArgs(scope, hasHead: true);
+            _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+
+            try
+            {
+                return await RunGitAsync(repositoryRoot, args, cancellationToken);
+            }
+            catch (GitCommandException ex)
+            {
+                if (await HasHeadAsync(repositoryRoot, cancellationToken))
+                {
+                    _logger.LogWarning(
+                        Resources.LogLocalGitClientCommandFailed,
+                        args, ex.ExitCode, ex.StdErr);
+                    throw;
+                }
+
+                _logger.LogDebug(Resources.LogLocalGitClientNoHead, repositoryRoot);
+                args = BuildDiffArgs(scope, hasHead: false);
+                _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+                return await RunGitAsync(repositoryRoot, args, cancellationToken);
             }
         }
 
@@ -135,6 +170,40 @@ namespace REBUSS.Pure.Services.LocalReview
             string.Equals(gitRef, IndexRef, StringComparison.OrdinalIgnoreCase)
                 ? $"show :{normalizedPath}"
                 : $"show {gitRef}:{normalizedPath}";
+
+        // --- Diff args formatting ------------------------------------------------
+
+        /// <summary>
+        /// Builds the <c>git diff -p</c> argument string for a given scope.
+        /// <c>--no-ext-diff</c> bypasses any user-configured external diff driver;
+        /// <c>--no-color</c> ensures no ANSI escapes leak into the parser; <c>-U3</c>
+        /// matches git's default context size, kept explicit so the output is stable
+        /// regardless of <c>diff.context</c> in the user's gitconfig.
+        /// </summary>
+        private static string BuildDiffArgs(LocalReviewScope scope, bool hasHead)
+        {
+            const string baseArgs = "diff --no-color --no-ext-diff -U3";
+
+            if (!hasHead)
+            {
+                return scope.Kind switch
+                {
+                    LocalReviewScopeKind.Staged => $"{baseArgs} --cached",
+                    LocalReviewScopeKind.WorkingTree => baseArgs,
+                    LocalReviewScopeKind.BranchDiff =>
+                        throw new GitCommandException(128, Resources.ErrorBranchDiffRequiresCommits),
+                    _ => throw new ArgumentOutOfRangeException(nameof(scope))
+                };
+            }
+
+            return scope.Kind switch
+            {
+                LocalReviewScopeKind.Staged => $"{baseArgs} --cached HEAD",
+                LocalReviewScopeKind.WorkingTree => $"{baseArgs} HEAD",
+                LocalReviewScopeKind.BranchDiff => $"{baseArgs} {scope.BaseBranch}...HEAD",
+                _ => throw new ArgumentOutOfRangeException(nameof(scope))
+            };
+        }
 
         // --- Status parsing -------------------------------------------------------
 

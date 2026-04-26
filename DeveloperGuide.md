@@ -622,6 +622,30 @@ Run `gh auth login` and restart your IDE, or configure a PAT in `appsettings.Loc
 2. Check that `.vscode/mcp.json` or `.vs/mcp.json` exists
 3. Restart your IDE or reload the MCP client
 
+### "git status reports N modified file(s) ... but the unified diff returned no content"
+
+The contradiction guard fired: `git status` enumerated changed files for the
+requested scope, but `git diff -p` returned no patch content for them. This is
+treated as a hard error (rather than a silent "nothing to review") because it
+indicates a transient git failure, typically:
+
+- **Concurrent index access from your IDE.** VS Code's Git extension runs
+  `git status`/`git update-index` in the background; under load this can race
+  with the server's diff fetch. Retry the review.
+- **AV process-startup contention.** Real-time scanners (Defender, corporate AV)
+  can stall git child-process startup. If this is recurrent, allowlist `git.exe`
+  and the repo path.
+
+The server log records the underlying git stderr at Warning level — search for
+`LocalGitClient` entries from around the time of the failure.
+
+### "PR #N metadata reports M changed file(s) ... but the diff returned no content"
+
+The PR-side analogue: PR metadata says the PR has changed files, but the diff
+fetched from the SCM provider was empty. Usually a transient API error —
+retry. If it persists, check the server log for provider-side errors (rate
+limits, token expiry, archive download failures).
+
 ### Azure DevOps organization/project not detected
 
 If your Git remote uses a non-standard format, specify explicitly:

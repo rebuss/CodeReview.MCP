@@ -23,6 +23,14 @@ public class LocalEnrichmentOrchestratorTests
     private readonly ICodeProcessor _codeProcessor = Substitute.For<ICodeProcessor>();
     private readonly IPageAllocator _pageAllocator = Substitute.For<IPageAllocator>();
 
+    public LocalEnrichmentOrchestratorTests()
+    {
+        // Default: an empty diff envelope so tests that don't override the diff mock
+        // don't NRE inside FileTokenMeasurement (which dereferences `diff.Files`).
+        _localProvider.GetAllFileDiffsAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new PullRequestDiff()));
+    }
+
     private LocalEnrichmentOrchestrator CreateOrchestrator()
     {
         var lifetime = Substitute.For<IHostApplicationLifetime>();
@@ -60,31 +68,28 @@ public class LocalEnrichmentOrchestratorTests
                 Files = files,
             });
 
-        foreach (var file in files)
+        // Orchestrator now sources diffs via a single GetAllFileDiffsAsync call
+        // (P0: replaces the per-file fan-out that contended with IDE git extensions).
+        var aggregatedDiff = new PullRequestDiff
         {
-            _localProvider.GetFileDiffAsync(file.Path, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-                .Returns(new PullRequestDiff
+            Files = files.Select(f => new FileChange
+            {
+                Path = f.Path,
+                ChangeType = "edit",
+                Additions = 10,
+                Deletions = 2,
+                Hunks = new List<DiffHunk>
                 {
-                    Files = new List<FileChange>
+                    new()
                     {
-                        new()
-                        {
-                            Path = file.Path,
-                            ChangeType = "edit",
-                            Additions = 10,
-                            Deletions = 2,
-                            Hunks = new List<DiffHunk>
-                            {
-                                new()
-                                {
-                                    OldStart = 1, OldCount = 2, NewStart = 1, NewCount = 10,
-                                    Lines = new List<DiffLine> { new() { Op = '+', Text = "new" } }
-                                }
-                            }
-                        }
+                        OldStart = 1, OldCount = 2, NewStart = 1, NewCount = 10,
+                        Lines = new List<DiffLine> { new() { Op = '+', Text = "new" } }
                     }
-                });
-        }
+                }
+            }).ToList()
+        };
+        _localProvider.GetAllFileDiffsAsync(Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(aggregatedDiff));
 
         _tokenEstimator.EstimateFromStats(Arg.Any<int>(), Arg.Any<int>())
             .Returns(500);

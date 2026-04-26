@@ -172,7 +172,11 @@ public class InitCommand : ICliCommand
                     File.Copy(target.ConfigPath, backupPath, overwrite: true);
                     await _output.WriteLineAsync(string.Format(Resources.MsgBackedUpMcpConfiguration, backupPath));
                 }
-                catch { /* non-fatal: missing .bak is acceptable */ }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Missing .bak is acceptable — bare-catch would also swallow
+                    // OperationCanceledException and mask Ctrl+C during init.
+                }
             }
             else
             {
@@ -235,12 +239,6 @@ public class InitCommand : ICliCommand
     }
 
     /// <summary>
-    /// Feature 018 T032: builds a narrow, throwaway service provider that registers
-    /// only the types needed by <see cref="ICopilotVerificationProbe"/> — this init
-    /// flow runs outside of the MCP host DI graph. The provider is disposed as soon
-    /// as <see cref="CopilotCliSetupStep.RunAsync"/> returns.
-    /// </summary>
-    /// <summary>
     /// Runs the GitHub Copilot CLI setup step — install/auth/verification — with a
     /// narrow throwaway DI container that exposes only <see cref="ICopilotVerificationProbe"/>.
     /// Any failure is soft-exited.
@@ -286,11 +284,14 @@ public class InitCommand : ICliCommand
     {
         try
         {
-            // Convert the 2-arg _processRunner (takes full command string) into a 3-arg
-            // signature (exe, args) the Claude step prefers for cross-tool install calls.
+            // Convert the 2-arg _processRunner (takes the full command string) into the
+            // 3-arg (exe, args, ct) signature the Claude step uses for cross-tool install
+            // calls. exe and args MUST be concatenated — discarding exe would feed the
+            // injected runner ambiguous fragments ("--version") shared by `claude`,
+            // `winget`, `npm`, etc., breaking probe-result disambiguation.
             Func<string, string, CancellationToken, Task<(int ExitCode, string StdOut, string StdErr)>>? runner = null;
             if (_processRunner is not null)
-                runner = (_, args, ct) => _processRunner(args, ct);
+                runner = (exe, args, ct) => _processRunner($"{exe} {args}", ct);
 
             var probe = new Services.ClaudeCode.ClaudeVerificationRunner(
                 logger: null,
@@ -308,6 +309,12 @@ public class InitCommand : ICliCommand
         }
     }
 
+    /// <summary>
+    /// Feature 018 T032: builds a narrow, throwaway service provider that registers
+    /// only the types needed by <see cref="ICopilotVerificationProbe"/> — this init
+    /// flow runs outside of the MCP host DI graph. The provider is disposed as soon
+    /// as <see cref="CopilotCliSetupStep.RunAsync"/> returns.
+    /// </summary>
     private static ServiceProvider BuildCopilotProbeServices()
     {
         var configuration = new ConfigurationBuilder()
@@ -600,9 +607,12 @@ public class InitCommand : ICliCommand
             ? string.Empty
             : $", \"--pat\", {System.Text.Json.JsonSerializer.Serialize(pat)}";
 
+        // JsonSerializer.Serialize emits the surrounding quotes and escapes the value.
+        // Today NormalizeAgent constrains agent to "copilot" / "claude", but the
+        // signature accepts any string?, so we escape the same way as patArgs.
         var agentArgs = string.IsNullOrWhiteSpace(agent)
             ? string.Empty
-            : $", \"--agent\", \"{agent}\"";
+            : $", \"--agent\", {System.Text.Json.JsonSerializer.Serialize(agent)}";
 
         var serversKey = useMcpServersKey ? "mcpServers" : "servers";
 
