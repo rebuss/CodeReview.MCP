@@ -486,19 +486,53 @@ and obvious false positives are removed from the surfaced output.
 
 ---
 
-## Prompts
+## User-facing AI workflows: prompts and skills
 
-After running `rebuss-pure init`, you get:
+`rebuss-pure init` deploys two parallel sets of workflow files — both are written
+regardless of the selected `--agent`, so swapping agents later does not require
+re-running `init`:
 
 ```
-.github/prompts/
+.github/prompts/                  # Copilot / IDE Copilot Chat
 ├── review-pr.prompt.md
 └── self-review.prompt.md
+
+.claude/skills/                   # Claude Code skills
+├── review-pr/
+│   └── SKILL.md
+└── self-review/
+    └── SKILL.md
 ```
+
+**Prompts** are the GitHub Copilot / IDE convention: VS Code Copilot Chat picks
+them up automatically from `.github/prompts/`.
+
+**Skills** are the Claude Code convention. Each skill has YAML frontmatter
+(`name`, `description`, optional `argument-hint`) and is invokable two ways:
+- explicit slash command — `/review-pr <PR-number>` or `/self-review [scope]`
+- automatic — Claude Code matches the user's request against the skill's
+  `description` and invokes the relevant skill on its own (e.g., when the user
+  asks "review my staged changes").
+
+The skill body and the prompt body are kept synchronized — `init` ships the
+identical workflow text in both formats. A unit test guard (`InitCommandTests
+.ExecuteAsync_SkillBodyMatchesPromptBody_AfterStrippingFrontmatter`) prevents
+silent drift between them.
+
+> **Migration note (Feature 024):** earlier versions of `init` deployed a
+> `.claude/commands/<name>.md` slash-command form. Skills replace that
+> mechanism. If `init` finds a pre-024 `.claude/commands/review-pr.md` or
+> `self-review.md`, it moves the file aside as `.bak` so the new skill can take
+> over. Unrelated custom commands in `.claude/commands/` are left untouched.
 
 > **Note for contributors:**
 
-These prompts instruct the AI agent on the review workflows. If you need to add custom rules for your repository, create your own files under `.github/instructions/` (e.g. `team-rules.instructions.md`); `init` will leave them alone.
+These workflow files instruct the AI agent on the review pipelines. If you need
+to add custom rules for your repository, create your own files under
+`.github/instructions/` (e.g. `team-rules.instructions.md`); `init` will leave
+them alone. To customize a deployed skill in-place, edit `.claude/skills/<name>/
+SKILL.md` — the next `init` run will back your edits up to `.bak` before
+overwriting with the current embedded source.
 
 ---
 

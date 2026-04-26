@@ -236,6 +236,15 @@
   <data name="MsgDeletedLegacyPromptFile" xml:space="preserve">
     <value>Deleted legacy prompt file: {0}</value>
   </data>
+  <data name="LogInitDeployingClaudeSkill" xml:space="preserve">
+    <value>Deployed Claude skill: .claude/skills/{0}/SKILL.md</value>
+  </data>
+  <data name="LogInitSkillUnchanged" xml:space="preserve">
+    <value>Claude skill unchanged: .claude/skills/{0}/SKILL.md</value>
+  </data>
+  <data name="LogInitBackedUpLegacyCommand" xml:space="preserve">
+    <value>Backed up legacy slash command: {0} -&gt; {0}.bak</value>
+  </data>
   <data name="MsgCopiedPrompts" xml:space="preserve">
     <value>Copied {0} prompt file(s) to {1}</value>
   </data>

@@ -1,3 +1,9 @@
+---
+name: review-pr
+description: Generate an AI-assisted code review for a GitHub or Azure DevOps pull request via the REBUSS.Pure MCP server. Triggers on user requests to review, analyze, audit, or critique a PR by number.
+argument-hint: <PR-number>
+---
+
 # Pull Request Code Review (AI-Assisted)
 
 You are invoked with a message that begins with a pull request number (digits before the first space).

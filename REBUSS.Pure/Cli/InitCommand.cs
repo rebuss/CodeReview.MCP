@@ -42,6 +42,7 @@ public class InitCommand : ICliCommand
     private const string ClaudeCodeMcpConfigFileName = ".mcp.json";
     private const string ClaudeCodeGlobalConfigFileName = ".claude.json";
     private const string ResourcePrefix = AppConstants.ServerName + ".Cli.Prompts.";
+    private const string SkillsResourcePrefix = AppConstants.ServerName + ".Cli.Skills.";
 
     private static readonly string[] PromptFileNames =
     {
@@ -53,6 +54,19 @@ public class InitCommand : ICliCommand
     {
         "review-pr.md",
         "self-review.md"
+    };
+
+    /// <summary>
+    /// Feature 024 — Claude Code skills shipped alongside Copilot prompts. The names
+    /// here are <c>&lt;skill-name&gt;</c>; the embedded resource is
+    /// <c>SkillsResourcePrefix + name + ".SKILL.md"</c> (matching the LogicalName in
+    /// REBUSS.Pure.csproj), and the deploy target is
+    /// <c>.claude/skills/&lt;name&gt;/SKILL.md</c>.
+    /// </summary>
+    private static readonly string[] SkillNames =
+    {
+        "review-pr",
+        "self-review"
     };
 
     private readonly TextWriter _output;
@@ -183,7 +197,9 @@ public class InitCommand : ICliCommand
                 target.IdeName, target.ConfigPath));
         }
 
-        await CopyPromptFilesAsync(gitRoot, effectiveAgent, cancellationToken);
+        await CopyPromptFilesAsync(gitRoot, cancellationToken);
+        await DeployClaudeSkillsAsync(gitRoot, cancellationToken);
+        await BackupLegacyClaudeCommandsAsync(gitRoot, cancellationToken);
 
         // Clear provider caches so the next server start detects fresh config from the new repo
         _localConfigStore?.Clear();
@@ -716,24 +732,20 @@ public class InitCommand : ICliCommand
         return null;
     }
 
-    private async Task CopyPromptFilesAsync(string gitRoot, string effectiveAgent, CancellationToken cancellationToken)
+    /// <summary>
+    /// Deploys user-facing Copilot/IDE prompts to <c>.github/prompts/&lt;name&gt;.prompt.md</c>.
+    /// Always runs regardless of <c>--agent</c> (Feature 024 D4): Claude users still
+    /// benefit from `.github/prompts/` if their IDE picks them up via Copilot Chat.
+    /// </summary>
+    private async Task CopyPromptFilesAsync(string gitRoot, CancellationToken cancellationToken)
     {
         var promptsTargetDir = Path.Combine(gitRoot, ".github", "prompts");
         Directory.CreateDirectory(promptsTargetDir);
 
         await DeleteLegacyPromptFilesAsync(promptsTargetDir);
 
-        // When the user selected Claude Code, also write a copy of each prompt to
-        // .claude/commands/<name>.md — stripping ".prompt" so that review-pr.prompt.md
-        // becomes the /review-pr slash command inside the Claude CLI.
-        var writeClaudeCommands = string.Equals(effectiveAgent, CliArgumentParser.AgentClaude, StringComparison.OrdinalIgnoreCase);
-        var claudeCommandsDir = Path.Combine(gitRoot, ClaudeCodeDir, "commands");
-        if (writeClaudeCommands)
-            Directory.CreateDirectory(claudeCommandsDir);
-
         var assembly = Assembly.GetExecutingAssembly();
         var promptsWritten = 0;
-        var claudeCommandsWritten = 0;
 
         foreach (var promptFileName in PromptFileNames)
         {
@@ -749,27 +761,89 @@ public class InitCommand : ICliCommand
             using var reader = new StreamReader(stream);
             var content = await reader.ReadToEndAsync(cancellationToken);
 
-            // Always write to .github/prompts/ (overwrite enables prompt updates)
+            // Overwrite enables prompt updates on subsequent init runs.
             var promptPath = Path.Combine(promptsTargetDir, promptFileName);
             await File.WriteAllTextAsync(promptPath, content, cancellationToken);
             promptsWritten++;
-
-            if (writeClaudeCommands)
-            {
-                var commandFileName = promptFileName.EndsWith(".prompt.md", StringComparison.OrdinalIgnoreCase)
-                    ? promptFileName[..^".prompt.md".Length] + ".md"
-                    : promptFileName;
-                var commandPath = Path.Combine(claudeCommandsDir, commandFileName);
-                await File.WriteAllTextAsync(commandPath, content, cancellationToken);
-                claudeCommandsWritten++;
-            }
         }
 
         if (promptsWritten > 0)
             await _output.WriteLineAsync(string.Format(Resources.MsgCopiedPrompts, promptsWritten, promptsTargetDir));
+    }
 
-        if (claudeCommandsWritten > 0)
-            await _output.WriteLineAsync(string.Format(Resources.MsgCopiedPrompts, claudeCommandsWritten, claudeCommandsDir));
+    /// <summary>
+    /// Feature 024 — deploys Claude Code skills to <c>.claude/skills/&lt;name&gt;/SKILL.md</c>.
+    /// Runs regardless of <c>--agent</c> so the project ships skills even for Copilot
+    /// users (harmless when Claude Code is not the configured agent). Drift policy:
+    /// when an existing on-disk skill differs from the embedded source, back the user
+    /// version up to <c>SKILL.md.bak</c> before overwriting — same convention used for
+    /// MCP config files. Idempotent on identical content.
+    /// </summary>
+    private async Task DeployClaudeSkillsAsync(string gitRoot, CancellationToken cancellationToken)
+    {
+        var skillsRoot = Path.Combine(gitRoot, ClaudeCodeDir, "skills");
+        var assembly = Assembly.GetExecutingAssembly();
+
+        foreach (var skillName in SkillNames)
+        {
+            var resourceName = SkillsResourcePrefix + skillName + ".SKILL.md";
+            var resourceStream = assembly.GetManifestResourceStream(resourceName);
+            if (resourceStream is null)
+            {
+                await _output.WriteLineAsync(string.Format(Resources.WarnEmbeddedPromptResourceNotFound, resourceName));
+                continue;
+            }
+
+            string embeddedContent;
+            await using (resourceStream.ConfigureAwait(false))
+            {
+                using var reader = new StreamReader(resourceStream);
+                embeddedContent = await reader.ReadToEndAsync(cancellationToken);
+            }
+
+            var skillDir = Path.Combine(skillsRoot, skillName);
+            Directory.CreateDirectory(skillDir);
+            var skillPath = Path.Combine(skillDir, "SKILL.md");
+
+            if (File.Exists(skillPath))
+            {
+                var existing = await File.ReadAllTextAsync(skillPath, cancellationToken);
+                if (string.Equals(existing, embeddedContent, StringComparison.Ordinal))
+                {
+                    await _output.WriteLineAsync(string.Format(Resources.LogInitSkillUnchanged, skillName));
+                    continue;
+                }
+                File.Copy(skillPath, skillPath + ".bak", overwrite: true);
+            }
+
+            await File.WriteAllTextAsync(skillPath, embeddedContent, cancellationToken);
+            await _output.WriteLineAsync(string.Format(Resources.LogInitDeployingClaudeSkill, skillName));
+        }
+    }
+
+    /// <summary>
+    /// Feature 024 — moves any pre-024 <c>.claude/commands/&lt;skill-name&gt;.md</c>
+    /// to <c>&lt;skill-name&gt;.md.bak</c>. Skills replace slash commands (skill wins
+    /// when both exist, but the orphan command file is misleading dead weight). Backup
+    /// rather than delete: matches the safety convention used for config files.
+    /// </summary>
+    private async Task BackupLegacyClaudeCommandsAsync(string gitRoot, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken; // file moves are synchronous; method kept async for interface symmetry
+        var commandsDir = Path.Combine(gitRoot, ClaudeCodeDir, "commands");
+        if (!Directory.Exists(commandsDir))
+            return;
+
+        foreach (var skillName in SkillNames)
+        {
+            var commandPath = Path.Combine(commandsDir, skillName + ".md");
+            if (!File.Exists(commandPath))
+                continue;
+
+            var backupPath = commandPath + ".bak";
+            File.Move(commandPath, backupPath, overwrite: true);
+            await _output.WriteLineAsync(string.Format(Resources.LogInitBackedUpLegacyCommand, commandPath));
+        }
     }
 
     private async Task DeleteLegacyPromptFilesAsync(string promptsTargetDir)

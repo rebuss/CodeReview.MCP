@@ -592,6 +592,33 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to Deployed Claude skill: .claude/skills/{0}/SKILL.md.
+        /// </summary>
+        internal static string LogInitDeployingClaudeSkill {
+            get {
+                return ResourceManager.GetString("LogInitDeployingClaudeSkill", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Claude skill unchanged: .claude/skills/{0}/SKILL.md.
+        /// </summary>
+        internal static string LogInitSkillUnchanged {
+            get {
+                return ResourceManager.GetString("LogInitSkillUnchanged", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Backed up legacy slash command: {0} -&gt; {0}.bak.
+        /// </summary>
+        internal static string LogInitBackedUpLegacyCommand {
+            get {
+                return ResourceManager.GetString("LogInitBackedUpLegacyCommand", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Copied {0} prompt file(s) to {1}.
         /// </summary>
         internal static string MsgCopiedPrompts {

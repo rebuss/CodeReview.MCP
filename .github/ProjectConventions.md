@@ -106,10 +106,31 @@ args → CliArgumentParser.Parse → Program.RunCliCommandAsync → InitCommand.
 2. **DI** → register as `services.AddSingleton<IReviewAnalyzer, {Name}Analyzer>()` (in `Program.ConfigureBusinessServices` or provider's `ServiceCollectionExtensions`)
 3. `ReviewContextOrchestrator` discovers and invokes it automatically via `IEnumerable<IReviewAnalyzer>`
 
-### 5.5 Add or modify a prompt
-1. **Source** → edit/create embedded resource in `REBUSS.Pure/Cli/Prompts/{name}.md`
-2. **Deploy** → if new file, update `InitCommand.cs` to include it in the copy list
-3. Rebuild — `rebuss-pure init` **always overwrites** deployed copies in `.github/prompts/` (it does **not** touch `.github/instructions/`)
+### 5.5 Add or modify a user-facing AI workflow
+
+Two parallel deployment formats — both shipped on every `init`, regardless of `--agent`:
+
+**A — Copilot/IDE prompt (`.github/prompts/`)**
+1. **Source** → edit/create embedded resource in `REBUSS.Pure/Cli/Prompts/{name}.prompt.md`
+2. **Embedded entry** → if new file, add `<EmbeddedResource Include="Cli\Prompts\{name}.prompt.md" />` to `REBUSS.Pure.csproj`
+3. **Deploy list** → if new file, add `{name}.prompt.md` to `PromptFileNames` in `InitCommand.cs`
+4. Rebuild — `init` overwrites `.github/prompts/{name}.prompt.md` (does **not** touch `.github/instructions/`)
+
+**B — Claude Code skill (`.claude/skills/`)**
+1. **Source** → create `REBUSS.Pure/Cli/Skills/{name}/SKILL.md` with frontmatter:
+   ```yaml
+   ---
+   name: {name}
+   description: <model-judgment trigger phrasing — what the user must say for auto-invocation>
+   argument-hint: <optional positional argument hint>
+   ---
+   ```
+   Body **must mirror** the corresponding `Cli/Prompts/{name}.prompt.md` body verbatim — the `InitCommandTests.ExecuteAsync_SkillBodyMatchesPromptBody_AfterStrippingFrontmatter` desync guard enforces this.
+2. **Embedded entry** → add `<EmbeddedResource Include="Cli\Skills\{name}\SKILL.md" LogicalName="REBUSS.Pure.Cli.Skills.{name}.SKILL.md" />` to `REBUSS.Pure.csproj` — `LogicalName` is required because hyphens in directory names confuse the default resource path resolver.
+3. **Deploy list** → add `"{name}"` to `SkillNames` in `InitCommand.cs`
+4. Rebuild — `init` writes `.claude/skills/{name}/SKILL.md`. User-modified copies are saved to `.bak` before re-deploy; identical content is a no-op.
+
+**Note:** prompts and skills must contain identical body content; only the skill carries frontmatter. Drift is caught by the desync test.
 
 ### 5.6 Add a new CLI command
 1. **Command** → `REBUSS.Pure/Cli/{Name}Command.cs` implementing `ICliCommand`

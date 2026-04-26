@@ -2366,11 +2366,67 @@ public class InitCommandTests
     // Slash command prompts for Claude Code (Step 4)
     // -------------------------------------------------------------------------
 
-    [Fact]
-    public async Task ExecuteAsync_AgentClaude_CopiesPromptsToClaudeCommandsDir()
+    // ─── Feature 024 — skills replace .claude/commands/ ──────────────────────────
+
+    [Theory]
+    [InlineData("claude")]
+    [InlineData("copilot")]
+    public async Task ExecuteAsync_DeploysBothPromptsAndSkills_RegardlessOfAgent(string agent)
     {
+        // Feature 024 D4: oba zestawy zawsze, niezależnie od agenta.
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", agent: agent);
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+
+            // .github/prompts/ — Copilot/IDE-facing copies always written.
+            Assert.True(File.Exists(Path.Combine(tempDir, ".github", "prompts", "review-pr.prompt.md")));
+            Assert.True(File.Exists(Path.Combine(tempDir, ".github", "prompts", "self-review.prompt.md")));
+
+            // .claude/skills/<name>/SKILL.md — Claude Code skill files always written.
+            var reviewSkillPath = Path.Combine(tempDir, ".claude", "skills", "review-pr", "SKILL.md");
+            var selfSkillPath = Path.Combine(tempDir, ".claude", "skills", "self-review", "SKILL.md");
+            Assert.True(File.Exists(reviewSkillPath), $"Expected skill at {reviewSkillPath}");
+            Assert.True(File.Exists(selfSkillPath), $"Expected skill at {selfSkillPath}");
+
+            // Skills carry frontmatter.
+            var reviewSkill = await File.ReadAllTextAsync(reviewSkillPath);
+            Assert.StartsWith("---", reviewSkill);
+            Assert.Contains("name: review-pr", reviewSkill);
+            Assert.Contains("description:", reviewSkill);
+
+            var selfSkill = await File.ReadAllTextAsync(selfSkillPath);
+            Assert.StartsWith("---", selfSkill);
+            Assert.Contains("name: self-review", selfSkill);
+
+            // .claude/commands/ — never created post-024 (skills replace them).
+            Assert.False(Directory.Exists(Path.Combine(tempDir, ".claude", "commands")));
+        }
+        finally { Directory.Delete(tempDir, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BacksUpLegacyClaudeCommands_WhenPresent()
+    {
+        // Feature 024 D3: pre-existing .claude/commands/<name>.md → backed up to .bak.
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        var commandsDir = Path.Combine(tempDir, ".claude", "commands");
+        Directory.CreateDirectory(commandsDir);
+
+        var legacyReviewPr = Path.Combine(commandsDir, "review-pr.md");
+        var legacySelfReview = Path.Combine(commandsDir, "self-review.md");
+        var legacyReviewPrContent = "# legacy slash command for review-pr";
+        var legacySelfReviewContent = "# legacy slash command for self-review";
+        await File.WriteAllTextAsync(legacyReviewPr, legacyReviewPrContent);
+        await File.WriteAllTextAsync(legacySelfReview, legacySelfReviewContent);
+
         try
         {
             var output = new StringWriter();
@@ -2379,29 +2435,147 @@ public class InitCommandTests
             var exitCode = await command.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
-            // .prompt.md → .md so the command is /review-pr (not /review-pr.prompt).
-            Assert.True(File.Exists(Path.Combine(tempDir, ".claude", "commands", "review-pr.md")));
-            Assert.True(File.Exists(Path.Combine(tempDir, ".claude", "commands", "self-review.md")));
-            // Originals in .github/prompts/ are still written (shared across agents).
-            Assert.True(File.Exists(Path.Combine(tempDir, ".github", "prompts", "review-pr.prompt.md")));
+
+            // Originals moved to .bak; bodies preserved.
+            Assert.False(File.Exists(legacyReviewPr));
+            Assert.False(File.Exists(legacySelfReview));
+            Assert.True(File.Exists(legacyReviewPr + ".bak"));
+            Assert.True(File.Exists(legacySelfReview + ".bak"));
+            Assert.Equal(legacyReviewPrContent, await File.ReadAllTextAsync(legacyReviewPr + ".bak"));
+            Assert.Equal(legacySelfReviewContent, await File.ReadAllTextAsync(legacySelfReview + ".bak"));
+
+            // Skills still deployed.
+            Assert.True(File.Exists(Path.Combine(tempDir, ".claude", "skills", "review-pr", "SKILL.md")));
         }
         finally { Directory.Delete(tempDir, recursive: true); }
     }
 
     [Fact]
-    public async Task ExecuteAsync_AgentCopilot_DoesNotCreateClaudeCommandsDir()
+    public async Task ExecuteAsync_LeavesUnrelatedClaudeCommandsAlone()
     {
+        // Defensive: a custom slash command unrelated to our skills must NOT be touched.
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        var commandsDir = Path.Combine(tempDir, ".claude", "commands");
+        Directory.CreateDirectory(commandsDir);
+
+        var unrelatedPath = Path.Combine(commandsDir, "my-custom-cmd.md");
+        await File.WriteAllTextAsync(unrelatedPath, "# user's own command");
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", agent: "claude");
+
+            var exitCode = await command.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(unrelatedPath));
+            Assert.Equal("# user's own command", await File.ReadAllTextAsync(unrelatedPath));
+            Assert.False(File.Exists(unrelatedPath + ".bak"));
+        }
+        finally { Directory.Delete(tempDir, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SkillBodyMatchesPromptBody_AfterStrippingFrontmatter()
+    {
+        // Feature 024 D4 hedge: oba źródła (prompt + skill) muszą być treścią identyczne
+        // poza frontmatterem skilla. Strażnik desynchronizacji.
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
         try
         {
             var output = new StringWriter();
-            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", agent: "copilot");
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", agent: "claude");
+            var exitCode = await command.ExecuteAsync();
+            Assert.Equal(0, exitCode);
 
+            foreach (var name in new[] { "review-pr", "self-review" })
+            {
+                var prompt = await File.ReadAllTextAsync(
+                    Path.Combine(tempDir, ".github", "prompts", name + ".prompt.md"));
+                var skill = await File.ReadAllTextAsync(
+                    Path.Combine(tempDir, ".claude", "skills", name, "SKILL.md"));
+
+                var skillBody = StripFrontmatter(skill);
+                Assert.Equal(Normalize(prompt), Normalize(skillBody));
+            }
+        }
+        finally { Directory.Delete(tempDir, recursive: true); }
+
+        static string StripFrontmatter(string skill)
+        {
+            // Skill files start with "---\n...frontmatter...\n---\n<body>".
+            if (!skill.StartsWith("---", StringComparison.Ordinal))
+                return skill;
+            var endMarker = skill.IndexOf("\n---", 3, StringComparison.Ordinal);
+            if (endMarker < 0)
+                return skill;
+            var bodyStart = skill.IndexOf('\n', endMarker + 3);
+            return bodyStart < 0 ? string.Empty : skill[(bodyStart + 1)..];
+        }
+
+        // Both ends trimmed: frontmatter close in skill is followed by a blank-line
+        // markdown convention, while the prompt starts directly with its heading.
+        // The guard is meant to detect content drift, not whitespace boundaries.
+        static string Normalize(string s) => s.Replace("\r\n", "\n").Trim();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IsIdempotent_DoesNotBackupWhenContentMatches()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        try
+        {
+            var output1 = new StringWriter();
+            var cmd1 = CreateCommand(output1, tempDir, "rebuss-pure.exe", agent: "claude");
+            await cmd1.ExecuteAsync();
+
+            // Second run: skill files already match embedded source → no .bak should appear.
+            var output2 = new StringWriter();
+            var cmd2 = CreateCommand(output2, tempDir, "rebuss-pure.exe", agent: "claude");
+            var exitCode = await cmd2.ExecuteAsync();
+
+            Assert.Equal(0, exitCode);
+            Assert.False(File.Exists(Path.Combine(tempDir, ".claude", "skills", "review-pr", "SKILL.md.bak")));
+            Assert.False(File.Exists(Path.Combine(tempDir, ".claude", "skills", "self-review", "SKILL.md.bak")));
+            // Output should report "unchanged" rather than "deployed".
+            Assert.Contains("unchanged", output2.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Directory.Delete(tempDir, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BacksUpUserDriftedSkill_BeforeOverwriting()
+    {
+        // User edited their .claude/skills/review-pr/SKILL.md by hand → init must save
+        // the user version as .bak before redeploying the embedded source.
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+        var skillDir = Path.Combine(tempDir, ".claude", "skills", "review-pr");
+        Directory.CreateDirectory(skillDir);
+        var skillPath = Path.Combine(skillDir, "SKILL.md");
+        var userVersion = "---\nname: review-pr\ndescription: my customized version\n---\n# user-tweaked body";
+        await File.WriteAllTextAsync(skillPath, userVersion);
+
+        try
+        {
+            var output = new StringWriter();
+            var command = CreateCommand(output, tempDir, "rebuss-pure.exe", agent: "claude");
             var exitCode = await command.ExecuteAsync();
 
             Assert.Equal(0, exitCode);
-            Assert.False(Directory.Exists(Path.Combine(tempDir, ".claude", "commands")));
+
+            // User version preserved as .bak.
+            Assert.True(File.Exists(skillPath + ".bak"));
+            Assert.Equal(userVersion, await File.ReadAllTextAsync(skillPath + ".bak"));
+
+            // SKILL.md replaced with embedded source.
+            var current = await File.ReadAllTextAsync(skillPath);
+            Assert.NotEqual(userVersion, current);
+            Assert.Contains("Pull Request Code Review", current);
         }
         finally { Directory.Delete(tempDir, recursive: true); }
     }
