@@ -8,14 +8,14 @@ using REBUSS.Pure.Services.CopilotReview.Inspection;
 namespace REBUSS.Pure.Tests.Services.CopilotReview.Inspection;
 
 /// <summary>
-/// Tests for <see cref="FileSystemCopilotInspectionWriter"/>. Feature 022.
+/// Tests for <see cref="FileSystemAgentInspectionWriter"/>. Feature 022.
 /// All tests use a temp base directory — never the real %LOCALAPPDATA%.
 /// </summary>
-public class FileSystemCopilotInspectionWriterTests : IDisposable
+public class FileSystemAgentInspectionWriterTests : IDisposable
 {
     private readonly string _tempDir;
 
-    public FileSystemCopilotInspectionWriterTests()
+    public FileSystemAgentInspectionWriterTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"copilot-inspection-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
@@ -26,8 +26,8 @@ public class FileSystemCopilotInspectionWriterTests : IDisposable
         try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
-    private FileSystemCopilotInspectionWriter CreateWriter() =>
-        new(_tempDir, NullLogger<FileSystemCopilotInspectionWriter>.Instance);
+    private FileSystemAgentInspectionWriter CreateWriter() =>
+        new(_tempDir, NullLogger<FileSystemAgentInspectionWriter>.Instance);
 
     [Fact]
     public async Task WritePromptAsync_FirstCall_CreatesPerPrSubdirectoryAndFile()
@@ -163,8 +163,8 @@ public class FileSystemCopilotInspectionWriterTests : IDisposable
     {
         // Delete the base directory, then attempt a write into a path that can't be created
         // (simulate by creating a file at the same location as the expected subdirectory).
-        var logger = Substitute.For<ILogger<FileSystemCopilotInspectionWriter>>();
-        var writer = new FileSystemCopilotInspectionWriter(_tempDir, logger);
+        var logger = Substitute.For<ILogger<FileSystemAgentInspectionWriter>>();
+        var writer = new FileSystemAgentInspectionWriter(_tempDir, logger);
 
         // Create a *file* at the spot where the PR subdirectory would land → CreateDirectory fails.
         var conflictPath = Path.Combine(_tempDir, "pr-42");
@@ -207,7 +207,7 @@ public class FileSystemCopilotInspectionWriterTests : IDisposable
     [InlineData("foo..bar", "foo..bar")] // dots inside are kept; only trimmed from ends
     public void Sanitize_NormalizesExpectedCases(string input, string expected)
     {
-        var actual = FileSystemCopilotInspectionWriter.Sanitize(input);
+        var actual = FileSystemAgentInspectionWriter.Sanitize(input);
         Assert.Equal(expected, actual);
     }
 
@@ -215,7 +215,7 @@ public class FileSystemCopilotInspectionWriterTests : IDisposable
     public void Sanitize_LongInput_CappedAt100Chars()
     {
         var longInput = new string('a', 200);
-        var result = FileSystemCopilotInspectionWriter.Sanitize(longInput);
+        var result = FileSystemAgentInspectionWriter.Sanitize(longInput);
         Assert.Equal(100, result.Length);
     }
 

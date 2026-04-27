@@ -13,29 +13,44 @@ namespace REBUSS.Pure.Services.LocalReview
     ///   <item>Resolving the git repository root via <see cref="IWorkspaceRootProvider"/>.</item>
     ///   <item>Enumerating changed files via <see cref="ILocalGitClient"/>.</item>
     ///   <item>Classifying each file via <see cref="IFileClassifier"/>.</item>
-    ///   <item>Building structured diffs via <see cref="IStructuredDiffBuilder"/>.</item>
+    ///   <item>Parsing the unified-diff (<c>git diff -p</c>) output via <see cref="UnifiedPatchParser"/>.</item>
     /// </list>
     /// Reuses domain models (<see cref="FileChange"/>, <see cref="DiffHunk"/>) so tool handlers
     /// can apply the same output mapping as PR-based tools.
     /// </summary>
+    /// <remarks>
+    /// The diff is sourced from a single <c>git diff -p</c> invocation per scope. The earlier
+    /// path that read base/target content via two parallel <c>git show</c> calls per file and
+    /// re-diffed in C# was prone to silent failures under IDE-side git contention (see Feature
+    /// 023 deferral notes). Using git's own diff output is authoritative and matches what the
+    /// user sees in the CLI.
+    /// </remarks>
     public class LocalReviewProvider : ILocalReviewProvider
     {
         private readonly IWorkspaceRootProvider _workspaceRootProvider;
         private readonly ILocalGitClient _gitClient;
-        private readonly IStructuredDiffBuilder _diffBuilder;
         private readonly IFileClassifier _fileClassifier;
         private readonly ILogger<LocalReviewProvider> _logger;
+
+        // Short-lived snapshot of the last full unified-diff result, keyed by repo root + scope.
+        // Lets GetFileDiffAsync serve repeated single-file lookups in O(1) after a single
+        // GetAllFileDiffsAsync (typical orchestrator → per-file flow) without re-running git.
+        // The TTL bounds staleness because this provider is registered as a singleton and the
+        // working tree can change between calls; expired snapshots fall back to a fresh git diff.
+        private static readonly long CacheTtlMs = 5_000;
+        // volatile: ensures cross-thread visibility of cache swaps in this singleton — without it
+        // a reader on another CPU could observe a stale snapshot (or null) after a writer has
+        // already published a newer one, causing redundant git diff calls.
+        private volatile DiffCacheSnapshot? _diffCache;
 
         public LocalReviewProvider(
             IWorkspaceRootProvider workspaceRootProvider,
             ILocalGitClient gitClient,
-            IStructuredDiffBuilder diffBuilder,
             IFileClassifier fileClassifier,
             ILogger<LocalReviewProvider> logger)
         {
             _workspaceRootProvider = workspaceRootProvider;
             _gitClient = gitClient;
-            _diffBuilder = diffBuilder;
             _fileClassifier = fileClassifier;
             _logger = logger;
         }
@@ -80,6 +95,14 @@ namespace REBUSS.Pure.Services.LocalReview
             };
         }
 
+        public Task<PullRequestDiff> GetAllFileDiffsAsync(
+            LocalReviewScope scope,
+            CancellationToken cancellationToken = default)
+        {
+            var repoRoot = ResolveRepositoryRootOrThrow();
+            return LoadAllFileDiffsAsync(repoRoot, scope, cancellationToken);
+        }
+
         public async Task<PullRequestDiff> GetFileDiffAsync(
             string filePath,
             LocalReviewScope scope,
@@ -87,16 +110,12 @@ namespace REBUSS.Pure.Services.LocalReview
         {
             var repoRoot = ResolveRepositoryRootOrThrow();
 
-            _logger.LogInformation(
-                Resources.LogLocalReviewProviderFetchingFileDiff,
-                filePath, scope, repoRoot);
-            var sw = Stopwatch.StartNew();
-
-            var statuses = await _gitClient.GetChangedFilesAsync(repoRoot, scope, cancellationToken);
+            var allDiffs = TryReadCache(repoRoot, scope)
+                           ?? await LoadAllFileDiffsAsync(repoRoot, scope, cancellationToken);
 
             var normalizedRequest = NormalizePath(filePath);
-            var match = statuses.FirstOrDefault(
-                s => NormalizePath(s.Path).Equals(normalizedRequest, StringComparison.OrdinalIgnoreCase));
+            var match = allDiffs.Files.FirstOrDefault(
+                f => NormalizePath(f.Path).Equals(normalizedRequest, StringComparison.OrdinalIgnoreCase));
 
             if (match is null)
             {
@@ -105,24 +124,70 @@ namespace REBUSS.Pure.Services.LocalReview
                     string.Format(Resources.ErrorFileNotFoundAmongLocalChanges, filePath, scope));
             }
 
-            var fileChange = await BuildFileChangeAsync(repoRoot, match, scope, cancellationToken);
+            return BuildDiffEnvelope(scope, new List<FileChange> { match });
+        }
+
+        private async Task<PullRequestDiff> LoadAllFileDiffsAsync(
+            string repoRoot,
+            LocalReviewScope scope,
+            CancellationToken cancellationToken)
+        {
+            _logger.LogInformation(Resources.LogLocalReviewProviderFetchingUnifiedDiff, scope, repoRoot);
+            var sw = Stopwatch.StartNew();
+
+            var rawDiff = await _gitClient.GetUnifiedDiffAsync(repoRoot, scope, cancellationToken);
+            var fileChanges = UnifiedPatchParser.ParseMultiFile(rawDiff);
+
+            foreach (var fc in fileChanges)
+                ApplyClassifierSkipReason(fc);
 
             sw.Stop();
-            _logger.LogInformation(
-                Resources.LogLocalReviewProviderFileDiffCompleted,
-                filePath, scope, fileChange.Hunks.Count, sw.ElapsedMilliseconds);
 
-            return new PullRequestDiff
-            {
-                Title = $"Local changes ({scope})",
-                Status = "local",
-                SourceBranch = string.Empty,
-                TargetBranch = string.Empty,
-                SourceRefName = string.Empty,
-                TargetRefName = string.Empty,
-                Files = new List<FileChange> { fileChange }
-            };
+            _logger.LogInformation(
+                Resources.LogLocalReviewProviderUnifiedDiffCompleted,
+                scope, fileChanges.Count, sw.ElapsedMilliseconds);
+
+            var diff = BuildDiffEnvelope(scope, fileChanges);
+            StoreCache(repoRoot, scope, diff);
+            return diff;
         }
+
+        private PullRequestDiff? TryReadCache(string repoRoot, LocalReviewScope scope)
+        {
+            // Snapshot the volatile field once: the volatile read gives us acquire semantics so
+            // we observe the latest published snapshot, and a concurrent writer can only swap in
+            // a newer entry — never corrupt our local view.
+            var snapshot = _diffCache;
+            if (snapshot is null)
+                return null;
+            if (!string.Equals(snapshot.RepositoryRoot, repoRoot, StringComparison.Ordinal))
+                return null;
+            if (snapshot.ScopeKind != scope.Kind)
+                return null;
+            if (!string.Equals(snapshot.ScopeBaseBranch, scope.BaseBranch, StringComparison.Ordinal))
+                return null;
+            if (Environment.TickCount64 > snapshot.ExpiresAtTicks)
+                return null;
+
+            return snapshot.Diff;
+        }
+
+        private void StoreCache(string repoRoot, LocalReviewScope scope, PullRequestDiff diff)
+        {
+            _diffCache = new DiffCacheSnapshot(
+                repoRoot,
+                scope.Kind,
+                scope.BaseBranch,
+                diff,
+                Environment.TickCount64 + CacheTtlMs);
+        }
+
+        private sealed record DiffCacheSnapshot(
+            string RepositoryRoot,
+            LocalReviewScopeKind ScopeKind,
+            string? ScopeBaseBranch,
+            PullRequestDiff Diff,
+            long ExpiresAtTicks);
 
         // --- Private helpers ------------------------------------------------------
 
@@ -137,71 +202,50 @@ namespace REBUSS.Pure.Services.LocalReview
             return root;
         }
 
-        private async Task<FileChange> BuildFileChangeAsync(
-            string repoRoot,
-            LocalFileStatus status,
-            LocalReviewScope scope,
-            CancellationToken cancellationToken)
+        private void ApplyClassifierSkipReason(FileChange fc)
         {
-            var fileChange = new FileChange
-            {
-                Path = status.Path,
-                ChangeType = MapChangeType(status.Status)
-            };
+            // Honour skip reasons git already established (e.g. "binary file" from
+            // "Binary files ... differ"). Renamed/deleted files keep their hunks
+            // (when present) so the review can still see the content delta.
+            if (fc.SkipReason is not null)
+                return;
 
-            var skipReason = GetSkipReason(status);
-            if (skipReason is not null)
+            var classification = _fileClassifier.Classify(fc.Path);
+            if (classification.IsBinary)
             {
-                fileChange.SkipReason = skipReason;
-                return fileChange;
+                ClearAsSkipped(fc, "binary file");
             }
-
-            var (baseRef, targetRef) = GetDiffRefs(scope);
-
-            var baseContentTask = _gitClient.GetFileContentAtRefAsync(
-                repoRoot, status.Path, baseRef, cancellationToken);
-            var targetContentTask = _gitClient.GetFileContentAtRefAsync(
-                repoRoot, status.Path, targetRef, cancellationToken);
-            await Task.WhenAll(baseContentTask, targetContentTask);
-
-            var baseContent = await baseContentTask;
-            var targetContent = await targetContentTask;
-
-            fileChange.Hunks = _diffBuilder.Build(status.Path, baseContent, targetContent);
-
-            if (IsFullFileRewrite(baseContent, targetContent, fileChange.Hunks))
+            else if (classification.IsGenerated)
             {
-                fileChange.SkipReason = "full file rewrite";
-                fileChange.Hunks = new List<DiffHunk>();
+                ClearAsSkipped(fc, "generated file");
             }
-            else
-            {
-                fileChange.Additions = fileChange.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '+');
-                fileChange.Deletions = fileChange.Hunks.SelectMany(h => h.Lines).Count(l => l.Op == '-');
-            }
-
-            return fileChange;
         }
 
-        private static (string BaseRef, string TargetRef) GetDiffRefs(LocalReviewScope scope)
+        private static void ClearAsSkipped(FileChange fc, string reason)
         {
-            // For deleted files, targetRef content will be null (git show returns nothing).
-            // LocalGitClient.WorkingTreeRef is a sentinel that causes a filesystem read.
-            //
-            // No-HEAD safety: when the repository has no commits, GetFileContentAtRefAsync
-            // with "HEAD" catches the GitCommandException and returns null (base is empty).
-            // This is correct for new repos — all files are new additions.
-            return scope.Kind switch
-            {
-                LocalReviewScopeKind.Staged      => ("HEAD", ":0"),
-                LocalReviewScopeKind.WorkingTree => ("HEAD", LocalGitClient.WorkingTreeRef),
-                LocalReviewScopeKind.BranchDiff  => (scope.BaseBranch!, "HEAD"),
-                _ => ("HEAD", LocalGitClient.WorkingTreeRef)
-            };
+            fc.SkipReason = reason;
+            fc.Hunks = new List<DiffHunk>();
+            fc.Additions = 0;
+            fc.Deletions = 0;
         }
+
+        private static PullRequestDiff BuildDiffEnvelope(LocalReviewScope scope, List<FileChange> files) => new()
+        {
+            Title = $"Local changes ({scope})",
+            Status = "local",
+            SourceBranch = string.Empty,
+            TargetBranch = string.Empty,
+            SourceRefName = string.Empty,
+            TargetRefName = string.Empty,
+            Files = files
+        };
 
         internal string? GetSkipReason(LocalFileStatus status)
         {
+            // Used by GetFilesAsync-style callers that need a skip-reason without first
+            // running the diff parser. Mirrors the classifier rules in
+            // ApplyClassifierSkipReason — rename/delete are NOT skipped here because the
+            // diff parser will return their actual content.
             if (status.Status == 'D')
                 return "file deleted";
             if (status.Status == 'R')
@@ -215,24 +259,6 @@ namespace REBUSS.Pure.Services.LocalReview
                 return "generated file";
 
             return null;
-        }
-
-        private static bool IsFullFileRewrite(string? baseContent, string? targetContent, List<DiffHunk> hunks)
-        {
-            const int fullRewriteMinLineCount = 10;
-
-            if (string.IsNullOrEmpty(baseContent) || string.IsNullOrEmpty(targetContent))
-                return false;
-            if (hunks.Count == 0)
-                return false;
-
-            var oldLineCount = baseContent.Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Length;
-            var newLineCount = targetContent.Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Length;
-
-            if (oldLineCount < fullRewriteMinLineCount && newLineCount < fullRewriteMinLineCount)
-                return false;
-
-            return !hunks.SelectMany(h => h.Lines).Any(l => l.Op == ' ');
         }
 
         private static PullRequestFileInfo BuildFileInfo(
@@ -261,15 +287,6 @@ namespace REBUSS.Pure.Services.LocalReview
             'D' => "removed",
             'R' => "renamed",
             _ => code.ToString()
-        };
-
-        private static string MapChangeType(char code) => code switch
-        {
-            'A' or '?' => "add",
-            'M' => "edit",
-            'D' => "delete",
-            'R' => "rename",
-            _ => "edit"
         };
 
         private static string NormalizePath(string path) =>

@@ -9,7 +9,7 @@ namespace REBUSS.Pure.Core.Services.CopilotReview;
 /// an opaque string (<c>reviewKey</c>) whose format encodes the source type
 /// (e.g. <c>pr:42</c> or <c>local:staged:/repo</c>) to prevent collisions.
 /// </summary>
-public interface ICopilotReviewOrchestrator
+public interface IAgentReviewOrchestrator
 {
     /// <summary>
     /// Idempotent: starts a background Copilot review for the given key if one is not
@@ -23,11 +23,11 @@ public interface ICopilotReviewOrchestrator
     /// on <paramref name="ct"/> returns control to the caller promptly; background work
     /// continues so a subsequent call observes the same result.
     /// </summary>
-    Task<CopilotReviewResult> WaitForReviewAsync(string reviewKey, CancellationToken ct);
+    Task<AgentReviewResult> WaitForReviewAsync(string reviewKey, CancellationToken ct);
 
     /// <summary>
     /// Non-blocking read of the current state. Returns <c>null</c> if no review has been
     /// triggered for this key in the current process lifetime.
     /// </summary>
-    CopilotReviewSnapshot? TryGetSnapshot(string reviewKey);
+    AgentReviewSnapshot? TryGetSnapshot(string reviewKey);
 }

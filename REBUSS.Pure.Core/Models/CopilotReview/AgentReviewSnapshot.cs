@@ -2,14 +2,14 @@ namespace REBUSS.Pure.Core.Models.CopilotReview;
 
 /// <summary>
 /// Read-only snapshot of a single Copilot review job's state, returned by
-/// <see cref="Services.CopilotReview.ICopilotReviewOrchestrator.TryGetSnapshot"/>.
+/// <see cref="Services.CopilotReview.IAgentReviewOrchestrator.TryGetSnapshot"/>.
 /// Mirrors the <c>PrEnrichmentJobSnapshot</c> pattern.
 /// </summary>
-public sealed record CopilotReviewSnapshot
+public sealed record AgentReviewSnapshot
 {
     public required string ReviewKey { get; init; }
-    public required CopilotReviewStatus Status { get; init; }
-    public CopilotReviewResult? Result { get; init; }
+    public required AgentReviewStatus Status { get; init; }
+    public AgentReviewResult? Result { get; init; }
     public string? ErrorMessage { get; init; }
 
     /// <summary>

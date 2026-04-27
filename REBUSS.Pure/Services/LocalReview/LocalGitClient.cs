@@ -73,8 +73,7 @@ namespace REBUSS.Pure.Services.LocalReview
                 return await File.ReadAllTextAsync(fullPath, cancellationToken);
             }
 
-            // git show <ref>:<path> � works for HEAD, branch names, commit SHAs, and ":0" (index)
-            var args = $"show {gitRef}:{normalizedPath}";
+            var args = BuildShowArgs(normalizedPath, gitRef);
 
             _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
 
@@ -84,9 +83,50 @@ namespace REBUSS.Pure.Services.LocalReview
             }
             catch (GitCommandException ex) when (ex.ExitCode != 0)
             {
-                // File does not exist at this ref (new file / deleted file)
-                _logger.LogDebug(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
+                // Distinguish the expected-null case from real failures:
+                //  * `fatal: path '…' does not exist in '…'` — file legitimately not at this ref
+                //    (new file probed at HEAD during branch-diff, deleted file probed at the
+                //    after-side, etc.). One Warning per added file in a feature-branch self-review
+                //    drowned out genuine signals, so this path stays at Debug.
+                //  * Anything else (concurrent index lock, AV interference, malformed ref) stays
+                //    at Warning so silent self-review degradation is still diagnosable.
+                if (LooksLikePathMissingAtRef(ex.StdErr))
+                    _logger.LogDebug(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
+                else
+                    _logger.LogWarning(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
                 return null;
+            }
+        }
+
+        public async Task<string> GetUnifiedDiffAsync(
+            string repositoryRoot,
+            LocalReviewScope scope,
+            CancellationToken cancellationToken = default)
+        {
+            // Optimistic path: assume HEAD exists (true for virtually all repositories).
+            // On failure verify HEAD absence before retrying with the no-HEAD fallback,
+            // mirroring the pattern in GetChangedFilesAsync.
+            var args = BuildDiffArgs(scope, hasHead: true);
+            _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+
+            try
+            {
+                return await RunGitAsync(repositoryRoot, args, cancellationToken);
+            }
+            catch (GitCommandException ex)
+            {
+                if (await HasHeadAsync(repositoryRoot, cancellationToken))
+                {
+                    _logger.LogWarning(
+                        Resources.LogLocalGitClientCommandFailed,
+                        args, ex.ExitCode, ex.StdErr);
+                    throw;
+                }
+
+                _logger.LogDebug(Resources.LogLocalGitClientNoHead, repositoryRoot);
+                args = BuildDiffArgs(scope, hasHead: false);
+                _logger.LogDebug(Resources.LogLocalGitClientRunning, args, repositoryRoot);
+                return await RunGitAsync(repositoryRoot, args, cancellationToken);
             }
         }
 
@@ -95,6 +135,14 @@ namespace REBUSS.Pure.Services.LocalReview
         /// the file from the working tree on disk rather than from git.
         /// </summary>
         public const string WorkingTreeRef = "WORKING_TREE";
+
+        /// <summary>
+        /// Sentinel ref value that instructs <see cref="GetFileContentAtRefAsync"/> to read
+        /// the staged (stage-0 index) content via <c>git show :&lt;path&gt;</c>. Used by the
+        /// finding validator for <c>local:staged</c> reviews so that validation judges the
+        /// exact bytes the diff under review presented as the after-state.
+        /// </summary>
+        public const string IndexRef = "INDEX";
 
         public async Task<string?> GetCurrentBranchAsync(
             string repositoryRoot,
@@ -114,6 +162,64 @@ namespace REBUSS.Pure.Services.LocalReview
                 _logger.LogDebug(ex, Resources.LogLocalGitClientCouldNotDetermineBranch);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Returns <c>true</c> when git's stderr indicates the requested path simply
+        /// does not exist at the requested ref (the canonical message is
+        /// <c>fatal: path '…' does not exist in '…'</c>). Used to demote the expected-null
+        /// branch of <see cref="GetFileContentAtRefAsync"/> to Debug so transient failures
+        /// (lock contention, AV interference, malformed ref) remain visible at Warning.
+        /// </summary>
+        private static bool LooksLikePathMissingAtRef(string? stderr) =>
+            !string.IsNullOrEmpty(stderr)
+            && stderr.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+
+        // --- show args formatting -----------------------------------------------
+
+        /// <summary>
+        /// Builds the <c>git show</c> argument string for a given normalized path and
+        /// ref. <see cref="IndexRef"/> is translated to <c>show :&lt;path&gt;</c> (stage-0
+        /// index); any other ref is rendered as <c>show &lt;ref&gt;:&lt;path&gt;</c>.
+        /// Caller is responsible for normalizing path separators and stripping leading slashes.
+        /// </summary>
+        private static string BuildShowArgs(string normalizedPath, string gitRef) =>
+            string.Equals(gitRef, IndexRef, StringComparison.OrdinalIgnoreCase)
+                ? $"show :{normalizedPath}"
+                : $"show {gitRef}:{normalizedPath}";
+
+        // --- Diff args formatting ------------------------------------------------
+
+        /// <summary>
+        /// Builds the <c>git diff -p</c> argument string for a given scope.
+        /// <c>--no-ext-diff</c> bypasses any user-configured external diff driver;
+        /// <c>--no-color</c> ensures no ANSI escapes leak into the parser; <c>-U3</c>
+        /// matches git's default context size, kept explicit so the output is stable
+        /// regardless of <c>diff.context</c> in the user's gitconfig.
+        /// </summary>
+        private static string BuildDiffArgs(LocalReviewScope scope, bool hasHead)
+        {
+            const string baseArgs = "diff --no-color --no-ext-diff -U3";
+
+            if (!hasHead)
+            {
+                return scope.Kind switch
+                {
+                    LocalReviewScopeKind.Staged => $"{baseArgs} --cached",
+                    LocalReviewScopeKind.WorkingTree => baseArgs,
+                    LocalReviewScopeKind.BranchDiff =>
+                        throw new GitCommandException(128, Resources.ErrorBranchDiffRequiresCommits),
+                    _ => throw new ArgumentOutOfRangeException(nameof(scope))
+                };
+            }
+
+            return scope.Kind switch
+            {
+                LocalReviewScopeKind.Staged => $"{baseArgs} --cached HEAD",
+                LocalReviewScopeKind.WorkingTree => $"{baseArgs} HEAD",
+                LocalReviewScopeKind.BranchDiff => $"{baseArgs} {scope.BaseBranch}...HEAD",
+                _ => throw new ArgumentOutOfRangeException(nameof(scope))
+            };
         }
 
         // --- Status parsing -------------------------------------------------------

@@ -2,8 +2,8 @@ namespace REBUSS.Pure.Core.Models.CopilotReview;
 
 /// <summary>
 /// The outcome of reviewing one page of enriched PR content through
-/// <see cref="Services.CopilotReview.ICopilotPageReviewer"/>, potentially after
-/// up to 3 retry attempts inside <see cref="Services.CopilotReview.ICopilotReviewOrchestrator"/>.
+/// <see cref="Services.CopilotReview.IAgentPageReviewer"/>, potentially after
+/// up to 3 retry attempts inside <see cref="Services.CopilotReview.IAgentReviewOrchestrator"/>.
 /// <para>
 /// Invariants (enforced by the <see cref="Success"/> / <see cref="Failure"/> factory methods):
 /// <list type="bullet">
@@ -13,7 +13,7 @@ namespace REBUSS.Pure.Core.Models.CopilotReview;
 /// </list>
 /// </para>
 /// </summary>
-public sealed record CopilotPageReviewResult
+public sealed record AgentPageReviewResult
 {
     public required int PageNumber { get; init; }
     public required bool Succeeded { get; init; }
@@ -22,13 +22,13 @@ public sealed record CopilotPageReviewResult
     public string? ErrorMessage { get; init; }
     public required int AttemptsMade { get; init; }
 
-    public static CopilotPageReviewResult Success(int pageNumber, string reviewText, int attemptsMade)
+    public static AgentPageReviewResult Success(int pageNumber, string reviewText, int attemptsMade)
     {
         ArgumentNullException.ThrowIfNull(reviewText);
         if (attemptsMade is < 1 or > 3)
             throw new ArgumentOutOfRangeException(nameof(attemptsMade), "AttemptsMade must be in [1,3].");
 
-        return new CopilotPageReviewResult
+        return new AgentPageReviewResult
         {
             PageNumber = pageNumber,
             Succeeded = true,
@@ -39,7 +39,7 @@ public sealed record CopilotPageReviewResult
         };
     }
 
-    public static CopilotPageReviewResult Failure(
+    public static AgentPageReviewResult Failure(
         int pageNumber,
         IReadOnlyList<string> failedFilePaths,
         string errorMessage,
@@ -50,7 +50,7 @@ public sealed record CopilotPageReviewResult
         if (attemptsMade is < 1 or > 3)
             throw new ArgumentOutOfRangeException(nameof(attemptsMade), "AttemptsMade must be in [1,3].");
 
-        return new CopilotPageReviewResult
+        return new AgentPageReviewResult
         {
             PageNumber = pageNumber,
             Succeeded = false,

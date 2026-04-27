@@ -71,6 +71,7 @@ public class GetPullRequestMetadataToolHandlerTests
             Allocation = new PageAllocation(new[] { slice }, 1, 2),
             SafeBudgetTokens = safeBudget,
             CompletedAt = DateTimeOffset.UtcNow,
+            RawFileChangesFromDiff = 0,
         };
     }
 

@@ -29,6 +29,14 @@
     <EmbeddedResource Include="Cli\Prompts\review-pr.prompt.md" />
     <EmbeddedResource Include="Cli\Prompts\self-review.prompt.md" />
     <EmbeddedResource Include="Cli\Prompts\create-pr.md" />
+    <!-- Feature 024 — Claude Code skills shipped via init alongside Copilot prompts.
+         LogicalName explicit because the directory name contains a hyphen and the
+         default resource path resolver replaces hyphens with underscores, making the
+         resource lookup fragile. With LogicalName the lookup is deterministic. -->
+    <EmbeddedResource Include="Cli\Skills\review-pr\SKILL.md"
+                      LogicalName="REBUSS.Pure.Cli.Skills.review-pr.SKILL.md" />
+    <EmbeddedResource Include="Cli\Skills\self-review\SKILL.md"
+                      LogicalName="REBUSS.Pure.Cli.Skills.self-review.SKILL.md" />
     <EmbeddedResource Include="Services\CopilotReview\Prompts\copilot-page-review.md" />
     <EmbeddedResource Include="Services\CopilotReview\Prompts\copilot-finding-validation.md" />
     <EmbeddedResource Update="Properties\Resources.resx">

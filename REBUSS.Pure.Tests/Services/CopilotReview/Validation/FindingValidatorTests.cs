@@ -1,32 +1,38 @@
-using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
-using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview.Inspection;
 using REBUSS.Pure.Services.CopilotReview.Validation;
+using REBUSS.Pure.Tests.Services.AgentInvocation;
 
 namespace REBUSS.Pure.Tests.Services.CopilotReview.Validation;
 
-/// <summary>Unit tests for <see cref="FindingValidator"/>. Feature 021.</summary>
+/// <summary>
+/// Unit tests for <see cref="FindingValidator"/> after the <c>IAgentInvoker</c>
+/// refactor. The validator's prior event-driven SDK session collapses into a
+/// single <c>InvokeAsync(prompt, model, ct)</c> call per page, so tests script
+/// responses on a <see cref="FakeAgentInvoker"/> instead of emitting
+/// <c>AssistantMessageEvent</c>/<c>SessionIdleEvent</c>/<c>SessionErrorEvent</c>.
+/// Feature 021.
+/// </summary>
 public class FindingValidatorTests
 {
     private static FindingValidator CreateValidator(
-        FakeSessionFactory factory,
-        ICopilotInspectionWriter? inspection = null,
+        FakeAgentInvoker invoker,
+        IAgentInspectionWriter? inspection = null,
         IPageAllocator? pageAllocator = null,
         ITokenEstimator? tokenEstimator = null) =>
-        new(factory,
+        new(invoker,
             Options.Create(new CopilotReviewOptions
             {
                 Model = "claude-sonnet-4.6",
                 ValidateFindings = true,
             }),
-            inspection ?? Substitute.For<ICopilotInspectionWriter>(),
+            inspection ?? Substitute.For<IAgentInspectionWriter>(),
             pageAllocator ?? SinglePageAllocator(),
             tokenEstimator ?? FixedTokenEstimator(estimatePerCall: 1),
             NullLogger<FindingValidator>.Instance);
@@ -111,33 +117,39 @@ public class FindingValidatorTests
     };
 
     [Fact]
-    public async Task ValidateAsync_NotCSharp_MapsToValidWithoutCopilotCall()
+    public async Task ValidateAsync_NotCSharp_MapsToValidWithoutAgentCall()
     {
-        var factory = new FakeSessionFactory { OnSendAsync = (_, _) => throw new Exception("must not call Copilot") };
+        var invoker = new FakeAgentInvoker
+        {
+            OnInvoke = (_, _, _) => throw new Exception("must not call agent"),
+        };
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[] { Unresolved(MakeFinding(0), ScopeResolutionFailure.NotCSharp) };
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
         var v = Assert.Single(result);
         Assert.Equal(FindingVerdict.Valid, v.Verdict);
-        Assert.Equal(0, factory.CreateSessionCalls);
+        Assert.Equal(0, invoker.InvocationCount);
     }
 
     [Fact]
-    public async Task ValidateAsync_SourceUnavailable_MapsToUncertainWithoutCopilotCall()
+    public async Task ValidateAsync_SourceUnavailable_MapsToUncertainWithoutAgentCall()
     {
-        var factory = new FakeSessionFactory { OnSendAsync = (_, _) => throw new Exception("must not call Copilot") };
+        var invoker = new FakeAgentInvoker
+        {
+            OnInvoke = (_, _, _) => throw new Exception("must not call agent"),
+        };
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[] { Unresolved(MakeFinding(0), ScopeResolutionFailure.SourceUnavailable) };
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
         var v = Assert.Single(result);
         Assert.Equal(FindingVerdict.Uncertain, v.Verdict);
-        Assert.Equal(0, factory.CreateSessionCalls);
+        Assert.Equal(0, invoker.InvocationCount);
     }
 
     // NOTE: Dead-path safeguard. `FindingScopeResolver` no longer emits
@@ -145,44 +157,36 @@ public class FindingValidatorTests
     // fallback always yields `ResolutionFailure.None`, see Architecture.md §6b).
     // The enum value is kept because the validator's pre-filter must stay resilient
     // if any future producer reintroduces this state — unmapped failure values
-    // would fall into the Copilot-bound branch and waste SDK calls. This test
+    // would fall into the Copilot-bound branch and waste agent calls. This test
     // pins the defensive mapping in place.
     [Fact]
-    public async Task ValidateAsync_ScopeNotFound_MapsToUncertainWithoutCopilotCall()
+    public async Task ValidateAsync_ScopeNotFound_MapsToUncertainWithoutAgentCall()
     {
-        var factory = new FakeSessionFactory { OnSendAsync = (_, _) => throw new Exception("must not call Copilot") };
+        var invoker = new FakeAgentInvoker
+        {
+            OnInvoke = (_, _, _) => throw new Exception("must not call agent"),
+        };
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[] { Unresolved(MakeFinding(0), ScopeResolutionFailure.ScopeNotFound) };
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
         var v = Assert.Single(result);
         Assert.Equal(FindingVerdict.Uncertain, v.Verdict);
-        Assert.Equal(0, factory.CreateSessionCalls);
+        Assert.Equal(0, invoker.InvocationCount);
     }
 
     [Fact]
-    public async Task ValidateAsync_ResolvedFindings_CallsCopilotAndParsesVerdicts()
+    public async Task ValidateAsync_ResolvedFindings_CallsAgentAndParsesVerdicts()
     {
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
-        {
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData
-                {
-                    MessageId = "m",
-                    Content =
-                        "**Finding 1: VALID** — this is a real bug\n" +
-                        "**Finding 2: FALSE_POSITIVE** — misinterpreted context\n" +
-                        "**Finding 3: UNCERTAIN** — needs cross-file check",
-                }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
-        };
+        var invoker = new FakeAgentInvoker();
+        invoker.Enqueue(
+            "**Finding 1: VALID** — this is a real bug\n" +
+            "**Finding 2: FALSE_POSITIVE** — misinterpreted context\n" +
+            "**Finding 3: UNCERTAIN** — needs cross-file check");
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[]
         {
             Resolved(MakeFinding(0)),
@@ -196,7 +200,7 @@ public class FindingValidatorTests
         Assert.Equal(FindingVerdict.Valid, result[0].Verdict);
         Assert.Equal(FindingVerdict.FalsePositive, result[1].Verdict);
         Assert.Equal(FindingVerdict.Uncertain, result[2].Verdict);
-        Assert.Equal(1, factory.CreateSessionCalls); // single page → single Copilot call
+        Assert.Equal(1, invoker.InvocationCount); // single page → single agent call
     }
 
     [Fact]
@@ -204,29 +208,18 @@ public class FindingValidatorTests
     {
         // Pin the load-bearing ordering contract: result[i] corresponds to input[i] even
         // though the validator internally severity-orders findings (major < critical) for
-        // the Copilot prompt, and parses verdicts by the "Finding {n}:" index in the
+        // the agent prompt, and parses verdicts by the "Finding {n}:" index in the
         // response. A refactor that returns results in severity order (instead of input
-        // order) would silently misalign CopilotReviewOrchestrator's per-page slicing.
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
-        {
-            // Prompt order in severity: critical first, then major, then minor.
-            // Findings at input index 0=minor, 1=critical, 2=major → prompt order 1,2,0.
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData
-                {
-                    MessageId = "m",
-                    Content =
-                        "**Finding 1: VALID** — critical bug\n" +          // input[1]
-                        "**Finding 2: UNCERTAIN** — major unclear\n" +     // input[2]
-                        "**Finding 3: FALSE_POSITIVE** — minor bogus",     // input[0]
-                }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
-        };
+        // order) would silently misalign AgentReviewOrchestrator's per-page slicing.
+        var invoker = new FakeAgentInvoker();
+        // Prompt order in severity: critical first, then major, then minor.
+        // Findings at input index 0=minor, 1=critical, 2=major → prompt order 1,2,0.
+        invoker.Enqueue(
+            "**Finding 1: VALID** — critical bug\n" +          // input[1]
+            "**Finding 2: UNCERTAIN** — major unclear\n" +     // input[2]
+            "**Finding 3: FALSE_POSITIVE** — minor bogus");    // input[0]
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[]
         {
             Resolved(MakeFinding(0, severity: "minor")),
@@ -251,26 +244,17 @@ public class FindingValidatorTests
     }
 
     [Fact]
-    public async Task ValidateAsync_MultipleAssistantMessageEvents_AccumulatesContent()
+    public async Task ValidateAsync_AgentReturnsMultiLineText_ParsesAllVerdicts()
     {
-        // Phased-output models (e.g. thinking + response phases) may emit multiple
-        // AssistantMessageEvents per session. All non-empty Content fragments must be
-        // accumulated — the previous "last one wins" behavior truncated responses.
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
-        {
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** — part A\n" }
-            });
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 2: FALSE_POSITIVE** — part B" }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
-        };
+        // Pre-refactor this exercised phased-output AssistantMessageEvent accumulation.
+        // Post-refactor the invoker returns the accumulated string, but the validator's
+        // regex-based verdict parsing must still handle multi-line content correctly.
+        var invoker = new FakeAgentInvoker();
+        invoker.Enqueue(
+            "**Finding 1: VALID** — part A\n" +
+            "**Finding 2: FALSE_POSITIVE** — part B");
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[] { Resolved(MakeFinding(0)), Resolved(MakeFinding(1)) };
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
@@ -290,31 +274,48 @@ public class FindingValidatorTests
         // routed page-2's response to page-3's findings (or vice versa) would not
         // have failed the test. Verdicts are now specific per call so per-finding
         // routing is verified.
-        var pageVerdicts = new[] { "VALID", "FALSE_POSITIVE", "UNCERTAIN" };
-        var pageSizes = new[] { 5, 5, 2 }; // 12 split 5/5/2
-        var callIndex = 0;
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
+        //
+        // Routing assertion is bound to a stable per-finding marker in the prompt
+        // (each finding's description renders as `**Issue:** issue {index}`, see
+        // MakeFinding) rather than to call-order. If a future refactor of
+        // FindingValidator ever dispatches pages concurrently the slot-to-page
+        // mapping would otherwise become non-deterministic and silently flake;
+        // here, page identity is derived from prompt content, not call sequence.
+        // The discriminators (`issue 0`, `issue 5`, `issue 10`) are chosen so
+        // none is a substring of another — `issue 10` does not contain `issue 0`
+        // or `issue 5` and vice versa — so each marker matches exactly one page.
+        var pageContracts = new (string Marker, string Verdict, int Size)[]
         {
-            var idx = Interlocked.Increment(ref callIndex) - 1;
-            var verdict = pageVerdicts[idx];
-            var size = pageSizes[idx];
-            var content = string.Join('\n',
-                Enumerable.Range(1, size).Select(i => $"**Finding {i}: {verdict}** — page{idx + 1}"));
-            h.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m", Content = content } });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+            ("**Issue:** issue 0",  "VALID",          5), // page 1: findings 0..4
+            ("**Issue:** issue 5",  "FALSE_POSITIVE", 5), // page 2: findings 5..9
+            ("**Issue:** issue 10", "UNCERTAIN",      2), // page 3: findings 10..11
+        };
+
+        var invoker = new FakeAgentInvoker
+        {
+            OnInvoke = (prompt, _, _) =>
+            {
+                var contract = Array.Find(pageContracts, c => prompt.Contains(c.Marker));
+                if (contract == default)
+                    throw new InvalidOperationException(
+                        "Fake invoker received a prompt with no recognized page marker.");
+                var content = string.Join('\n',
+                    Enumerable.Range(1, contract.Size).Select(
+                        i => $"**Finding {i}: {contract.Verdict}** — {contract.Marker}"));
+                return Task.FromResult(content);
+            }
         };
 
         // Allocator splits into pages of 5 → 12 findings across 3 pages (5, 5, 2).
         var validator = CreateValidator(
-            factory,
+            invoker,
             pageAllocator: FixedSizePageAllocator(itemsPerPage: 5));
         var input = Enumerable.Range(0, 12).Select(i => Resolved(MakeFinding(i))).ToArray();
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
         Assert.Equal(12, result.Count);
-        Assert.Equal(3, factory.CreateSessionCalls);
+        Assert.Equal(3, invoker.InvocationCount);
 
         // Input indices 0..4 → page 1 (VALID), 5..9 → page 2 (FALSE_POSITIVE),
         // 10..11 → page 3 (UNCERTAIN). Stable-by-severity ordering preserves
@@ -328,15 +329,14 @@ public class FindingValidatorTests
     }
 
     [Fact]
-    public async Task ValidateAsync_SessionFailure_FindingsPassThroughAsValid()
+    public async Task ValidateAsync_AgentThrows_FindingsPassThroughAsValid()
     {
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
-        {
-            h.PushEvent(new SessionErrorEvent { Data = new SessionErrorData { ErrorType = "model", Message = "boom" } });
-        };
+        // FR-012 graceful degradation: when the agent call fails, every finding on
+        // that page must be kept as Valid with a reason.
+        var invoker = new FakeAgentInvoker();
+        invoker.EnqueueException(new InvalidOperationException("boom"));
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[] { Resolved(MakeFinding(0)), Resolved(MakeFinding(1)) };
 
         var result = await validator.ValidateAsync(input, "test:1", CancellationToken.None);
@@ -346,33 +346,35 @@ public class FindingValidatorTests
     }
 
     [Fact]
-    public async Task ValidateAsync_EmptyInput_NoCopilotCall()
+    public async Task ValidateAsync_EmptyInput_NoAgentCall()
     {
-        var factory = new FakeSessionFactory();
+        var invoker = new FakeAgentInvoker();
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var result = await validator.ValidateAsync(Array.Empty<FindingWithScope>(), "test:1", CancellationToken.None);
 
         Assert.Empty(result);
-        Assert.Equal(0, factory.CreateSessionCalls);
+        Assert.Equal(0, invoker.InvocationCount);
     }
 
     [Fact]
-    public async Task ValidateAsync_MixedResolvedAndUnresolved_OnlyResolvedSentToCopilot()
+    public async Task ValidateAsync_MixedResolvedAndUnresolved_OnlyResolvedSentToAgent()
     {
-        var factory = new FakeSessionFactory();
         int? capturedFindingsInPrompt = null;
-        factory.OnSendAsync = (h, prompt) =>
+        var invoker = new FakeAgentInvoker
         {
-            // Count how many "## Finding " headers are in the prompt — should equal
-            // the number of RESOLVED findings on this page.
-            capturedFindingsInPrompt =
-                System.Text.RegularExpressions.Regex.Matches(prompt, @"^## Finding ", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
-            h.PushEvent(new AssistantMessageEvent { Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" } });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+            OnInvoke = (prompt, _, _) =>
+            {
+                // Count how many "## Finding " headers are in the prompt — should equal
+                // the number of RESOLVED findings on this page.
+                capturedFindingsInPrompt = System.Text.RegularExpressions.Regex.Matches(
+                    prompt, @"^## Finding ",
+                    System.Text.RegularExpressions.RegexOptions.Multiline).Count;
+                return Task.FromResult("**Finding 1: VALID** ok");
+            }
         };
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[]
         {
             Unresolved(MakeFinding(0), ScopeResolutionFailure.NotCSharp),
@@ -395,23 +397,16 @@ public class FindingValidatorTests
     [Fact]
     public async Task ValidateAsync_ResolvedFindings_WritesPromptAndResponseToInspection()
     {
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
-        {
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** — ok" }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
-        };
+        var invoker = new FakeAgentInvoker();
+        invoker.Enqueue("**Finding 1: VALID** — ok");
 
-        var inspection = Substitute.For<ICopilotInspectionWriter>();
+        var inspection = Substitute.For<IAgentInspectionWriter>();
         inspection.WritePromptAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
         inspection.WriteResponseAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
-        var validator = CreateValidator(factory, inspection: inspection);
+        var validator = CreateValidator(invoker, inspection: inspection);
         var input = new[] { Resolved(MakeFinding(0)) };
 
         await validator.ValidateAsync(input, "pr:42", CancellationToken.None);
@@ -423,28 +418,26 @@ public class FindingValidatorTests
     }
 
     [Fact]
-    public async Task ValidateAsync_OrdersBySeverityBeforeSendingToCopilot()
+    public async Task ValidateAsync_OrdersBySeverityBeforeSendingToAgent()
     {
         // The validator must put critical findings ahead of major and minor in the prompt
         // so the most important issues get the model's first read.
-        var factory = new FakeSessionFactory();
         var capturedSeverityOrder = new List<string>();
-        factory.OnSendAsync = (h, prompt) =>
+        var invoker = new FakeAgentInvoker
         {
-            // Extract severity values in the order they appear in the prompt.
-            var matches = System.Text.RegularExpressions.Regex.Matches(
-                prompt, @"\*\*Severity:\*\*\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            foreach (System.Text.RegularExpressions.Match m in matches)
-                capturedSeverityOrder.Add(m.Groups[1].Value.ToLowerInvariant());
-
-            h.PushEvent(new AssistantMessageEvent
+            OnInvoke = (prompt, _, _) =>
             {
-                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+                var matches = System.Text.RegularExpressions.Regex.Matches(
+                    prompt, @"\*\*Severity:\*\*\s*(\w+)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                foreach (System.Text.RegularExpressions.Match m in matches)
+                    capturedSeverityOrder.Add(m.Groups[1].Value.ToLowerInvariant());
+
+                return Task.FromResult("**Finding 1: VALID** ok");
+            }
         };
 
-        var validator = CreateValidator(factory);
+        var validator = CreateValidator(invoker);
         var input = new[]
         {
             Resolved(MakeFinding(0, severity: "minor")),
@@ -460,18 +453,13 @@ public class FindingValidatorTests
     [Fact]
     public async Task ValidateAsync_PageProgressCallback_FiresForEachValidationPage()
     {
-        var factory = new FakeSessionFactory();
-        factory.OnSendAsync = (h, _) =>
+        var invoker = new FakeAgentInvoker
         {
-            h.PushEvent(new AssistantMessageEvent
-            {
-                Data = new AssistantMessageData { MessageId = "m", Content = "**Finding 1: VALID** ok" }
-            });
-            h.PushEvent(new SessionIdleEvent { Data = new SessionIdleData() });
+            OnInvoke = (_, _, _) => Task.FromResult("**Finding 1: VALID** ok"),
         };
 
         var validator = CreateValidator(
-            factory,
+            invoker,
             pageAllocator: FixedSizePageAllocator(itemsPerPage: 2));
         var input = Enumerable.Range(0, 5).Select(i => Resolved(MakeFinding(i))).ToArray();
 
@@ -484,52 +472,18 @@ public class FindingValidatorTests
         Assert.Equal(new[] { (1, 3), (2, 3), (3, 3) }, observedPages);
     }
 
-    // ─── Fakes (mirror CopilotPageReviewerTests pattern) ────────────────────────
-
-    private sealed class FakeSessionFactory : ICopilotSessionFactory
+    [Fact]
+    public async Task ValidateAsync_ForwardsConfiguredModelToInvoker()
     {
-        public Action<FakeSessionHandle, string>? OnSendAsync { get; set; }
-        public int CreateSessionCalls { get; private set; }
+        // Ensures the model from CopilotReviewOptions reaches the invoker.
+        var invoker = new FakeAgentInvoker();
+        invoker.Enqueue("**Finding 1: VALID** ok");
 
-        public Task<ICopilotSessionHandle> CreateSessionAsync(string model, CancellationToken ct)
-        {
-            CreateSessionCalls++;
-            FakeSessionHandle? handle = null;
-            handle = new FakeSessionHandle(prompt => OnSendAsync?.Invoke(handle!, prompt));
-            return Task.FromResult<ICopilotSessionHandle>(handle);
-        }
-    }
+        var validator = CreateValidator(invoker);
+        var input = new[] { Resolved(MakeFinding(0)) };
 
-    private sealed class FakeSessionHandle : ICopilotSessionHandle
-    {
-        private readonly List<Action<object>> _handlers = new();
-        private readonly Action<string> _onSend;
-        public FakeSessionHandle(Action<string> onSend) { _onSend = onSend; }
+        await validator.ValidateAsync(input, "test:1", CancellationToken.None);
 
-        public Task<string> SendAsync(string prompt, CancellationToken ct)
-        {
-            _onSend(prompt);
-            return Task.FromResult("msg-id-1");
-        }
-
-        public IDisposable On(Action<object> handler)
-        {
-            _handlers.Add(handler);
-            return new Subscription(() => _handlers.Remove(handler));
-        }
-
-        public void PushEvent(object evt)
-        {
-            foreach (var h in _handlers.ToList()) h(evt);
-        }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-
-        private sealed class Subscription : IDisposable
-        {
-            private readonly Action _onDispose;
-            public Subscription(Action onDispose) { _onDispose = onDispose; }
-            public void Dispose() => _onDispose();
-        }
+        Assert.Equal("claude-sonnet-4.6", invoker.LastModel);
     }
 }

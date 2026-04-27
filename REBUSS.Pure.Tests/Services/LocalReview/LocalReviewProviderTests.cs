@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using REBUSS.Pure.Core;
-using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Services.LocalReview;
 
@@ -19,10 +18,14 @@ public class LocalReviewProviderTests
     {
         _rootProvider.ResolveRepositoryRoot().Returns(RepoRoot);
 
+        // Default: empty diff so tests that only exercise GetFilesAsync don't trip the
+        // GetAllFileDiffsAsync code path with a NSubstitute null result.
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(string.Empty);
+
         _provider = new LocalReviewProvider(
             _rootProvider,
             _gitClient,
-            new StructuredDiffBuilder(new DiffPlexDiffAlgorithm(), NullLogger<StructuredDiffBuilder>.Instance),
             new FileClassifier(),
             NullLogger<LocalReviewProvider>.Instance);
     }
@@ -137,17 +140,104 @@ public class LocalReviewProviderTests
         await _gitClient.Received(1).GetChangedFilesAsync(RepoRoot, scope, Arg.Any<CancellationToken>());
     }
 
-    // --- GetFileDiffAsync ---
+    // --- GetAllFileDiffsAsync ---
+
+    [Fact]
+    public async Task GetAllFileDiffsAsync_SingleInvocationToGitClient_ReturnsParsedFiles()
+    {
+        const string diff =
+            "diff --git a/src/A.cs b/src/A.cs\n" +
+            "--- a/src/A.cs\n" +
+            "+++ b/src/A.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new\n" +
+            "diff --git a/src/B.cs b/src/B.cs\n" +
+            "--- a/src/B.cs\n" +
+            "+++ b/src/B.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        var result = await _provider.GetAllFileDiffsAsync(LocalReviewScope.Staged());
+
+        Assert.Equal(2, result.Files.Count);
+        Assert.Equal("src/A.cs", result.Files[0].Path);
+        Assert.Equal("src/B.cs", result.Files[1].Path);
+        await _gitClient.Received(1).GetUnifiedDiffAsync(
+            RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAllFileDiffsAsync_AppliesGeneratedSkipReason()
+    {
+        const string diff =
+            "diff --git a/obj/Debug/net8.0/out.cs b/obj/Debug/net8.0/out.cs\n" +
+            "--- a/obj/Debug/net8.0/out.cs\n" +
+            "+++ b/obj/Debug/net8.0/out.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        var result = await _provider.GetAllFileDiffsAsync(LocalReviewScope.Staged());
+
+        Assert.Single(result.Files);
+        Assert.Equal("generated file", result.Files[0].SkipReason);
+        Assert.Empty(result.Files[0].Hunks);
+    }
+
+    [Fact]
+    public async Task GetAllFileDiffsAsync_PreservesGitBinarySkipReason()
+    {
+        const string diff =
+            "diff --git a/img.png b/img.png\n" +
+            "Binary files a/img.png and b/img.png differ";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        var result = await _provider.GetAllFileDiffsAsync(LocalReviewScope.Staged());
+
+        Assert.Equal("binary file", result.Files[0].SkipReason);
+    }
+
+    [Fact]
+    public async Task GetAllFileDiffsAsync_EmptyDiff_ReturnsZeroFiles()
+    {
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(string.Empty);
+
+        var result = await _provider.GetAllFileDiffsAsync(LocalReviewScope.Staged());
+
+        Assert.Empty(result.Files);
+    }
+
+    [Fact]
+    public async Task GetAllFileDiffsAsync_ThrowsLocalRepositoryNotFoundException_WhenRootNotResolved()
+    {
+        _rootProvider.ResolveRepositoryRoot().Returns((string?)null);
+
+        await Assert.ThrowsAsync<LocalRepositoryNotFoundException>(
+            () => _provider.GetAllFileDiffsAsync(LocalReviewScope.WorkingTree()));
+    }
+
+    // --- GetFileDiffAsync (now layered on GetAllFileDiffsAsync) ---
 
     [Fact]
     public async Task GetFileDiffAsync_ReturnsDiff_ForMatchingFile()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Service.cs") });
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "HEAD", Arg.Any<CancellationToken>())
-            .Returns("old line");
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", LocalGitClient.WorkingTreeRef, Arg.Any<CancellationToken>())
-            .Returns("new line");
+        const string diff =
+            "diff --git a/src/Service.cs b/src/Service.cs\n" +
+            "--- a/src/Service.cs\n" +
+            "+++ b/src/Service.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old line\n" +
+            "+new line";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
         var result = await _provider.GetFileDiffAsync("src/Service.cs", LocalReviewScope.WorkingTree());
 
@@ -161,10 +251,15 @@ public class LocalReviewProviderTests
     [Fact]
     public async Task GetFileDiffAsync_IsCaseInsensitive()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Service.cs") });
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns("content");
+        const string diff =
+            "diff --git a/src/Service.cs b/src/Service.cs\n" +
+            "--- a/src/Service.cs\n" +
+            "+++ b/src/Service.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
         var result = await _provider.GetFileDiffAsync("SRC/SERVICE.CS", LocalReviewScope.WorkingTree());
 
@@ -172,10 +267,10 @@ public class LocalReviewProviderTests
     }
 
     [Fact]
-    public async Task GetFileDiffAsync_ThrowsLocalFileNotFoundException_WhenNotChanged()
+    public async Task GetFileDiffAsync_ThrowsLocalFileNotFoundException_WhenNotInDiff()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Other.cs") });
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(string.Empty);
 
         await Assert.ThrowsAsync<LocalFileNotFoundException>(
             () => _provider.GetFileDiffAsync("src/NotChanged.cs", LocalReviewScope.WorkingTree()));
@@ -191,33 +286,37 @@ public class LocalReviewProviderTests
     }
 
     [Fact]
-    public async Task GetFileDiffAsync_SetsSkipReason_ForDeletedFile()
+    public async Task GetFileDiffAsync_SetsChangeType_Delete_ForDeletedFile()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('D', "src/Deleted.cs") });
+        const string diff =
+            "diff --git a/src/Deleted.cs b/src/Deleted.cs\n" +
+            "deleted file mode 100644\n" +
+            "--- a/src/Deleted.cs\n" +
+            "+++ /dev/null\n" +
+            "@@ -1 +0,0 @@\n" +
+            "-bye";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
         var result = await _provider.GetFileDiffAsync("src/Deleted.cs", LocalReviewScope.WorkingTree());
 
-        Assert.Equal("file deleted", result.Files[0].SkipReason);
-        Assert.Empty(result.Files[0].Hunks);
-    }
-
-    [Fact]
-    public async Task GetFileDiffAsync_SetsSkipReason_ForRenamedFile()
-    {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('R', "src/New.cs", "src/Old.cs") });
-
-        var result = await _provider.GetFileDiffAsync("src/New.cs", LocalReviewScope.WorkingTree());
-
-        Assert.Equal("file renamed", result.Files[0].SkipReason);
+        // Deleted files keep their hunks (the review can still see what was removed).
+        // ChangeType signals the deletion to downstream consumers.
+        Assert.Equal("delete", result.Files[0].ChangeType);
     }
 
     [Fact]
     public async Task GetFileDiffAsync_SetsSkipReason_ForBinaryFile()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "lib/tool.dll") });
+        const string diff =
+            "diff --git a/lib/tool.dll b/lib/tool.dll\n" +
+            "--- a/lib/tool.dll\n" +
+            "+++ b/lib/tool.dll\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
         var result = await _provider.GetFileDiffAsync("lib/tool.dll", LocalReviewScope.WorkingTree());
 
@@ -228,61 +327,166 @@ public class LocalReviewProviderTests
     [Fact]
     public async Task GetFileDiffAsync_SetsSkipReason_ForGeneratedFile()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "/obj/Debug/net8.0/out.cs") });
+        const string diff =
+            "diff --git a/obj/Debug/net8.0/out.cs b/obj/Debug/net8.0/out.cs\n" +
+            "--- a/obj/Debug/net8.0/out.cs\n" +
+            "+++ b/obj/Debug/net8.0/out.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
-        var result = await _provider.GetFileDiffAsync("/obj/Debug/net8.0/out.cs", LocalReviewScope.WorkingTree());
+        var result = await _provider.GetFileDiffAsync("obj/Debug/net8.0/out.cs", LocalReviewScope.WorkingTree());
 
         Assert.Equal("generated file", result.Files[0].SkipReason);
         Assert.Empty(result.Files[0].Hunks);
     }
 
     [Fact]
-    public async Task GetFileDiffAsync_UsesStagedRef_ForStagedScope()
+    public async Task GetFileDiffAsync_PassesScopeToUnifiedDiff()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Service.cs") });
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "HEAD", Arg.Any<CancellationToken>())
-            .Returns("base");
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", ":0", Arg.Any<CancellationToken>())
-            .Returns("staged");
-
-        await _provider.GetFileDiffAsync("src/Service.cs", LocalReviewScope.Staged());
-
-        await _gitClient.Received(1).GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", ":0", Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task GetFileDiffAsync_UsesBranchRef_ForBranchDiffScope()
-    {
-        var scope = LocalReviewScope.BranchDiff("main");
-        _gitClient.GetChangedFilesAsync(RepoRoot, scope, Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Service.cs") });
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "main", Arg.Any<CancellationToken>())
-            .Returns("base");
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "HEAD", Arg.Any<CancellationToken>())
-            .Returns("head");
+        var scope = LocalReviewScope.Staged();
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, scope, Arg.Any<CancellationToken>())
+            .Returns(
+                "diff --git a/src/Service.cs b/src/Service.cs\n" +
+                "--- a/src/Service.cs\n" +
+                "+++ b/src/Service.cs\n" +
+                "@@ -1 +1 @@\n" +
+                "-base\n" +
+                "+staged");
 
         await _provider.GetFileDiffAsync("src/Service.cs", scope);
 
-        await _gitClient.Received(1).GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "main", Arg.Any<CancellationToken>());
-        await _gitClient.Received(1).GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "HEAD", Arg.Any<CancellationToken>());
+        await _gitClient.Received(1).GetUnifiedDiffAsync(RepoRoot, scope, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_AfterGetAllFileDiffs_ServesFromCache_WithoutSecondGitCall()
+    {
+        const string diff =
+            "diff --git a/src/A.cs b/src/A.cs\n" +
+            "--- a/src/A.cs\n" +
+            "+++ b/src/A.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new\n" +
+            "diff --git a/src/B.cs b/src/B.cs\n" +
+            "--- a/src/B.cs\n" +
+            "+++ b/src/B.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-x\n" +
+            "+y";
+        var scope = LocalReviewScope.WorkingTree();
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        // Prime the cache via the orchestrator-style aggregate call.
+        _ = await _provider.GetAllFileDiffsAsync(scope);
+
+        // Two single-file lookups against the same scope must hit the cache; only the
+        // initial GetAllFileDiffsAsync should reach git.
+        var a = await _provider.GetFileDiffAsync("src/A.cs", scope);
+        var b = await _provider.GetFileDiffAsync("src/B.cs", scope);
+
+        Assert.Equal("src/A.cs", a.Files[0].Path);
+        Assert.Equal("src/B.cs", b.Files[0].Path);
+        await _gitClient.Received(1).GetUnifiedDiffAsync(
+            RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_DoesNotReuseCache_AcrossDifferentScopes()
+    {
+        const string diff =
+            "diff --git a/src/A.cs b/src/A.cs\n" +
+            "--- a/src/A.cs\n" +
+            "+++ b/src/A.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        _ = await _provider.GetAllFileDiffsAsync(LocalReviewScope.WorkingTree());
+        _ = await _provider.GetFileDiffAsync("src/A.cs", LocalReviewScope.Staged());
+
+        // Different scope → cache miss → second git invocation expected.
+        await _gitClient.Received(2).GetUnifiedDiffAsync(
+            RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GetFileDiffAsync_SetsAdditionsAndDeletions()
     {
-        _gitClient.GetChangedFilesAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
-            .Returns(new List<LocalFileStatus> { new('M', "src/Service.cs") });
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", "HEAD", Arg.Any<CancellationToken>())
-            .Returns("old line");
-        _gitClient.GetFileContentAtRefAsync(RepoRoot, "src/Service.cs", LocalGitClient.WorkingTreeRef, Arg.Any<CancellationToken>())
-            .Returns("new line");
+        const string diff =
+            "diff --git a/src/Service.cs b/src/Service.cs\n" +
+            "--- a/src/Service.cs\n" +
+            "+++ b/src/Service.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old line\n" +
+            "+new line";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
 
         var result = await _provider.GetFileDiffAsync("src/Service.cs", LocalReviewScope.WorkingTree());
 
         Assert.Equal(1, result.Files[0].Additions);
         Assert.Equal(1, result.Files[0].Deletions);
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_RenamedFile_LookupByNewPath_ReturnsDiffWithRenameChangeType()
+    {
+        // Contract pinned by UnifiedPatchParserTests.ParseMultiFile_RenamedFile_SetsChangeTypeAndUsesNewPath:
+        // the parser keys the FileChange on the b-side (new) path. Callers asking by the
+        // new path get the diff back with ChangeType == "rename".
+        const string diff =
+            "diff --git a/src/Old.cs b/src/New.cs\n" +
+            "similarity index 95%\n" +
+            "rename from src/Old.cs\n" +
+            "rename to src/New.cs\n" +
+            "index abc1234..def5678 100644\n" +
+            "--- a/src/Old.cs\n" +
+            "+++ b/src/New.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        var result = await _provider.GetFileDiffAsync("src/New.cs", LocalReviewScope.WorkingTree());
+
+        Assert.Single(result.Files);
+        Assert.Equal("src/New.cs", result.Files[0].Path);
+        Assert.Equal("rename", result.Files[0].ChangeType);
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_RenamedFile_LookupByOldPath_ThrowsLocalFileNotFoundException()
+    {
+        // Regression guard: the diff pipeline keys the FileChange on the b-side (new) path,
+        // so a caller that mistakenly asks for the old path of a renamed file must receive
+        // LocalFileNotFoundException — not a silent miss that would surface upstream as
+        // "no diff for this file" with no diagnostic. Replaces the prior
+        // GetFileDiffAsync_SetsSkipReason_ForRenamedFile test that asserted the legacy
+        // "file renamed" SkipReason contract removed in the unified-diff refactor (daf8a71).
+        const string diff =
+            "diff --git a/src/Old.cs b/src/New.cs\n" +
+            "similarity index 95%\n" +
+            "rename from src/Old.cs\n" +
+            "rename to src/New.cs\n" +
+            "index abc1234..def5678 100644\n" +
+            "--- a/src/Old.cs\n" +
+            "+++ b/src/New.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        await Assert.ThrowsAsync<LocalFileNotFoundException>(
+            () => _provider.GetFileDiffAsync("src/Old.cs", LocalReviewScope.WorkingTree()));
     }
 
     // --- GetSkipReason unit tests ---

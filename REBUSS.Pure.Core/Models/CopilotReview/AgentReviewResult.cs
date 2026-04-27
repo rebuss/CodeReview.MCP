@@ -4,13 +4,13 @@ namespace REBUSS.Pure.Core.Models.CopilotReview;
 /// Aggregate result of a Copilot review across all pages. Source-agnostic — serves
 /// both PR reviews (key format <c>pr:{N}</c>) and local self-reviews
 /// (key format <c>local:{scope}:{repoRoot}</c>).
-/// Cached in <see cref="Services.CopilotReview.ICopilotReviewOrchestrator"/>'s
+/// Cached in <see cref="Services.CopilotReview.IAgentReviewOrchestrator"/>'s
 /// string-keyed dictionary for the lifetime of the MCP server process.
 /// </summary>
-public sealed record CopilotReviewResult
+public sealed record AgentReviewResult
 {
     public required string ReviewKey { get; init; }
-    public required IReadOnlyList<CopilotPageReviewResult> PageReviews { get; init; }
+    public required IReadOnlyList<AgentPageReviewResult> PageReviews { get; init; }
     public required DateTimeOffset CompletedAt { get; init; }
 
     public int TotalPages => PageReviews.Count;

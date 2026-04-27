@@ -119,3 +119,10 @@ After modifying or generating code:
 - If tests fail due to legitimate logic changes, update or extend them accordingly.
 - Add new unit tests when new functionality requires coverage.
 - Follow Clean Code principles and strictly adhere to SOLID design guidelines in all code you produce or modify.
+
+## Active Technologies
+- C# 14, .NET 10 (`net10.0`), nullable + implicit usings enabled (per Constitution §Technology). + `System.Text.Json`, `Microsoft.Extensions.Logging`, `Microsoft.Extensions.Options`. No new third-party packages. (023-local-review-finding-validation)
+- Filesystem reads via `ILocalGitClient` (git child process) for index/HEAD content, direct `File.ReadAllTextAsync` for working tree (already used inside `LocalGitClient.GetFileContentAtRefAsync`). (023-local-review-finding-validation)
+
+## Recent Changes
+- 023-local-review-finding-validation: Introduced review-mode-aware source resolution for finding validation. New `IFindingSourceProvider` (Core) abstracts "read the file's after-state for verdict checking"; `IFindingSourceProviderSelector` picks the right implementation per review key. `RemoteArchiveSourceProvider` serves PR-style keys via the existing archive-download path; `LocalWorkspaceSourceProvider` serves `local:*` keys (`local:staged:`, `local:working-tree:`, `local:branch-diff:<base>:`) by reading the matching git ref through `ILocalGitClient` — index for staged, working tree for working-tree, HEAD for branch-diff. Net effect: self-review now applies the same false-positive filter as PR review.

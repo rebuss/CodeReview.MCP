@@ -12,7 +12,7 @@ namespace REBUSS.Pure.Tests.Services.LocalReview;
 /// </summary>
 public class LocalGitClientParseTests
 {
-    // The static parsing helpers are internal — accessible via InternalsVisibleTo.
+    // The static parsing helpers are internal ï¿½ accessible via InternalsVisibleTo.
     // We exercise them by invoking GetChangedFilesAsync against a fake git result
     // through a subclass that overrides process execution.
 
@@ -146,6 +146,90 @@ public class LocalGitClientParseTests
         Assert.IsType<GitCommandException>(ex.InnerException);
     }
 
+    // --- BuildShowArgs (Feature 023 â€” git show args for staged/HEAD/branch reads) ---
+
+    [Fact]
+    public void BuildShowArgs_IndexRef_UsesBareColon()
+    {
+        // Stage-0 index content is read via `git show :<path>` (no ref name before the colon).
+        Assert.Equal("show :src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", LocalGitClient.IndexRef));
+    }
+
+    [Fact]
+    public void BuildShowArgs_IndexRef_CaseInsensitive()
+    {
+        // Sentinel comparison is OrdinalIgnoreCase; "index" must work as well as "INDEX".
+        Assert.Equal("show :src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", "index"));
+    }
+
+    [Fact]
+    public void BuildShowArgs_HeadRef_UsesHeadColonPath()
+    {
+        Assert.Equal("show HEAD:src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", "HEAD"));
+    }
+
+    [Fact]
+    public void BuildShowArgs_BranchRef_UsesBranchColonPath()
+    {
+        Assert.Equal("show feature/abc:src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", "feature/abc"));
+    }
+
+    [Fact]
+    public void BuildShowArgs_CommitShaRef_UsesShaColonPath()
+    {
+        Assert.Equal("show abc1234:src/Foo.cs", InvokeBuildShowArgs("src/Foo.cs", "abc1234"));
+    }
+
+    // --- BuildDiffArgs (P0 fix: single-process unified diff per scope) ---
+
+    [Fact]
+    public void BuildDiffArgs_Staged_WithHead_UsesDiffCachedHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 --cached HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.Staged(), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_Staged_WithoutHead_UsesDiffCachedWithoutHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 --cached",
+            InvokeBuildDiffArgs(LocalReviewScope.Staged(), hasHead: false));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_WorkingTree_WithHead_UsesDiffHead()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.WorkingTree(), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_WorkingTree_WithoutHead_UsesBareDiff()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3",
+            InvokeBuildDiffArgs(LocalReviewScope.WorkingTree(), hasHead: false));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_BranchDiff_WithHead_UsesTripleDot()
+    {
+        Assert.Equal(
+            "diff --no-color --no-ext-diff -U3 main...HEAD",
+            InvokeBuildDiffArgs(LocalReviewScope.BranchDiff("main"), hasHead: true));
+    }
+
+    [Fact]
+    public void BuildDiffArgs_BranchDiff_WithoutHead_ThrowsGitCommandException()
+    {
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(
+            () => InvokeBuildDiffArgs(LocalReviewScope.BranchDiff("main"), hasHead: false));
+        Assert.IsType<GitCommandException>(ex.InnerException);
+    }
+
     // --- Helpers that invoke internal parsing via reflection ---
 
     private static IReadOnlyList<LocalFileStatus> InvokeParsePorcelain(string output)
@@ -164,6 +248,14 @@ public class LocalGitClientParseTests
         return (IReadOnlyList<LocalFileStatus>)method.Invoke(null, new object[] { output })!;
     }
 
+    private static string InvokeBuildShowArgs(string normalizedPath, string gitRef)
+    {
+        var method = typeof(LocalGitClient).GetMethod(
+            "BuildShowArgs",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        return (string)method.Invoke(null, new object[] { normalizedPath, gitRef })!;
+    }
+
     private static (string Args, string Mode) InvokeBuildStatusArgs(LocalReviewScope scope, bool hasHead)
     {
         var method = typeof(LocalGitClient).GetMethod(
@@ -174,5 +266,13 @@ public class LocalGitClientParseTests
         var args = (string)tupleType.GetField("Item1")!.GetValue(result)!;
         var mode = tupleType.GetField("Item2")!.GetValue(result)!.ToString()!;
         return (args, mode);
+    }
+
+    private static string InvokeBuildDiffArgs(LocalReviewScope scope, bool hasHead)
+    {
+        var method = typeof(LocalGitClient).GetMethod(
+            "BuildDiffArgs",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        return (string)method.Invoke(null, new object[] { scope, hasHead })!;
     }
 }

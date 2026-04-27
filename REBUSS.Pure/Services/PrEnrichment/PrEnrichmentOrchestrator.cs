@@ -164,6 +164,7 @@ public sealed class PrEnrichmentOrchestrator : IPrEnrichmentOrchestrator, IDispo
                 Allocation = allocation,
                 SafeBudgetTokens = safeBudgetTokens,
                 CompletedAt = DateTimeOffset.UtcNow,
+                RawFileChangesFromDiff = diff.Files.Count,
             };
 
             lock (_lock)

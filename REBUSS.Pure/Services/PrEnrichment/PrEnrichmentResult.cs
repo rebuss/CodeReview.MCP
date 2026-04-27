@@ -36,4 +36,12 @@ public sealed record PrEnrichmentResult : IEnrichmentResult
     public required int SafeBudgetTokens { get; init; }
 
     public required DateTimeOffset CompletedAt { get; init; }
+
+    /// <summary>
+    /// Number of files in the PR diff returned by the SCM provider, before classifier
+    /// filtering. Used by <c>get_pr_content</c>'s contradiction guard: when this is 0
+    /// but PR metadata reports &gt; 0 changed files, the diff fetch silently failed and
+    /// must surface as an error rather than as a successful empty review.
+    /// </summary>
+    public required int RawFileChangesFromDiff { get; init; }
 }

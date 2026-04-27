@@ -22,7 +22,7 @@ namespace REBUSS.Pure.Services.CopilotReview.Inspection;
 /// it with any auth material.</item>
 /// </list>
 /// </remarks>
-internal interface ICopilotInspectionWriter
+internal interface IAgentInspectionWriter
 {
     /// <summary>Capture a prompt that was sent to the Copilot review agent.</summary>
     /// <param name="reviewKey">Opaque review identifier from the orchestrator (e.g., <c>pr:42</c>).</param>

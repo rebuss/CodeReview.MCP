@@ -566,11 +566,11 @@ orchestrators exist because `IOptions<T>` cannot express in-flight `Task`
 lifecycles, and a static class would make tests impossible without process
 restart.
 
-## 6b. Copilot Review Pipeline (CopilotReviewOrchestrator)
+## 6b. Copilot Review Pipeline (AgentReviewOrchestrator)
 
 ### Why batched parallel dispatch
 
-`CopilotReviewOrchestrator` coordinates server-side Copilot review of every page
+`AgentReviewOrchestrator` coordinates server-side Copilot review of every page
 of enriched content. Pages are dispatched **in batches** (`CopilotReviewOptions.MaxConcurrentPages`,
 default 6): for each batch the orchestrator launches one `Task.Run` per page,
 awaits `Task.WhenAll` on the batch, then starts the next batch. Within a batch
@@ -597,11 +597,11 @@ where `B = min(MaxConcurrentPages, remaining pages)` and `S = MinRequestInterval
 | `CompletedPages` counter | `Interlocked.Increment` — lock-free atomic |
 | `CurrentActivity` | `volatile string?` — last writer wins (cosmetic) |
 | `Status`, `Result`, `ErrorMessage` | Guarded by `_lock` |
-| Job dictionary | `ConcurrentDictionary<string, CopilotReviewJob>` |
+| Job dictionary | `ConcurrentDictionary<string, AgentReviewJob>` |
 
 ### Progress observation
 
-`CopilotReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
+`AgentReviewWaiter` polls `TryGetSnapshot()` at a configurable interval
 (`CopilotReviewProgressPollingIntervalMs`, default 2000ms) and emits two kinds of
 IDE notifications:
 
@@ -625,7 +625,7 @@ message can never be re-emitted after a counter tick.
 Each page gets up to 3 attempts (`MaxAttemptsPerPage = 3`) inside
 `ReviewPageWithRetryAsync`. No backoff — retries fire immediately. On exhaustion,
 the orchestrator fills in `FailedFilePaths` (only it knows which files were on
-the page) and returns a `CopilotPageReviewResult.Failure`.
+the page) and returns a `AgentPageReviewResult.Failure`.
 
 ### Finding validation pipeline (Feature 021)
 
@@ -642,7 +642,7 @@ parse → resolve scopes → severity-order → token-budget pages → SDK call(
 |---|---|---|
 | Parse | `FindingParser.Parse` | Per-page Markdown → `ParsedFinding[]` + the unparseable remainder (free-form prose preserved verbatim, FR-012). The regex is a tolerant safety net over what `copilot-page-review.md` demands: swallows leading list markers (`- `, `* `, `1. `), and for the line expression accepts `42`, `~42`, `≈42`, `42-50`, `approx 42`, `(line unknown)` — the first integer is extracted; "unknown" yields `LineNumber == null` |
 | Threshold | orchestrator | If total findings > `MaxValidatableFindings` (default 40) → skip validation entirely (likely a systemic issue) |
-| Resolve scopes | `FindingScopeResolver` | **Non-`.cs`** ⇒ `NotCSharp` (passthrough, no Copilot call). **Missing source** ⇒ `SourceUnavailable`. **`.cs` with source** — smart-line + fallback chain: (1) if `LineNumber == null`, ask `FindingLineResolver` (in `RoslynProcessor`) to locate a line from identifiers cited in backticks in the description; (2) run `FindingScopeExtractor` at that line — when the method body exceeds `MaxScopeLines` (default 150), truncate with a window ±`MaxScopeLines/2` plus `// ... (X lines omitted) ...` markers; (3) if (2) fails (line on a `using`/top-level/malformed syntax), retry `FindingLineResolver` with the original line as a hint and re-run (2); (4) still failing ⇒ whole-file fallback: truncate source to `MaxScopeLines × 2` centred on the middle with a `// ... (X lines omitted from middle) ...` marker, scope name tagged `<entire file: {path}>`, **ResolutionFailure.None** so it still reaches Copilot. This chain was added after observing that Copilot frequently omits line numbers or writes approximations for file-level findings — previously those would silently short-circuit to `ScopeNotFound → Uncertain` and skip validation |
+| Resolve scopes | `FindingScopeResolver` | **Non-`.cs`** ⇒ `NotCSharp` (passthrough, no provider call — FR-007). **Otherwise** the after-state source is fetched via `IFindingSourceProviderSelector.SelectFor(reviewKey).GetAfterCodeAsync(filePath, ct)` — see "Per-`reviewKey` source provider selection" below. Null result ⇒ `SourceUnavailable`. **`.cs` with source** — smart-line + fallback chain: (1) if `LineNumber == null`, ask `FindingLineResolver` (in `RoslynProcessor`) to locate a line from identifiers cited in backticks in the description; (2) run `FindingScopeExtractor` at that line — when the method body exceeds `MaxScopeLines` (default 150), truncate with a window ±`MaxScopeLines/2` plus `// ... (X lines omitted) ...` markers; (3) if (2) fails (line on a `using`/top-level/malformed syntax), retry `FindingLineResolver` with the original line as a hint and re-run (2); (4) still failing ⇒ whole-file fallback: truncate source to `MaxScopeLines × 2` centred on the middle with a `// ... (X lines omitted from middle) ...` marker, scope name tagged `<entire file: {path}>`, **ResolutionFailure.None** so it still reaches Copilot. This chain was added after observing that Copilot frequently omits line numbers or writes approximations for file-level findings — previously those would silently short-circuit to `ScopeNotFound → Uncertain` and skip validation |
 | Phase 1 verdicts | `FindingValidator` | Deterministic, no Copilot call: `NotCSharp` → `Valid` (passthrough), `SourceUnavailable` → `Uncertain`. `ScopeNotFound` → `Uncertain` is retained as a **defensive mapping** (pinned by `ValidateAsync_ScopeNotFound_MapsToUncertainWithoutCopilotCall`) — the whole-file fallback in `FindingScopeResolver` means no current code path produces `ScopeNotFound` for `.cs` findings, but the validator must stay resilient if a future producer reintroduces this state |
 | Severity order | `FindingSeverityOrderer.Order` | Stable sort by severity rank: `critical=0`, `major=1`, `minor=2`, unknown last. Ensures the most important issues land in the first SDK call's prompt |
 | Token budgeting | `IPageAllocator` + `ITokenEstimator` | Build one synthetic `PackingCandidate` per finding+scope pair, with `EstimatedTokens` from `EstimateTokenCount` over the per-finding prompt section. Allocate against `ReviewBudgetTokens − templateOverhead` so the wrapping prompt template (loaded once and measured) is accounted for. **Token budget — not a fixed batch size — controls how many findings fit per Copilot SDK call.** This is the same mechanism used to paginate the original review pass |
@@ -655,10 +655,67 @@ Graceful-degradation policy (FR-012) is preserved at every step: validator failu
 keeps original findings as `Valid` so a flaky validation pass never breaks the
 review output.
 
+#### Per-`reviewKey` source provider selection (Feature 023)
+
+Validation needs the file's after-state source to feed Copilot. The same source
+abstraction serves both PR reviews and local self-reviews; the choice is made per
+review by the `reviewKey` prefix that the orchestrator already carries (`job.ReviewKey`,
+forwarded into `FindingScopeResolver.ResolveAsync`):
+
+| `reviewKey` prefix | Source provider | Underlying read |
+|---|---|---|
+| `local:staged:…` | `LocalWorkspaceSourceProvider` (bound to `LocalGitClient.IndexRef`) | `git show :<path>` — stage-0 index content |
+| `local:working-tree:…` | `LocalWorkspaceSourceProvider` (bound to `LocalGitClient.WorkingTreeRef`) | `File.ReadAllTextAsync` from the working tree |
+| `local:branch-diff:<base>:…` | `LocalWorkspaceSourceProvider` (bound to `"HEAD"`) | `git show HEAD:<path>` — current branch tip |
+| anything else (PR-style keys) | `RemoteArchiveSourceProvider` | `IRepositoryDownloadOrchestrator.GetExtractedPathAsync` → `RepositoryFileResolver.ResolvePath` → `File.ReadAllTextAsync` |
+
+Prefixes mirror `LocalReviewScope.ToString()` exactly. The handler builds review keys
+as `$"local:{scope}:{repoRoot}"`; the selector matches the same forms. A divergence
+between the emitter and the selector silently routes local reviews to the remote
+provider and the validator degrades every finding to "uncertain" — keep them in sync.
+
+Why per-mode read paths matter: each local mode's diff reports a different "after"
+side. `local:staged` compares index vs HEAD, so the after-side is the index — not
+the working tree, which the developer may have continued editing post-stage. Reading
+the wrong snapshot would let the validator judge bytes that were never under review,
+producing misleading verdicts.
+
+Mechanics:
+
+1. **Selector** (`FindingSourceProviderSelector`, singleton) — pure prefix dispatch.
+   Returns the singleton `RemoteArchiveSourceProvider` for non-local keys, or a
+   per-call `BoundLocalSourceProvider` wrapper for local prefixes.
+2. **Bound wrapper** — value object allocated once per `FindingScopeResolver.ResolveAsync`
+   call. Carries the resolved `gitRef` and a `_warnedRootMissing` boolean used to
+   collapse the "workspace root unresolvable" warning to **one log line per review**
+   (FR-006). Implements `IFindingSourceProvider`; mutable state is review-scoped, not
+   service-scoped, so Constitution §VI's "services must be stateless" rule is preserved.
+3. **`LocalWorkspaceSourceProvider`** — singleton service. Resolves the workspace root
+   **per call** (`IWorkspaceRootProvider.ResolveRepositoryRoot()`, Constitution §V) so
+   a re-rooted workspace mid-session is honored on the next review. Delegates to
+   `ILocalGitClient.GetFileContentAtRefAsync` with the bound gitRef. Enforces the same
+   100 KB cap as PR mode (FR-005) for verdict comparability.
+4. **`RemoteArchiveSourceProvider`** — singleton service. Reproduces the prior PR-mode
+   path (orchestrator wait → `RepositoryFileResolver` → 100 KB cap → file read) with the
+   same 3-minute internal timeout that `DiffSourceResolver` used, so PR reviews see
+   no behavior change (FR-003).
+5. **`DiffSourceResolver` is unchanged.** It still serves the Roslyn enrichers
+   (`BeforeAfterEnricher`, `ScopeAnnotatorEnricher`, `CallSiteEnricher`,
+   `StructuralChangeEnricher`, `FileStructureValidationEnricher`, `UsingsChangeEnricher`),
+   which require both before-code and after-code. The validator's narrower "after-only"
+   need is now served by the new abstraction.
+
+Pre-fix vs. post-fix behavior summary: pre-fix, all `local:*` reviews silently produced
+`SourceUnavailable → Uncertain` for every `.cs` finding because `DiffSourceResolver`
+was wired to the PR-archive download path that local reviews never populate. Post-fix,
+local reviews reach the configured agent with the correct after-state and produce
+`Valid` / `FalsePositive` / `Uncertain` verdicts indistinguishable from PR mode.
+
 #### What gets logged where
 
-- `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each Copilot SDK
-  exchange. Kinds in use: `page-{N}-review` from `CopilotPageReviewer`,
+- `_inspection.WritePromptAsync` / `WriteResponseAsync` capture each agent
+  exchange (Copilot SDK or Claude CLI, behind the `IAgentInvoker` seam).
+  Kinds in use: `page-{N}-review` from `AgentPageReviewer`,
   `validation-{N}` from `FindingValidator`. There is no separate "summary" file —
   the validation prompt is itself the consolidated dump of every finding (with
   scope source) and the response carries every verdict, so they double as the
@@ -672,14 +729,68 @@ review output.
 
 `LocalReviewScope` is a sealed class with private constructor and static factory methods:
 
-| Scope | Factory | Git Command | Base Ref | Target Ref |
-|---|---|---|---|---|
-| **WorkingTree** | `WorkingTree()` | `diff --name-status HEAD` | `HEAD` | `WORKING_TREE` (filesystem) |
-| **Staged** | `Staged()` | `diff --name-status --cached HEAD` | `HEAD` | `:0` (index) |
-| **BranchDiff** | `BranchDiff(base)` | `diff --name-status {base}...HEAD` | `{base}` | `HEAD` |
+| Scope | Factory | Status command | Diff command (P0) |
+|---|---|---|---|
+| **WorkingTree** | `WorkingTree()` | `diff --name-status HEAD` | `diff --no-color --no-ext-diff -U3 HEAD` |
+| **Staged** | `Staged()` | `diff --name-status --cached HEAD` | `diff --no-color --no-ext-diff -U3 --cached HEAD` |
+| **BranchDiff** | `BranchDiff(base)` | `diff --name-status {base}...HEAD` | `diff --no-color --no-ext-diff -U3 {base}...HEAD` |
 
 `Parse(string?)` maps user input: `null`/empty/`"working-tree"` → WorkingTree,
 `"staged"` → Staged, anything else → BranchDiff with that value as base.
+
+### Diff fetching: single git invocation per scope
+
+`LocalReviewProvider.GetAllFileDiffsAsync` fetches the entire scope's diff in one
+`git diff -p` invocation via `ILocalGitClient.GetUnifiedDiffAsync`. The output is
+parsed by `UnifiedPatchParser.ParseMultiFile` into `List<FileChange>` directly —
+no base/target file content reads, no C#-side re-diff.
+
+**Why one process per scope:** the prior implementation called
+`GetFileContentAtRefAsync` twice per file (base + target) and re-diffed in C# via
+`IStructuredDiffBuilder`. With N changed files this spawned 2N git child processes
+in parallel. Under IDE load — VS Code's Git extension constantly running its own
+git operations on the same `.git` directory, plus AV process-startup penalties —
+this contended badly: process startup ballooned to ~8 s per call, and any failed
+`git show` was silently swallowed (caught, null returned, treated as "no diff" by
+the diff builder). Result: empty self-review with a "no staged changes" message
+even when the user had staged 10 files. Sourcing the diff from `git diff -p` is
+authoritative (matches what the user sees in the CLI), uses one process, and
+contention with the IDE's git extension is no longer a concern.
+
+`--no-ext-diff` bypasses any external diff driver configured in the user's
+`.gitconfig`; `-U3` matches git's default context but is set explicitly so output
+is stable regardless of `diff.context` config. `--no-color` keeps ANSI escapes
+out of the parser.
+
+**`UnifiedPatchParser`** lives in `REBUSS.Pure.Core.Shared` and exposes two entry
+points: `ParseMultiFile` (full output starting with `diff --git`) and
+`ParseHunks` (single-file hunk-only patches, used by GitHub's per-file `patch`
+field — `GitHubPatchHunkParser` is now a thin wrapper). It recognises
+`new file`, `deleted file`, `rename from/to`, and `Binary files ... differ`
+markers and resolves the file path from `+++ b/<path>` (with fallback to the
+`diff --git` header for binary files where git omits `+++`).
+
+### Contradiction guard (`get_local_content` and `get_pr_content`)
+
+Even with the new pipeline, an upstream signal mismatch (git status reports N
+modified files / PR metadata reports N changed files, but the diff payload is
+empty) is now treated as an error rather than a silent "nothing to review." Both
+content tool handlers throw `McpException` (`IsError=true` over the wire) so the
+calling AI agent sees an explicit failure instead of interpreting an empty
+result as "all good."
+
+Detection signals carried on `LocalEnrichmentResult` / `PrEnrichmentResult`:
+
+| Field | Source | Used by |
+|---|---|---|
+| `RawChangedFileCount` (local) | `git diff --name-status` count | `GetLocalContentToolHandler` |
+| `RawFileChangesFromDiff` (local) | `UnifiedPatchParser.ParseMultiFile(...).Count` | same |
+| `RawFileChangesFromDiff` (PR) | provider's diff `Files.Count` | `GetPullRequestContentToolHandler` (compared lazily against `meta.ChangedFilesCount`) |
+
+The guard fires only when the diff payload is empty AND status/metadata reports
+work to do. Files dropped legitimately as binary/generated (parser produced N,
+classifier filtered all N) do **not** trip the guard — that's a successful
+"nothing reviewable here" outcome.
 
 ### Git Process Spawning
 
@@ -688,29 +799,30 @@ review output.
 Parsing is minimal — only `--name-status` output (tab-delimited: `STATUS\tpath`)
 and `status --porcelain` output are supported.
 
+`git show` failures (used by the finding validator's
+`LocalWorkspaceSourceProvider` for staged-content reads, and by the no-HEAD
+fallback paths) now log at **Warning** level (was Debug). Distinguishing a
+legitimate "file does not exist at this ref" from a transient invocation
+failure (concurrent index access, AV interference) requires reading the stderr
+that git produced — surfacing it at Warning makes silent failures diagnosable.
+
 **`WorkingTreeRef` sentinel:** the constant `"WORKING_TREE"` is a synthetic git ref
 that signals `GetFileContentAtRefAsync` to read the file directly from the filesystem
 (`File.ReadAllTextAsync`) instead of running `git show`. This exists because
 working-tree changes (unstaged edits) aren't addressable by any real git ref —
 they exist only on disk.
 
-For all other refs (`HEAD`, `:0`, commit SHAs, branch names), the method runs
+**`IndexRef` sentinel** (Feature 023): the constant `"INDEX"` is a synthetic ref that
+signals `BuildShowArgs` to emit `show :<path>` (no ref before the colon — git's
+canonical syntax for stage-0 index content). Used by the finding validator's
+`LocalWorkspaceSourceProvider` so `local:staged` reviews read the staged bytes the
+diff actually represents (rather than the working tree, which may have drifted via
+post-stage edits). Without the sentinel, an empty `gitRef` would be required to
+produce `show :<path>` — semantically opaque at call sites.
+
+For all other refs (`HEAD`, commit SHAs, branch names), the method runs
 `git show {ref}:{path}`. If the file doesn't exist at that ref (new file,
 deleted file), the `GitCommandException` is caught and `null` is returned.
-
-### File Content Resolution
-
-`LocalReviewProvider.GetDiffRefs` determines base and target refs per scope:
-
-- **WorkingTree:** base = `HEAD` (last commit), target = `WORKING_TREE` (filesystem).
-  Captures staged + unstaged changes together.
-- **Staged:** base = `HEAD`, target = `:0` (git index). `:0` is git's staging area
-  ref, showing exactly what `git add` has staged.
-- **BranchDiff:** base = `{baseBranch}` (the merge base), target = `HEAD`.
-  Uses `{base}...HEAD` syntax in diff which finds the merge-base automatically.
-
-The resolved content strings are fed to `IStructuredDiffBuilder.Build` which
-produces `DiffHunk[]` using `LcsDiffAlgorithm` (LCS-based line diff).
 
 ## 8. Design Decisions & Rationale
 

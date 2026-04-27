@@ -9,19 +9,19 @@ using REBUSS.Pure.Services.PrEnrichment;
 namespace REBUSS.Pure.Services.CopilotReview;
 
 /// <summary>
-/// Shared helper that polls <see cref="ICopilotReviewOrchestrator.TryGetSnapshot"/>
+/// Shared helper that polls <see cref="IAgentReviewOrchestrator.TryGetSnapshot"/>
 /// at a configurable interval while waiting for a review to finish, sending
 /// incremental MCP progress notifications as pages complete. Used by both
 /// <c>GetPullRequestContentToolHandler</c> and <c>GetLocalContentToolHandler</c>.
 /// </summary>
-public sealed class CopilotReviewWaiter
+public sealed class AgentReviewWaiter
 {
-    private readonly ICopilotReviewOrchestrator _orchestrator;
+    private readonly IAgentReviewOrchestrator _orchestrator;
     private readonly IProgressReporter _progressReporter;
     private readonly IOptions<WorkflowOptions> _workflowOptions;
 
-    public CopilotReviewWaiter(
-        ICopilotReviewOrchestrator orchestrator,
+    public AgentReviewWaiter(
+        IAgentReviewOrchestrator orchestrator,
         IProgressReporter progressReporter,
         IOptions<WorkflowOptions> workflowOptions)
     {
@@ -34,11 +34,11 @@ public sealed class CopilotReviewWaiter
     /// Waits for the Copilot review to complete, sending progress notifications
     /// as pages finish. Returns the final result.
     /// </summary>
-    /// <param name="reviewKey">The review key passed to <see cref="ICopilotReviewOrchestrator.TriggerReview"/>.</param>
+    /// <param name="reviewKey">The review key passed to <see cref="IAgentReviewOrchestrator.TriggerReview"/>.</param>
     /// <param name="progress">SDK-injected progress reporter, or <c>null</c>.</param>
     /// <param name="startingStep">The progress step number to continue from (caller has already reported steps 0..startingStep-1).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<CopilotReviewResult> WaitWithProgressAsync(
+    public async Task<AgentReviewResult> WaitWithProgressAsync(
         string reviewKey,
         IProgress<ProgressNotificationValue>? progress,
         int startingStep,

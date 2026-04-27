@@ -20,6 +20,9 @@ namespace REBUSS.Pure.Services.LocalReview
 
         /// <summary>
         /// Returns a structured diff for a single file within the given <paramref name="scope"/>.
+        /// Implementations may serve repeated calls from a short-lived cache populated by
+        /// <see cref="GetAllFileDiffsAsync"/>, so a typical <em>fetch-all → per-file</em> flow
+        /// pays a single git invocation rather than O(n) per file.
         /// </summary>
         /// <exception cref="LocalRepositoryNotFoundException">
         /// Thrown when no valid git repository root can be resolved.
@@ -29,6 +32,20 @@ namespace REBUSS.Pure.Services.LocalReview
         /// </exception>
         Task<PullRequestDiff> GetFileDiffAsync(
             string filePath,
+            LocalReviewScope scope,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Returns the structured diffs for <b>all</b> changed files in <paramref name="scope"/>
+        /// from a single underlying <c>git diff -p</c> invocation. The enrichment orchestrator
+        /// uses this in place of looping <see cref="GetFileDiffAsync"/> per file: one git
+        /// process replaces 2N parallel ones, eliminating the IDE-side concurrency hazards
+        /// that previously caused empty self-review results.
+        /// </summary>
+        /// <exception cref="LocalRepositoryNotFoundException">
+        /// Thrown when no valid git repository root can be resolved.
+        /// </exception>
+        Task<PullRequestDiff> GetAllFileDiffsAsync(
             LocalReviewScope scope,
             CancellationToken cancellationToken = default);
     }

@@ -7,8 +7,12 @@
 Initializes MCP configuration in the current Git repository.
 
 ```bash
-# Default — auto-detects provider from Git remote
+# Default — auto-detects provider from Git remote, prompts for AI agent
 rebuss-pure init
+
+# Pre-select the AI agent (skips the interactive prompt)
+rebuss-pure init --agent copilot
+rebuss-pure init --agent claude
 
 # With a Personal Access Token
 rebuss-pure init --pat <your-pat>
@@ -17,29 +21,31 @@ rebuss-pure init --pat <your-pat>
 rebuss-pure init --provider github
 rebuss-pure init --provider azuredevops
 
-# Force specific IDE target (skips auto-detection)
+# Force specific IDE target (skips auto-detection; only relevant when --agent copilot)
 rebuss-pure init --ide vscode
 rebuss-pure init --ide vs
 
-# Global mode — writes user-level config (~\.mcp.json, %APPDATA%\Code\User\mcp.json & ~\.copilot\mcp-config.json)
+# Global mode — writes user-level config
+#   --agent copilot → ~\.mcp.json, %APPDATA%\Code\User\mcp.json, ~\.copilot\mcp-config.json
+#   --agent claude  → ~\.claude.json (merged into the existing mcpServers key)
 rebuss-pure init -g
 ```
 
 **What it does:**
 
 1. Finds the Git repository root
-2. Authenticates (Azure CLI or PAT)
-3. Detects IDEs and writes `mcp.json` to the appropriate directory
-4. Copies prompt files to `.github/prompts/`
-5. **(Optional)** Ensures GitHub CLI is installed and authenticated with the Copilot
-   scope so the summarization-resilient Copilot-powered review flow can use the bundled
-   Copilot CLI. This step runs regardless of SCM provider or whether `--pat` was supplied,
-   and is fully optional — declining, failure, or a non-interactive session never changes
-   `init`'s exit code. State is detected fresh on every run, so a previous decline does
-   not suppress the prompt on the next run. When `gh` itself is missing, the first prompt
-   is framed as Copilot setup and declining there skips the entire chain. To enable later
-   without re-running `init`, install GitHub CLI and run: `gh auth login --web -s copilot`
-   — or set `REBUSS_COPILOT_TOKEN` to a Copilot-entitled GitHub token.
+2. Asks which AI agent to wire up (GitHub Copilot or Claude Code) — skipped when `--agent` is supplied
+3. Authenticates with the SCM provider (Azure CLI or `gh auth login --web` or `--pat`)
+4. Writes `mcp.json` with the server entry:
+   - **Copilot**: `.vscode/mcp.json` and/or `.vs/mcp.json` (auto-detected from `.vscode/` / `.vs/` / `*.code-workspace` / `*.sln` markers) using the `servers` top-level key
+   - **Claude Code**: `.mcp.json` at the repo root using the `mcpServers` top-level key; in global mode, merges into `~/.claude.json` preserving any unrelated top-level settings and creating a `.bak` backup
+   - The agent choice is persisted via a `--agent <name>` entry in the server's `args`, so the MCP server knows at runtime which invoker to use
+5. Copies review prompts to `.github/prompts/`. When agent=claude, also mirrors them to `.claude/commands/<name>.md` (stripping `.prompt`) so `/review-pr` and `/self-review` become invocable as slash commands inside Claude Code
+6. **(Optional, agent-specific)** Runs the agent's own install-and-verify step:
+   - **Copilot**: ensures GitHub CLI is installed and authenticated with the Copilot scope so the bundled Copilot CLI can be used. Declining, failure, or a non-interactive session never changes init's exit code. To enable later without re-running `init`: install GitHub CLI and run `gh auth login --web -s copilot`, or set `REBUSS_COPILOT_TOKEN` to a Copilot-entitled GitHub token.
+   - **Claude Code**: installs Claude Code CLI via the platform's native installer (winget on Windows, brew on macOS, `curl | sh` elsewhere — **no Node.js required**), then launches `claude` interactively so its built-in `/login` flow can open a browser for OAuth consent. Falls back to `npm install -g @anthropic-ai/claude-code` only when npm is already on PATH and the native path failed, with a separate y/N prompt. Declining or any failure is a soft exit. To enable later without re-running `init`: install per https://claude.ai/install.ps1 (Windows) or https://claude.ai/install.sh (macOS/Linux), then run `claude` once to authenticate.
+
+> **Agent-specific note**: the `--ide` flag is ignored when `--agent claude` is selected — Claude Code uses a single project-scoped `.mcp.json` at the repo root, so IDE-level targeting does not apply.
 
 ### Copilot Review Layer
 
@@ -52,10 +58,14 @@ earlier findings" problem on large PRs.
 
 **Two modes**: every `get_pr_content` response carries a mode indicator in its first block:
 
-- `[review-mode: copilot-assisted]` — the MCP performed the review. The response contains
-  `=== Page N Review ===` blocks with free-form Copilot output (and `=== Page N Review (FAILED) ===`
-  blocks listing file paths when a page exhausts all 3 retry attempts). The IDE agent
-  organizes findings by severity and does NOT prompt the user page-by-page.
+- `[review-mode: <agent>-assisted]` — the MCP performed the review. `<agent>` is `copilot`
+  or `claude`, matching the `--agent` flag persisted in the server's `mcp.json`. The response
+  contains `=== Page N Review ===` blocks with free-form review output (and
+  `=== Page N Review (FAILED) ===` blocks listing file paths when a page exhausts all 3
+  retry attempts). The IDE agent organizes findings by severity and does NOT prompt the user
+  page-by-page. Prompts that look for the marker should match the `[review-mode: ` prefix
+  rather than hardcoding a specific agent name — both Copilot and Claude reviews surface
+  through this same shape.
 - `[review-mode: content-only]` — the existing enriched-diff flow. Unchanged behavior.
 
 **Configuration keys** — every key below lives under the `CopilotReview` section:
@@ -67,6 +77,7 @@ earlier findings" problem on large PRs.
 | `Model` | `"claude-sonnet-4.6"` | Copilot model passed to `SessionConfig.Model`. If the SDK rejects this string, check `client.ListModelsAsync()` output. |
 | `MaxConcurrentPages` | `6` | Upper bound on how many pages the orchestrator dispatches to Copilot in parallel per batch. Values `< 1` are clamped to `1`. Raise cautiously — the Copilot backend silently re-queues fan-outs above its per-client limit, which can double wall-clock time. |
 | `MinRequestIntervalSeconds` | `3` | Minimum spacing between successive outbound Copilot SDK calls (`CreateSessionAsync` / `SendAsync`), enforced by a process-wide gate. Combines with `MaxConcurrentPages` to shape throughput: the batch size controls fan-out width, this interval controls request rate. Set to `0` to disable (tests only). |
+| `PerPageTimeoutMinutes` | `5` | Per-page hard timeout for the Claude CLI agent (`--agent claude`). When exceeded, the child process is killed and a `TimeoutException` is raised — treated as a failed attempt by the orchestrator's 3-attempt retry, then surfaced as a per-page failure (with the file paths on that page) without aborting sibling pages. Values `< 1` are clamped to `1`. Raise this for very large PRs where individual pages routinely exceed 4 minutes; the previous build had a hard-coded 5-minute ceiling that aborted the entire review when one page ran long. Has no effect when `--agent copilot` is selected. |
 | `CopilotCliPath` | _(unset)_ | Absolute path to a standalone Copilot CLI binary (the `@github/copilot` npm package's `copilot.exe` / `copilot`, **not** the `gh copilot` extension). When set, forwarded to `CopilotClientOptions.CliPath` so the SDK spawns this binary instead of searching for the bundled one under its NuGet `runtimes/` folder. Use this when the SDK package is missing its native payload for your OS/architecture and the server logs `Copilot CLI not found at '…\runtimes\<rid>\native\copilot.exe'`. Environment override: `REBUSS_COPILOT_CLI_PATH` (takes precedence when non-blank). |
 
 **How to set them — `mcp.json` (recommended)**
@@ -468,21 +479,61 @@ get_pr_content(prNumber, modelName)    ← returns the full Copilot-assisted rev
 get_local_content(scope, modelName)    ← computes pages internally and returns the full review in one call
 ```
 
+When `validateFindings` is enabled in `appsettings.json`, self-review (`local:staged`,
+`local:working-tree`, `local:branch-diff:<base>`) applies the same false-positive filter as
+PR review: each finding is re-checked against the file's diff-side source (the index
+for staged, the working tree for working-tree, the current branch HEAD for branch-diff
+reviews) and obvious false positives are removed from the surfaced output.
+
 ---
 
-## Prompts
+## User-facing AI workflows: prompts and skills
 
-After running `rebuss-pure init`, you get:
+`rebuss-pure init` deploys two parallel sets of workflow files — both are written
+regardless of the selected `--agent`, so swapping agents later does not require
+re-running `init`:
 
 ```
-.github/prompts/
+.github/prompts/                  # Copilot / IDE Copilot Chat
 ├── review-pr.prompt.md
 └── self-review.prompt.md
+
+.claude/skills/                   # Claude Code skills
+├── review-pr/
+│   └── SKILL.md
+└── self-review/
+    └── SKILL.md
 ```
+
+**Prompts** are the GitHub Copilot / IDE convention: VS Code Copilot Chat picks
+them up automatically from `.github/prompts/`.
+
+**Skills** are the Claude Code convention. Each skill has YAML frontmatter
+(`name`, `description`, optional `argument-hint`) and is invokable two ways:
+- explicit slash command — `/review-pr <PR-number>` or `/self-review [scope]`
+- automatic — Claude Code matches the user's request against the skill's
+  `description` and invokes the relevant skill on its own (e.g., when the user
+  asks "review my staged changes").
+
+The skill body and the prompt body are kept synchronized — `init` ships the
+identical workflow text in both formats. A unit test guard (`InitCommandTests
+.ExecuteAsync_SkillBodyMatchesPromptBody_AfterStrippingFrontmatter`) prevents
+silent drift between them.
+
+> **Migration note (Feature 024):** earlier versions of `init` deployed a
+> `.claude/commands/<name>.md` slash-command form. Skills replace that
+> mechanism. If `init` finds a pre-024 `.claude/commands/review-pr.md` or
+> `self-review.md`, it moves the file aside as `.bak` so the new skill can take
+> over. Unrelated custom commands in `.claude/commands/` are left untouched.
 
 > **Note for contributors:**
 
-These prompts instruct the AI agent on the review workflows. If you need to add custom rules for your repository, create your own files under `.github/instructions/` (e.g. `team-rules.instructions.md`); `init` will leave them alone.
+These workflow files instruct the AI agent on the review pipelines. If you need
+to add custom rules for your repository, create your own files under
+`.github/instructions/` (e.g. `team-rules.instructions.md`); `init` will leave
+them alone. To customize a deployed skill in-place, edit `.claude/skills/<name>/
+SKILL.md` — the next `init` run will back your edits up to `.bak` before
+overwriting with the current embedded source.
 
 ---
 
@@ -571,6 +622,30 @@ Run `gh auth login` and restart your IDE, or configure a PAT in `appsettings.Loc
 1. Ensure `rebuss-pure init` completed successfully
 2. Check that `.vscode/mcp.json` or `.vs/mcp.json` exists
 3. Restart your IDE or reload the MCP client
+
+### "git status reports N modified file(s) ... but the unified diff returned no content"
+
+The contradiction guard fired: `git status` enumerated changed files for the
+requested scope, but `git diff -p` returned no patch content for them. This is
+treated as a hard error (rather than a silent "nothing to review") because it
+indicates a transient git failure, typically:
+
+- **Concurrent index access from your IDE.** VS Code's Git extension runs
+  `git status`/`git update-index` in the background; under load this can race
+  with the server's diff fetch. Retry the review.
+- **AV process-startup contention.** Real-time scanners (Defender, corporate AV)
+  can stall git child-process startup. If this is recurrent, allowlist `git.exe`
+  and the repo path.
+
+The server log records the underlying git stderr at Warning level — search for
+`LocalGitClient` entries from around the time of the failure.
+
+### "PR #N metadata reports M changed file(s) ... but the diff returned no content"
+
+The PR-side analogue: PR metadata says the PR has changed files, but the diff
+fetched from the SCM provider was empty. Usually a transient API error —
+retry. If it persists, check the server log for provider-side errors (rate
+limits, token expiry, archive download failures).
 
 ### Azure DevOps organization/project not detected
 
@@ -664,6 +739,85 @@ see the banner:
 
    Classic personal access tokens are **not** valid here — they don't
    carry the `copilot` scope regardless of their permissions.
+
+### `get_pr_content` fails with "The operation was canceled" on a large PR (`--agent claude`)
+
+Symptom: 5/6 (or N-1/N) page reviews complete in the inspection cache but the
+tool call returns `Error retrieving PR content: The operation was canceled.`,
+and the MCP server may then disconnect from the host. Server log shows
+`PR pr:NN Copilot review failed: The operation was canceled.` exactly 5 minutes
+after the review started, with one page never completing.
+
+Two timeouts compound here, in this order:
+
+1. **Per-page Claude CLI timeout** — the Claude agent kills its child process
+   after `CopilotReview:PerPageTimeoutMinutes` (default `5`). On large PRs a
+   single page can legitimately need longer; the previous build mis-classified
+   this as ambient cancellation and aborted every other in-flight page along
+   with the slow one. Newer builds raise `TimeoutException`, retry up to 3
+   times, then surface the page as a manual-follow-up entry without breaking
+   the rest of the review. Bump the limit if pages routinely exceed 4 minutes:
+
+   ```jsonc
+   // mcp.json env (preferred) — restart the IDE after editing
+   "env": {
+     "CopilotReview__PerPageTimeoutMinutes": "10"
+   }
+   ```
+
+2. **MCP host request ceiling** — the host (Claude Code, VS Code, Copilot CLI,
+   etc.) has its own per-tool-call deadline. Claude Code's default is 5
+   minutes, so a long page review can return successfully on the server side
+   yet still appear failed to the user because the host already gave up. Raise
+   it with the `MCP_TIMEOUT` environment variable on the **host process**,
+   *not* in the server's `mcp.json` env block (which only configures the
+   server's child process):
+
+   ```bash
+   # Linux/macOS — set before launching Claude Code / VS Code
+   export MCP_TIMEOUT=600000      # 10 minutes, in milliseconds
+
+   # Windows PowerShell
+   $env:MCP_TIMEOUT = "600000"
+
+   # Windows cmd.exe
+   set MCP_TIMEOUT=600000
+   ```
+
+   The MCP server itself never times out a tool call — only the host does — so
+   tuning `PerPageTimeoutMinutes` without also raising `MCP_TIMEOUT` will let
+   the server finish work the host has already abandoned.
+
+Inspection caches under `%LOCALAPPDATA%\REBUSS.Pure\copilot-inspection\pr-NN\`
+(when `REBUSS_COPILOT_INSPECT=1` is set) reveal which page stalled — count the
+`*-page-N-review-prompt.md` vs `*-page-N-review-response.md` files for the
+affected run.
+
+### Claude Code review failing with `claude -p exited 1` (no stderr) / "Not logged in"
+
+The MCP server shells out to `claude -p` for every review page. Auth-mode is selected from the environment at call time:
+
+| If…                              | Behavior                                                                                    | Required credential                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY` is set       | Adds `--bare` (skips hooks/skills/MCP under `~/.claude`); bills the API console account     | A valid API key from <https://platform.claude.com>                   |
+| `ANTHROPIC_API_KEY` is **unset** | Omits `--bare`; uses the user's subscription credential                                     | Persistent OAuth from `claude /login` **or** `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` |
+
+**Why this matters**: bare mode refuses to read OAuth credentials. Setting `ANTHROPIC_API_KEY` to an invalid value (or to a Claude.ai *subscription* token by mistake) will fail with `"Not logged in"` even though `claude -p` works fine without `--bare`. Likewise, a subscription user who has not run `claude /login` will fail without an env var.
+
+**Diagnosis**:
+
+1. Reproduce the exact call the server makes:
+
+   ```bash
+   echo "ping" | claude -p --output-format json           # no API key set
+   echo "ping" | claude -p --output-format json --bare    # API key set
+   ```
+
+   Both should exit 0 with a JSON `result` field. The server log now includes both stdout *and* stderr in the failure message — most claude-cli auth errors arrive on stdout, not stderr.
+
+2. **For subscription users** (most common): unset `ANTHROPIC_API_KEY`, then run `claude` once to complete `/login`. Or, for headless / CI scenarios, mint a long-lived token with `claude setup-token` and export `CLAUDE_CODE_OAUTH_TOKEN`.
+
+3. **For API users**: confirm the key is from the Claude Console, not a copy of a subscription session token. Subscription quota cannot be consumed via `ANTHROPIC_API_KEY`.
 
 ### "Copilot review layer unavailable (StartFailure)" / "Copilot CLI not found at …\runtimes\<rid>\native\copilot(.exe)"
 

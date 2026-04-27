@@ -6,6 +6,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using REBUSS.Pure.Core;
+using REBUSS.Pure.Core.Services.AgentInvocation;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Properties;
@@ -17,9 +18,9 @@ using REBUSS.Pure.Tools.Shared;
 namespace REBUSS.Pure.Tools
 {
     /// <summary>
-    /// Handles the execution of the get_local_content MCP tool. Triggers Copilot
-    /// review of enriched local changes and returns page review summaries.
-    /// Copilot SDK is required — there is no content-only fallback.
+    /// Handles the execution of the get_local_content MCP tool. Triggers an
+    /// AI-assisted review of enriched local changes (via the configured agent —
+    /// Copilot or Claude) and returns page review summaries.
     /// </summary>
     [McpServerToolType]
     public class GetLocalContentToolHandler
@@ -28,9 +29,10 @@ namespace REBUSS.Pure.Tools
         private readonly ILocalEnrichmentOrchestrator _enrichmentOrchestrator;
         private readonly IOptions<WorkflowOptions> _workflowOptions;
         private readonly ICopilotAvailabilityDetector _copilotAvailability;
-        private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator;
-        private readonly CopilotReviewWaiter _copilotReviewWaiter;
+        private readonly IAgentReviewOrchestrator _copilotReviewOrchestrator;
+        private readonly AgentReviewWaiter _copilotReviewWaiter;
         private readonly IProgressReporter _progressReporter;
+        private readonly AgentIdentity _agentIdentity;
         private readonly ILogger<GetLocalContentToolHandler> _logger;
 
         public GetLocalContentToolHandler(
@@ -38,9 +40,10 @@ namespace REBUSS.Pure.Tools
             ILocalEnrichmentOrchestrator enrichmentOrchestrator,
             IOptions<WorkflowOptions> workflowOptions,
             ICopilotAvailabilityDetector copilotAvailability,
-            ICopilotReviewOrchestrator copilotReviewOrchestrator,
-            CopilotReviewWaiter copilotReviewWaiter,
+            IAgentReviewOrchestrator copilotReviewOrchestrator,
+            AgentReviewWaiter copilotReviewWaiter,
             IProgressReporter progressReporter,
+            AgentIdentity agentIdentity,
             ILogger<GetLocalContentToolHandler> logger)
         {
             _budgetResolver = budgetResolver;
@@ -50,11 +53,12 @@ namespace REBUSS.Pure.Tools
             _copilotReviewOrchestrator = copilotReviewOrchestrator;
             _copilotReviewWaiter = copilotReviewWaiter;
             _progressReporter = progressReporter;
+            _agentIdentity = agentIdentity;
             _logger = logger;
         }
 
         [McpServerTool(Name = "get_local_content"), Description(
-            "Returns Copilot-assisted review summaries for local uncommitted changes. " +
+            "Returns AI-assisted review summaries for local uncommitted changes. " +
             "Reuses background enrichment when available. If enrichment is still running " +
             "and cannot complete within the internal timeout, returns a friendly 'still " +
             "preparing' status block — never a raw timeout error.")]
@@ -111,6 +115,19 @@ namespace REBUSS.Pure.Tools
                 await _progressReporter.ReportAsync(progress, 2, null,
                     "Enrichment complete — checking review mode", cancellationToken);
 
+                // Contradiction guard: git status enumerated changed files but the unified
+                // diff returned nothing. Surface as McpException (IsError=true) so the AI
+                // agent does not interpret an empty review as "all good — no changes."
+                if (result.RawChangedFileCount > 0 && result.RawFileChangesFromDiff == 0)
+                {
+                    _logger.LogWarning(
+                        "Contradiction guard tripped (scope '{Scope}'): {ChangedFileCount} modified file(s) per git status but unified diff is empty",
+                        scopeString, result.RawChangedFileCount);
+                    throw new McpException(string.Format(
+                        Resources.ErrorLocalContradictionGuard,
+                        result.RawChangedFileCount, scopeString));
+                }
+
                 bool copilotAvailable;
                 try
                 {
@@ -132,23 +149,23 @@ namespace REBUSS.Pure.Tools
                 }
 
                 await _progressReporter.ReportAsync(progress, 3, null,
-                    $"Copilot review started for local changes ({scopeString})", cancellationToken);
+                    $"AI review started for local changes ({scopeString})", cancellationToken);
 
                 var reviewKey = $"local:{scopeString}:{result.RepositoryRoot}";
                 _copilotReviewOrchestrator.TriggerReview(reviewKey, result);
 
-                var copilotResult = await _copilotReviewWaiter.WaitWithProgressAsync(
+                var reviewResult = await _copilotReviewWaiter.WaitWithProgressAsync(
                     reviewKey, progress, 4, cancellationToken);
 
-                var copilotBlocks = BuildCopilotAssistedBlocks(scopeString, copilotResult);
+                var blocks = BuildAgentAssistedBlocks(scopeString, reviewResult, _agentIdentity.Name);
 
                 sw.Stop();
                 _logger.LogInformation(
-                    "Local copilot-assisted content returned in {Ms}ms (scope '{Scope}', {Pages} pages, {Succeeded} ok, {Failed} failed)",
-                    sw.ElapsedMilliseconds, scopeString,
-                    copilotResult.TotalPages, copilotResult.SucceededPages, copilotResult.FailedPages);
+                    "Local agent-assisted content returned in {Ms}ms (agent '{Agent}', scope '{Scope}', {Pages} pages, {Succeeded} ok, {Failed} failed)",
+                    sw.ElapsedMilliseconds, _agentIdentity.Name, scopeString,
+                    reviewResult.TotalPages, reviewResult.SucceededPages, reviewResult.FailedPages);
 
-                return copilotBlocks;
+                return blocks;
             }
             catch (McpException) { throw; }
             catch (Exception ex)
@@ -158,25 +175,26 @@ namespace REBUSS.Pure.Tools
             }
         }
 
-        private static List<ContentBlock> BuildCopilotAssistedBlocks(
-            string scopeString, Core.Models.CopilotReview.CopilotReviewResult copilotResult)
+        private static List<ContentBlock> BuildAgentAssistedBlocks(
+            string scopeString, Core.Models.CopilotReview.AgentReviewResult reviewResult, string agentName)
         {
-            var blocks = new List<ContentBlock>(copilotResult.PageReviews.Count + 1);
+            var blocks = new List<ContentBlock>(reviewResult.PageReviews.Count + 1);
 
             blocks.Add(new TextContentBlock
             {
-                Text = PlainTextFormatter.FormatCopilotReviewHeader(
+                Text = PlainTextFormatter.FormatAgentReviewHeader(
+                    agentName,
                     $"Local changes ({scopeString})",
-                    copilotResult.TotalPages,
-                    copilotResult.SucceededPages,
-                    copilotResult.FailedPages)
+                    reviewResult.TotalPages,
+                    reviewResult.SucceededPages,
+                    reviewResult.FailedPages)
             });
 
-            foreach (var pageReview in copilotResult.PageReviews)
+            foreach (var pageReview in reviewResult.PageReviews)
             {
                 blocks.Add(new TextContentBlock
                 {
-                    Text = PlainTextFormatter.FormatCopilotPageReviewBlock(pageReview)
+                    Text = PlainTextFormatter.FormatAgentPageReviewBlock(pageReview)
                 });
             }
 

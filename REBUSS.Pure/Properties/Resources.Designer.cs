@@ -466,6 +466,15 @@ namespace REBUSS.Pure.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to git {Args} failed (exit {ExitCode}): {StdErr}.
+        /// </summary>
+        internal static string LogLocalGitClientCommandFailed {
+            get {
+                return ResourceManager.GetString("LogLocalGitClientCommandFailed", resourceCulture)!;
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to Could not determine current branch.
         /// </summary>
         internal static string LogLocalGitClientCouldNotDetermineBranch {
@@ -547,6 +556,42 @@ namespace REBUSS.Pure.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to Fetching unified diff: scope={Scope}, root={Root}.
+        /// </summary>
+        internal static string LogLocalReviewProviderFetchingUnifiedDiff {
+            get {
+                return ResourceManager.GetString("LogLocalReviewProviderFetchingUnifiedDiff", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Unified diff parsed: scope={Scope}, {FileCount} file(s), {ElapsedMs}ms.
+        /// </summary>
+        internal static string LogLocalReviewProviderUnifiedDiffCompleted {
+            get {
+                return ResourceManager.GetString("LogLocalReviewProviderUnifiedDiffCompleted", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to git status reports {ChangedFileCount} modified file(s) for scope '{Scope}', but the unified diff returned no content...
+        /// </summary>
+        internal static string ErrorLocalContradictionGuard {
+            get {
+                return ResourceManager.GetString("ErrorLocalContradictionGuard", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to PR #{PrNumber} metadata reports {ChangedFileCount} changed file(s), but the diff returned no content...
+        /// </summary>
+        internal static string ErrorPrContradictionGuard {
+            get {
+                return ResourceManager.GetString("ErrorPrContradictionGuard", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to CLI --repo value '{Path}' looks like an unexpanded variable...
         /// </summary>
         internal static string LogMcpWorkspaceRootProviderUnexpandedVariable {
@@ -588,6 +633,33 @@ namespace REBUSS.Pure.Properties {
         internal static string MsgDeletedLegacyPromptFile {
             get {
                 return ResourceManager.GetString("MsgDeletedLegacyPromptFile", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Deployed Claude skill: .claude/skills/{0}/SKILL.md.
+        /// </summary>
+        internal static string LogInitDeployingClaudeSkill {
+            get {
+                return ResourceManager.GetString("LogInitDeployingClaudeSkill", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Claude skill unchanged: .claude/skills/{0}/SKILL.md.
+        /// </summary>
+        internal static string LogInitSkillUnchanged {
+            get {
+                return ResourceManager.GetString("LogInitSkillUnchanged", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Backed up legacy slash command: {0} -&gt; {0}.bak.
+        /// </summary>
+        internal static string LogInitBackedUpLegacyCommand {
+            get {
+                return ResourceManager.GetString("LogInitBackedUpLegacyCommand", resourceCulture);
             }
         }
 
@@ -652,6 +724,82 @@ namespace REBUSS.Pure.Properties {
             get {
                 return ResourceManager.GetString("WarnEmbeddedPromptResourceNotFound", resourceCulture);
             }
+        }
+
+        internal static string MsgChooseAgentPrompt {
+            get { return ResourceManager.GetString("MsgChooseAgentPrompt", resourceCulture)!; }
+        }
+
+        internal static string MsgChooseAgentPromptInline {
+            get { return ResourceManager.GetString("MsgChooseAgentPromptInline", resourceCulture)!; }
+        }
+
+        internal static string MsgBackedUpMcpConfiguration {
+            get { return ResourceManager.GetString("MsgBackedUpMcpConfiguration", resourceCulture)!; }
+        }
+
+        internal static string ErrMcpConfigLocked {
+            get { return ResourceManager.GetString("ErrMcpConfigLocked", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_ExplainBenefit {
+            get { return ResourceManager.GetString("ClaudeSetup_ExplainBenefit", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_PromptInstall {
+            get { return ResourceManager.GetString("ClaudeSetup_PromptInstall", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_InstallingViaWinget {
+            get { return ResourceManager.GetString("ClaudeSetup_InstallingViaWinget", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_InstallingViaBrew {
+            get { return ResourceManager.GetString("ClaudeSetup_InstallingViaBrew", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_InstallingViaNativeScript {
+            get { return ResourceManager.GetString("ClaudeSetup_InstallingViaNativeScript", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_NoNpmManualHint {
+            get { return ResourceManager.GetString("ClaudeSetup_NoNpmManualHint", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_PromptNpmFallback {
+            get { return ResourceManager.GetString("ClaudeSetup_PromptNpmFallback", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_InstallOk {
+            get { return ResourceManager.GetString("ClaudeSetup_InstallOk", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_AuthInstructions {
+            get { return ResourceManager.GetString("ClaudeSetup_AuthInstructions", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_PromptLaunchAuth {
+            get { return ResourceManager.GetString("ClaudeSetup_PromptLaunchAuth", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_VerifiedOk {
+            get { return ResourceManager.GetString("ClaudeSetup_VerifiedOk", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_DeclineBannerTitle {
+            get { return ResourceManager.GetString("ClaudeSetup_DeclineBannerTitle", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_DeclineBannerBody {
+            get { return ResourceManager.GetString("ClaudeSetup_DeclineBannerBody", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_AuthFailureBannerTitle {
+            get { return ResourceManager.GetString("ClaudeSetup_AuthFailureBannerTitle", resourceCulture)!; }
+        }
+
+        internal static string ClaudeSetup_AuthFailureBannerBody {
+            get { return ResourceManager.GetString("ClaudeSetup_AuthFailureBannerBody", resourceCulture)!; }
         }
 
         internal static string CopilotSetup_ExplainBenefit {
@@ -722,16 +870,16 @@ namespace REBUSS.Pure.Properties {
             get { return ResourceManager.GetString("LogCopilotReviewFailed", resourceCulture)!; }
         }
 
-        internal static string CopilotReviewModeHeader {
-            get { return ResourceManager.GetString("CopilotReviewModeHeader", resourceCulture)!; }
+        internal static string AgentReviewModeHeader {
+            get { return ResourceManager.GetString("AgentReviewModeHeader", resourceCulture)!; }
         }
 
-        internal static string ErrorCopilotRequired {
-            get { return ResourceManager.GetString("ErrorCopilotRequired", resourceCulture)!; }
+        internal static string ErrorAgentReviewLayerRequired {
+            get { return ResourceManager.GetString("ErrorAgentReviewLayerRequired", resourceCulture)!; }
         }
 
-        internal static string ErrorCopilotUnavailable {
-            get { return ResourceManager.GetString("ErrorCopilotUnavailable", resourceCulture)!; }
+        internal static string ErrorAgentReviewLayerUnavailable {
+            get { return ResourceManager.GetString("ErrorAgentReviewLayerUnavailable", resourceCulture)!; }
         }
 
         internal static string LogCopilotReviewUnavailable {

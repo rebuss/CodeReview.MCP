@@ -9,6 +9,7 @@ using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using REBUSS.Pure.Core.Services.AgentInvocation;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Services.PrEnrichment;
@@ -31,9 +32,9 @@ public class GetPullRequestContentToolHandlerTests
             CopilotReviewProgressPollingIntervalMs = 50,
         });
     private readonly ICopilotAvailabilityDetector _copilotAvailability = Substitute.For<ICopilotAvailabilityDetector>();
-    private readonly ICopilotReviewOrchestrator _copilotReviewOrchestrator = Substitute.For<ICopilotReviewOrchestrator>();
+    private readonly IAgentReviewOrchestrator _reviewOrchestrator = Substitute.For<IAgentReviewOrchestrator>();
     private readonly IProgressReporter _progressReporter = Substitute.For<IProgressReporter>();
-    private readonly CopilotReviewWaiter _copilotReviewWaiter;
+    private readonly AgentReviewWaiter _reviewWaiter;
     private readonly GetPullRequestContentToolHandler _handler;
 
     private static readonly FullPullRequestMetadata SampleMetadata = new()
@@ -74,15 +75,16 @@ public class GetPullRequestContentToolHandlerTests
             Allocation = new PageAllocation(new[] { slice }, 1, 3),
             SafeBudgetTokens = safeBudget,
             CompletedAt = DateTimeOffset.UtcNow,
+            RawFileChangesFromDiff = candidates.Length,
         };
     }
 
-    private static Core.Models.CopilotReview.CopilotReviewResult BuildDefaultCopilotResult() => new()
+    private static Core.Models.CopilotReview.AgentReviewResult BuildDefaultReviewResult() => new()
     {
         ReviewKey = "pr:42",
         PageReviews = new[]
         {
-            Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "no issues found", 1),
+            Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "no issues found", 1),
         },
         CompletedAt = DateTimeOffset.UtcNow,
     };
@@ -103,12 +105,12 @@ public class GetPullRequestContentToolHandlerTests
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
 
         // Default copilot review result.
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(BuildDefaultCopilotResult());
+            .Returns(BuildDefaultReviewResult());
 
-        _copilotReviewWaiter = new CopilotReviewWaiter(
-            _copilotReviewOrchestrator,
+        _reviewWaiter = new AgentReviewWaiter(
+            _reviewOrchestrator,
             _progressReporter,
             _workflowOptions);
 
@@ -118,14 +120,79 @@ public class GetPullRequestContentToolHandlerTests
             _orchestrator,
             _workflowOptions,
             _copilotAvailability,
-            _copilotReviewOrchestrator,
-            _copilotReviewWaiter,
+            _reviewOrchestrator,
+            _reviewWaiter,
             _progressReporter,
+            new AgentIdentity("copilot"),
             NullLogger<GetPullRequestContentToolHandler>.Instance);
     }
 
     private static string AllText(IEnumerable<ContentBlock> blocks) =>
         string.Join("\n", blocks.Cast<TextContentBlock>().Select(b => b.Text));
+
+    private static FullPullRequestMetadata MetadataWithChangedFiles(int count) => new()
+    {
+        PullRequestId = SampleMetadata.PullRequestId,
+        Title = SampleMetadata.Title,
+        Status = SampleMetadata.Status,
+        LastMergeSourceCommitId = SampleMetadata.LastMergeSourceCommitId,
+        LastMergeTargetCommitId = SampleMetadata.LastMergeTargetCommitId,
+        CommitShas = SampleMetadata.CommitShas,
+        ChangedFilesCount = count,
+    };
+
+    // ─── Contradiction guard: PR metadata says N changed but diff is empty ────
+
+    [Fact]
+    public async Task Execute_DiffEmptyDespiteMetadataChanges_ThrowsMcpException()
+    {
+        // Diff payload is empty, but metadata says the PR has 7 changed files —
+        // upstream provider failed silently. Surface as McpException so the AI
+        // never sees a successful empty review.
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new PrEnrichmentResult
+            {
+                PrNumber = 42,
+                HeadSha = "abc123",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140_000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawFileChangesFromDiff = 0,
+            });
+        _metadataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(MetadataWithChangedFiles(7));
+
+        var ex = await Assert.ThrowsAsync<McpException>(
+            () => _handler.ExecuteAsync(prNumber: 42, pageNumber: 1));
+
+        Assert.Contains("7 changed file", ex.Message);
+        Assert.Contains("#42", ex.Message);
+    }
+
+    [Fact]
+    public async Task Execute_DiffEmptyAndMetadataReportsZeroFiles_DoesNotThrow()
+    {
+        // Legitimate "PR with no changes" — both signals agree.
+        _orchestrator.WaitForEnrichmentAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new PrEnrichmentResult
+            {
+                PrNumber = 42,
+                HeadSha = "abc123",
+                SortedCandidates = Array.Empty<PackingCandidate>(),
+                EnrichedByPath = new Dictionary<string, string>(),
+                Allocation = new PageAllocation(Array.Empty<PageSlice>(), 0, 0),
+                SafeBudgetTokens = 140_000,
+                CompletedAt = DateTimeOffset.UtcNow,
+                RawFileChangesFromDiff = 0,
+            });
+        _metadataProvider.GetMetadataAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(MetadataWithChangedFiles(0));
+
+        var blocks = await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1);
+        Assert.NotNull(blocks);
+    }
 
     // ─── Cold-start path: no prior snapshot ───────────────────────────────────
 
@@ -147,17 +214,17 @@ public class GetPullRequestContentToolHandlerTests
     public async Task Execute_CopilotAvailable_ReturnsReviewSummariesWithModeHeader()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "no issues found", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(2, "minor: fix typo in comment", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "no issues found", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(2, "minor: fix typo in comment", 1),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -172,25 +239,25 @@ public class GetPullRequestContentToolHandlerTests
         Assert.Contains("no issues found", text);
         Assert.Contains("=== Page 2 Review ===", text);
         Assert.DoesNotContain("[review-mode: content-only]", text);
-        _copilotReviewOrchestrator.Received(1).TriggerReview("pr:42", Arg.Any<IEnrichmentResult>());
+        _reviewOrchestrator.Received(1).TriggerReview("pr:42", Arg.Any<IEnrichmentResult>());
     }
 
     [Fact]
     public async Task Execute_PageNumberIgnoredInCopilotMode_ReturnsAllSummaries()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "page 1 review", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(2, "page 2 review", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(3, "page 3 review", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "page 1 review", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(2, "page 2 review", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(3, "page 3 review", 1),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -209,18 +276,18 @@ public class GetPullRequestContentToolHandlerTests
     public async Task Execute_CopilotPartialFailure_ResponseIncludesFailureBlocksWithFilePaths()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "all good on page 1", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Failure(
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "all good on page 1", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Failure(
                     2, new[] { "src/Failing.cs", "src/AlsoFailing.cs" }, "network timeout", 3),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -243,19 +310,19 @@ public class GetPullRequestContentToolHandlerTests
     public async Task Execute_CopilotAllPagesFailed_ResponseStillReturnsCopilotAssistedHeader()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Failure(
+                Core.Models.CopilotReview.AgentPageReviewResult.Failure(
                     1, new[] { "src/A.cs" }, "down", 3),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Failure(
+                Core.Models.CopilotReview.AgentPageReviewResult.Failure(
                     2, new[] { "src/B.cs" }, "down", 3),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -396,17 +463,17 @@ public class GetPullRequestContentToolHandlerTests
     public async Task ExecuteAsync_PageNumber5_CopilotAvailable_ReturnsCopilotResponse()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "page 1 looks good", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(2, "page 2 looks good", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "page 1 looks good", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(2, "page 2 looks good", 1),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -458,16 +525,16 @@ public class GetPullRequestContentToolHandlerTests
     public async Task Execute_CopilotAvailable_SendsCopilotReviewStartedProgress()
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "ok", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "ok", 1),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
-        _copilotReviewOrchestrator
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(copilotResult);
 
@@ -480,7 +547,7 @@ public class GetPullRequestContentToolHandlerTests
         await _handler.ExecuteAsync(prNumber: 42, pageNumber: 1);
 
         Assert.Contains(capturedMessages, m =>
-            m.Contains("Copilot review started", StringComparison.OrdinalIgnoreCase));
+            m.Contains("AI review started", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -488,21 +555,21 @@ public class GetPullRequestContentToolHandlerTests
     {
         _copilotAvailability.IsAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
 
-        var copilotResult = new Core.Models.CopilotReview.CopilotReviewResult
+        var copilotResult = new Core.Models.CopilotReview.AgentReviewResult
         {
             ReviewKey = "pr:42",
             PageReviews = new[]
             {
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(1, "review page 1", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(2, "review page 2", 1),
-                Core.Models.CopilotReview.CopilotPageReviewResult.Success(3, "review page 3", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(1, "review page 1", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(2, "review page 2", 1),
+                Core.Models.CopilotReview.AgentPageReviewResult.Success(3, "review page 3", 1),
             },
             CompletedAt = DateTimeOffset.UtcNow,
         };
 
         // WaitForReviewAsync completes after a short delay to allow the polling loop to run.
-        var completionTcs = new TaskCompletionSource<Core.Models.CopilotReview.CopilotReviewResult>();
-        _copilotReviewOrchestrator
+        var completionTcs = new TaskCompletionSource<Core.Models.CopilotReview.AgentReviewResult>();
+        _reviewOrchestrator
             .WaitForReviewAsync("pr:42", Arg.Any<CancellationToken>())
             .Returns(completionTcs.Task);
 
@@ -510,15 +577,15 @@ public class GetPullRequestContentToolHandlerTests
         // Signal fires once the polling loop has called TryGetSnapshot at least once.
         var snapshotCallCount = 0;
         var snapshotCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _copilotReviewOrchestrator.TryGetSnapshot("pr:42")
+        _reviewOrchestrator.TryGetSnapshot("pr:42")
             .Returns(_ =>
             {
                 snapshotCallCount++;
                 snapshotCalled.TrySetResult();
-                return new Core.Models.CopilotReview.CopilotReviewSnapshot
+                return new Core.Models.CopilotReview.AgentReviewSnapshot
                 {
                     ReviewKey = "pr:42",
-                    Status = Core.Models.CopilotReview.CopilotReviewStatus.Reviewing,
+                    Status = Core.Models.CopilotReview.AgentReviewStatus.Reviewing,
                     TotalPages = 3,
                     CompletedPages = Math.Min(snapshotCallCount, 3),
                 };
@@ -580,7 +647,7 @@ public class GetPullRequestContentToolHandlerTests
             ex.Message.Contains(verdict.Remediation, StringComparison.Ordinal)
                 || ex.InnerException is CopilotUnavailableException { Verdict.Remediation: var r } && r == verdict.Remediation,
             $"Expected the McpException to carry the remediation string. Got: {ex.Message}");
-        _copilotReviewOrchestrator.DidNotReceive().TriggerReview(Arg.Any<string>(), Arg.Any<IEnrichmentResult>());
+        _reviewOrchestrator.DidNotReceive().TriggerReview(Arg.Any<string>(), Arg.Any<IEnrichmentResult>());
     }
 
     [Fact]

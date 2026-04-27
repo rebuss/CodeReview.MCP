@@ -51,6 +51,7 @@ namespace REBUSS.Pure
                     parseResult.Pat,
                     parseResult.IsGlobal,
                     parseResult.Ide,
+                    parseResult.Agent,
                     detectedProvider: null,
                     processRunner: null,
                     localConfigStore: new AzureDevOps.Configuration.LocalConfigStore(NullLogger<AzureDevOps.Configuration.LocalConfigStore>.Instance),
@@ -113,7 +114,7 @@ namespace REBUSS.Pure
                 builder.Logging.AddProvider(new FileLoggerProvider(GetLogDirectory()));
 
                 // Register business services (providers, algorithms, shared services)
-                ConfigureBusinessServices(builder.Services, configuration, parseResult.RepoPath);
+                ConfigureBusinessServices(builder.Services, configuration, parseResult.RepoPath, parseResult.Agent);
 
                 // Add MCP server with stdio transport and tool discovery
                 builder.Services
@@ -152,7 +153,7 @@ namespace REBUSS.Pure
             }
         }
 
-        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration, string? repoPath = null)
+        private static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration, string? repoPath = null, string? agent = null)
         {
             // Workspace root provider: resolves repository path from CLI --repo, MCP roots, or localRepoPath
             services.AddSingleton<IWorkspaceRootProvider, McpWorkspaceRootProvider>();
@@ -191,8 +192,32 @@ namespace REBUSS.Pure
             services.AddHostedService(sp => sp.GetRequiredService<CopilotClientProvider>());
             services.AddSingleton<CopilotRequestThrottle>();
             services.AddSingleton<ICopilotSessionFactory, CopilotSessionFactory>();
+
+            // IAgentInvoker — one-shot prompt→text abstraction over Copilot SDK or Claude CLI.
+            // Selection is driven by --agent on the command line (carried through mcp.json args);
+            // when the flag is absent, Copilot is the default to preserve existing behavior.
+            // Consumed by AgentPageReviewer and FindingValidator — both are agent-agnostic
+            // since the refactor, so --agent claude actually drives the runtime review path.
+            // AgentIdentity is registered alongside so tool handlers can label their
+            // responses with the actual agent name (e.g. "claude-assisted") instead of
+            // hardcoded "copilot-assisted" wording leaking to the wrong backend.
+            var isClaude = string.Equals(agent, CliArgumentParser.AgentClaude, StringComparison.OrdinalIgnoreCase);
+            services.AddSingleton(new REBUSS.Pure.Core.Services.AgentInvocation.AgentIdentity(
+                isClaude ? CliArgumentParser.AgentClaude : CliArgumentParser.AgentCopilot));
+
+            if (isClaude)
+            {
+                services.AddSingleton<REBUSS.Pure.Core.Services.AgentInvocation.IAgentInvoker,
+                    REBUSS.Pure.Services.AgentInvocation.ClaudeCliAgentInvoker>();
+            }
+            else
+            {
+                services.AddSingleton<REBUSS.Pure.Core.Services.AgentInvocation.IAgentInvoker,
+                    REBUSS.Pure.Services.AgentInvocation.CopilotAgentInvoker>();
+            }
+
             services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
-            services.AddSingleton<ICopilotPageReviewer, CopilotPageReviewer>();
+            services.AddSingleton<IAgentPageReviewer, AgentPageReviewer>();
 
             // Feature 022 — Copilot inspection (internal diagnostic, env-var gated).
             // REBUSS_COPILOT_INSPECT=1|true|True registers the filesystem writer; any other
@@ -202,25 +227,32 @@ namespace REBUSS.Pure
             if (inspectEnabled)
             {
                 services.AddSingleton<
-                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
-                    REBUSS.Pure.Services.CopilotReview.Inspection.FileSystemCopilotInspectionWriter>();
+                    REBUSS.Pure.Services.CopilotReview.Inspection.IAgentInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.FileSystemAgentInspectionWriter>();
             }
             else
             {
                 services.AddSingleton<
-                    REBUSS.Pure.Services.CopilotReview.Inspection.ICopilotInspectionWriter,
-                    REBUSS.Pure.Services.CopilotReview.Inspection.NoOpCopilotInspectionWriter>();
+                    REBUSS.Pure.Services.CopilotReview.Inspection.IAgentInspectionWriter,
+                    REBUSS.Pure.Services.CopilotReview.Inspection.NoOpAgentInspectionWriter>();
             }
 
             // Feature 021 — Finding validation pipeline (false positive reduction).
-            // Registered unconditionally; CopilotReviewOrchestrator short-circuits at
+            // Registered unconditionally; AgentReviewOrchestrator short-circuits at
             // runtime based on CopilotReviewOptions.ValidateFindings (per Principle V
             // deferred resolution — the flag is read at first review, not at DI time).
+            // Feature 023 — review-mode-aware source resolution. Remote serves PR reviews
+            // (downloaded archive); Local serves local:* reviews (git ref via ILocalGitClient).
+            // Selector binds the per-review git ref and dedupes the workspace-root warning.
+            services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.RemoteArchiveSourceProvider>();
+            services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.LocalWorkspaceSourceProvider>();
+            services.AddSingleton<REBUSS.Pure.Core.IFindingSourceProviderSelector,
+                REBUSS.Pure.Services.CopilotReview.Validation.FindingSourceProviderSelector>();
             services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.FindingScopeResolver>();
             services.AddSingleton<REBUSS.Pure.Services.CopilotReview.Validation.FindingValidator>();
 
-            services.AddSingleton<ICopilotReviewOrchestrator, CopilotReviewOrchestrator>();
-            services.AddSingleton<CopilotReviewWaiter>();
+            services.AddSingleton<IAgentReviewOrchestrator, AgentReviewOrchestrator>();
+            services.AddSingleton<AgentReviewWaiter>();
 
             // Context Window Awareness
             services.Configure<ContextWindowOptions>(configuration.GetSection(ContextWindowOptions.SectionName));
