@@ -43,9 +43,12 @@ public sealed class ClaudeVerificationRunner : IClaudeVerificationProbe
         cts.CancelAfter(TimeSpan.FromSeconds(DefaultTimeoutSeconds));
 
         var useBare = ClaudeCliAgentInvoker.ShouldUseBareMode(_envLookup);
+        // No shell-style quotes around `ping`: it's a single token, so quoting buys
+        // nothing for ProcessStartInfo.Arguments parsing and would force the injected
+        // _processRunner test seam to round-trip the literal `\"ping\"` characters.
         var probeArgs = useBare
-            ? "-p \"ping\" --output-format json --bare"
-            : "-p \"ping\" --output-format json";
+            ? "-p ping --output-format json --bare"
+            : "-p ping --output-format json";
 
         (int ExitCode, string StdOut, string StdErr) r;
         try

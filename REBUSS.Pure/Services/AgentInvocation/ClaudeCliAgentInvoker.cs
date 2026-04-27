@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using REBUSS.Pure.Core.Services.AgentInvocation;
+using REBUSS.Pure.Services.CopilotReview;
 
 namespace REBUSS.Pure.Services.AgentInvocation;
 
@@ -29,27 +31,50 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
     private readonly ILogger<ClaudeCliAgentInvoker>? _logger;
     private readonly string _claudeExe;
     private readonly Func<string, string?> _envLookup;
+    private readonly IOptions<CopilotReviewOptions>? _options;
+    private readonly TimeSpan? _perPageTimeoutOverride;
 
-    // Process-level timeout — a review page can be large and Claude may think for
-    // several seconds, so give it room. The caller's CancellationToken can trim sooner.
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
+    // Default per-page timeout used when no IOptions<CopilotReviewOptions> is wired up
+    // (e.g. unit tests that construct the invoker directly). Production code resolves
+    // the timeout from CopilotReviewOptions.PerPageTimeoutMinutes at call time.
+    internal static readonly TimeSpan DefaultPerPageTimeout = TimeSpan.FromMinutes(5);
 
     public ClaudeCliAgentInvoker(
         ILogger<ClaudeCliAgentInvoker>? logger = null,
+        IOptions<CopilotReviewOptions>? options = null,
         string? claudeCliPathOverride = null,
         Func<string, string?>? environmentLookup = null)
     {
         _logger = logger;
+        _options = options;
         _claudeExe = string.IsNullOrWhiteSpace(claudeCliPathOverride) ? "claude" : claudeCliPathOverride;
         _envLookup = environmentLookup ?? Environment.GetEnvironmentVariable;
+    }
+
+    /// <summary>
+    /// Test-only constructor allowing the per-page timeout to be set directly without
+    /// plumbing an <see cref="IOptions{TOptions}"/> snapshot. Used by integration tests
+    /// that exercise the cancellation-vs-timeout classification path on a hanging
+    /// child process — production code goes through the public constructor and reads
+    /// the value from <see cref="CopilotReviewOptions.PerPageTimeoutMinutes"/>.
+    /// </summary>
+    internal ClaudeCliAgentInvoker(
+        TimeSpan perPageTimeoutOverride,
+        ILogger<ClaudeCliAgentInvoker>? logger = null,
+        string? claudeCliPathOverride = null,
+        Func<string, string?>? environmentLookup = null)
+        : this(logger, options: null, claudeCliPathOverride, environmentLookup)
+    {
+        _perPageTimeoutOverride = perPageTimeoutOverride;
     }
 
     public async Task<string> InvokeAsync(string prompt, string? model, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(prompt);
 
+        var timeout = ResolvePerPageTimeout(_perPageTimeoutOverride, _options);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(DefaultTimeout);
+        cts.CancelAfter(timeout);
 
         // Build argument list — pass prompt via stdin to avoid OS command-line length
         // limits (Windows caps at ~32k; a full PR-page prompt easily exceeds that).
@@ -77,19 +102,23 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start '{_claudeExe}'.");
 
-        // Write prompt to stdin and close — Claude reads the prompt from stdin in -p mode.
-        try
-        {
-            await process.StandardInput.WriteAsync(prompt.AsMemory(), cts.Token).ConfigureAwait(false);
-        }
-        finally
-        {
-            process.StandardInput.Close();
-        }
-
         string stdout, stderr;
+        // Single outer catch covers both stdin write and stdout/stderr drain: if
+        // cancellation fires while writing a large prompt, Process.Dispose() (from
+        // the using) does NOT terminate the child, so without this Kill the
+        // claude -p subprocess leaks until it self-exits or the host shuts down.
         try
         {
+            // Write prompt to stdin and close — Claude reads the prompt from stdin in -p mode.
+            try
+            {
+                await process.StandardInput.WriteAsync(prompt.AsMemory(), cts.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                process.StandardInput.Close();
+            }
+
             // Drain stdout and stderr concurrently — sequential reads can deadlock
             // when the CLI fills the stderr pipe buffer while we're still consuming
             // stdout (the child blocks on the unread pipe and never closes stdout).
@@ -100,10 +129,10 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
             stdout = stdoutTask.Result;
             stderr = stderrTask.Result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            throw;
+            throw ClassifyCancellation(oce, cancellationToken, timeout);
         }
 
         if (process.ExitCode != 0)
@@ -128,6 +157,45 @@ public sealed class ClaudeCliAgentInvoker : IAgentInvoker
     /// </summary>
     internal static bool ShouldUseBareMode(Func<string, string?> envLookup) =>
         !string.IsNullOrWhiteSpace(envLookup(ApiKeyEnvVar));
+
+    /// <summary>
+    /// Decides whether an <see cref="OperationCanceledException"/> raised during the
+    /// child-process drain should propagate as cancellation or be reclassified as a
+    /// timeout. Genuine external cancellation (the caller's token signaled) propagates
+    /// — host shutdown / orchestrator-level cancel must still tear down in-flight work.
+    /// Otherwise the linked CTS fired due to the per-page timeout, so we surface a
+    /// <see cref="TimeoutException"/>; <see cref="AgentPageReviewer"/> re-throws OCE
+    /// but converts other exceptions into a failed page result, which the orchestrator's
+    /// 3-attempt retry then handles without aborting sibling pages in flight.
+    /// </summary>
+    internal static Exception ClassifyCancellation(
+        OperationCanceledException original,
+        CancellationToken externalToken,
+        TimeSpan timeout)
+    {
+        if (externalToken.IsCancellationRequested)
+            return original;
+        return new TimeoutException(
+            $"claude -p exceeded the per-page timeout of {timeout.TotalMinutes:F1} minute(s). " +
+            "Increase CopilotReview:PerPageTimeoutMinutes for large PRs.");
+    }
+
+    /// <summary>
+    /// Resolves the per-page timeout: explicit override (test path) takes precedence,
+    /// otherwise the value comes from <see cref="CopilotReviewOptions.PerPageTimeoutMinutes"/>
+    /// (clamped to a 1-minute floor), otherwise <see cref="DefaultPerPageTimeout"/>.
+    /// </summary>
+    internal static TimeSpan ResolvePerPageTimeout(
+        TimeSpan? explicitOverride,
+        IOptions<CopilotReviewOptions>? options)
+    {
+        if (explicitOverride is { } @explicit)
+            return @explicit;
+        if (options is null)
+            return DefaultPerPageTimeout;
+        var minutes = Math.Max(1, options.Value.PerPageTimeoutMinutes);
+        return TimeSpan.FromMinutes(minutes);
+    }
 
     /// <summary>
     /// Translates the shared <c>CopilotReviewOptions.Model</c> value into the

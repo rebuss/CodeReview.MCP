@@ -56,6 +56,13 @@ public sealed class CopilotAgentInvoker : IAgentInvoker
 
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             var contentBuilder = new StringBuilder();
+            // The Copilot SDK does not document whether handle.On(...) callbacks are
+            // serialized. StringBuilder is not thread-safe, so any current or future
+            // thread-pool dispatch could interleave Append calls (or race a concurrent
+            // ToString from SessionIdleEvent against a mid-flight Append) and corrupt
+            // the accumulated text. The lock is uncontended in the documented single-
+            // threaded callback path, so the cost is negligible.
+            var contentLock = new object();
 
             using var subscription = handle.On(evt =>
             {
@@ -66,14 +73,19 @@ public sealed class CopilotAgentInvoker : IAgentInvoker
                         // every non-null fragment (empty string is a legitimate stream chunk).
                         var chunk = msg.Data?.Content;
                         if (chunk is not null)
-                            contentBuilder.Append(chunk);
+                        {
+                            lock (contentLock)
+                                contentBuilder.Append(chunk);
+                        }
                         break;
                     case SessionErrorEvent err:
                         tcs.TrySetException(new InvalidOperationException(
                             err.Data?.Message ?? "session error (no message)"));
                         break;
                     case SessionIdleEvent:
-                        var captured = contentBuilder.ToString();
+                        string captured;
+                        lock (contentLock)
+                            captured = contentBuilder.ToString();
                         if (!string.IsNullOrWhiteSpace(captured))
                             tcs.TrySetResult(captured);
                         else

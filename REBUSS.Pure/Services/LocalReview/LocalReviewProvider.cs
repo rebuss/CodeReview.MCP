@@ -38,7 +38,10 @@ namespace REBUSS.Pure.Services.LocalReview
         // The TTL bounds staleness because this provider is registered as a singleton and the
         // working tree can change between calls; expired snapshots fall back to a fresh git diff.
         private static readonly long CacheTtlMs = 5_000;
-        private DiffCacheSnapshot? _diffCache;
+        // volatile: ensures cross-thread visibility of cache swaps in this singleton — without it
+        // a reader on another CPU could observe a stale snapshot (or null) after a writer has
+        // already published a newer one, causing redundant git diff calls.
+        private volatile DiffCacheSnapshot? _diffCache;
 
         public LocalReviewProvider(
             IWorkspaceRootProvider workspaceRootProvider,
@@ -151,8 +154,9 @@ namespace REBUSS.Pure.Services.LocalReview
 
         private PullRequestDiff? TryReadCache(string repoRoot, LocalReviewScope scope)
         {
-            // Snapshot the field once: reference assignment is atomic so a concurrent writer
-            // can only swap in a newer entry, not corrupt our local view.
+            // Snapshot the volatile field once: the volatile read gives us acquire semantics so
+            // we observe the latest published snapshot, and a concurrent writer can only swap in
+            // a newer entry — never corrupt our local view.
             var snapshot = _diffCache;
             if (snapshot is null)
                 return null;

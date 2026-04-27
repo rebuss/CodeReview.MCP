@@ -83,11 +83,17 @@ namespace REBUSS.Pure.Services.LocalReview
             }
             catch (GitCommandException ex) when (ex.ExitCode != 0)
             {
-                // Either the file genuinely does not exist at this ref (new/deleted file —
-                // legitimate null) OR the git invocation failed for a transient reason
-                // (concurrent index lock, AV interference). Warning level surfaces both
-                // cases so silent self-review failures become diagnosable from logs.
-                _logger.LogWarning(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
+                // Distinguish the expected-null case from real failures:
+                //  * `fatal: path '…' does not exist in '…'` — file legitimately not at this ref
+                //    (new file probed at HEAD during branch-diff, deleted file probed at the
+                //    after-side, etc.). One Warning per added file in a feature-branch self-review
+                //    drowned out genuine signals, so this path stays at Debug.
+                //  * Anything else (concurrent index lock, AV interference, malformed ref) stays
+                //    at Warning so silent self-review degradation is still diagnosable.
+                if (LooksLikePathMissingAtRef(ex.StdErr))
+                    _logger.LogDebug(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
+                else
+                    _logger.LogWarning(Resources.LogLocalGitClientFileNotFoundAtRef, filePath, gitRef, ex.StdErr);
                 return null;
             }
         }
@@ -157,6 +163,17 @@ namespace REBUSS.Pure.Services.LocalReview
                 return null;
             }
         }
+
+        /// <summary>
+        /// Returns <c>true</c> when git's stderr indicates the requested path simply
+        /// does not exist at the requested ref (the canonical message is
+        /// <c>fatal: path '…' does not exist in '…'</c>). Used to demote the expected-null
+        /// branch of <see cref="GetFileContentAtRefAsync"/> to Debug so transient failures
+        /// (lock contention, AV interference, malformed ref) remain visible at Warning.
+        /// </summary>
+        private static bool LooksLikePathMissingAtRef(string? stderr) =>
+            !string.IsNullOrEmpty(stderr)
+            && stderr.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
 
         // --- show args formatting -----------------------------------------------
 

@@ -67,7 +67,14 @@ public sealed class RemoteArchiveSourceProvider : IFindingSourceProvider
             return null;
         }
 
-        // 4. Read after-state.
+        // 4. Read after-state. cancellationToken MUST be threaded into ReadAllTextAsync —
+        // this is the FR-010 caller-cancellation propagation point, pinned by
+        // RemoteArchiveSourceProviderTests.GetAfterCodeAsync_CallerCancellation_Propagates.
+        // Dropping the token here (or switching to sync File.ReadAllText) would silently
+        // break the contract because no other step on the happy path observes the token
+        // (the orchestrator mock returns synchronously in tests, and FileInfo / path
+        // resolution are sync). The catch/rethrow keeps the OCE from being swallowed by
+        // the generic handler below.
         try
         {
             return await File.ReadAllTextAsync(resolvedPath, cancellationToken).ConfigureAwait(false);

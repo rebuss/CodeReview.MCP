@@ -55,7 +55,14 @@ public sealed class FindingSourceProviderSelector : IFindingSourceProviderSelect
         private readonly LocalWorkspaceSourceProvider _local;
         private readonly string _gitRef;
         private readonly ILogger _logger;
-        private bool _warnedRootMissing;
+        // 0 = not yet warned, 1 = warned. Encoded as int (instead of bool) so the
+        // dedup uses Interlocked.CompareExchange rather than a non-atomic check-then-set.
+        // The current caller (FindingScopeResolver.ResolveAsync) is sequential, but
+        // any future parallel-per-file refactor would otherwise silently let two
+        // threads both observe 0, both pass the guard, and both log — defeating
+        // the FR-006 single-warning contract. Making the atomicity explicit costs
+        // one CAS in the uncontended path.
+        private int _warnedRootMissing;
 
         public BoundLocalSourceProvider(
             LocalWorkspaceSourceProvider local,
@@ -72,8 +79,7 @@ public sealed class FindingSourceProviderSelector : IFindingSourceProviderSelect
 
         private void OnRootMissing()
         {
-            if (_warnedRootMissing) return;
-            _warnedRootMissing = true;
+            if (Interlocked.CompareExchange(ref _warnedRootMissing, 1, 0) != 0) return;
             _logger.LogWarning(
                 "Local workspace root unresolvable; finding validation will degrade to 'uncertain' for this review.");
         }

@@ -58,9 +58,15 @@ internal sealed class AgentPageReviewer : IAgentPageReviewer
                 pageNumber, Array.Empty<string>(), $"prompt template load failed: {ex.Message}", 1);
         }
 
-        // Feature 022: capture the prompt that will be sent to the agent. Fires only on
-        // the happy path — the inspection writer is a NoOp when the env var is unset, so
-        // this is effectively free when disabled.
+        // Feature 022: capture the prompt that will be sent to the agent. The inspection
+        // writer is a NoOp when the env var is unset, so this is effectively free when
+        // disabled.
+        //
+        // ORDERING (load-bearing): WritePromptAsync runs BEFORE InvokeAsync. The
+        // failure-path test AgentPageReviewerTests.ReviewPage_FailurePath_OnlyPromptIsCaptured
+        // pins this — when the invoker throws, the prompt is still captured for diagnosis
+        // while the response is not. Reordering the prompt write into the success branch
+        // (or after the invoke) would silently break post-mortem diagnosis of failed pages.
         var inspectionKind = $"page-{pageNumber}-review";
         await _inspection.WritePromptAsync(reviewKey, inspectionKind, prompt, ct).ConfigureAwait(false);
 

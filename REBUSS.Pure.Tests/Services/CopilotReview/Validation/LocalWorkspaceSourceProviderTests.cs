@@ -39,7 +39,7 @@ public class LocalWorkspaceSourceProviderTests
     [Fact]
     public async Task GetAfterCodeAsync_WorkingTreeRef_HappyPath_ReturnsContent()
     {
-        // Spec FR-001a — local:unstaged reads from working tree via WorkingTreeRef.
+        // Spec FR-001a — local:working-tree reads from working tree via WorkingTreeRef.
         _workspaceRootProvider.ResolveRepositoryRoot().Returns("C:/Repo");
         _localGitClient.GetFileContentAtRefAsync(
                 "C:/Repo", "src/Foo.cs", LocalGitClient.WorkingTreeRef, Arg.Any<CancellationToken>())
@@ -54,7 +54,7 @@ public class LocalWorkspaceSourceProviderTests
     [Fact]
     public async Task GetAfterCodeAsync_HeadRef_HappyPath_ReturnsContent()
     {
-        // Spec FR-001a — local:branch reads from current branch HEAD via "HEAD".
+        // Spec FR-001a — local:branch-diff reads from current branch HEAD via "HEAD".
         _workspaceRootProvider.ResolveRepositoryRoot().Returns("C:/Repo");
         _localGitClient.GetFileContentAtRefAsync(
                 "C:/Repo", "src/Foo.cs", "HEAD", Arg.Any<CancellationToken>())

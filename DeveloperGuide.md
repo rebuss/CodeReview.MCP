@@ -77,6 +77,7 @@ earlier findings" problem on large PRs.
 | `Model` | `"claude-sonnet-4.6"` | Copilot model passed to `SessionConfig.Model`. If the SDK rejects this string, check `client.ListModelsAsync()` output. |
 | `MaxConcurrentPages` | `6` | Upper bound on how many pages the orchestrator dispatches to Copilot in parallel per batch. Values `< 1` are clamped to `1`. Raise cautiously — the Copilot backend silently re-queues fan-outs above its per-client limit, which can double wall-clock time. |
 | `MinRequestIntervalSeconds` | `3` | Minimum spacing between successive outbound Copilot SDK calls (`CreateSessionAsync` / `SendAsync`), enforced by a process-wide gate. Combines with `MaxConcurrentPages` to shape throughput: the batch size controls fan-out width, this interval controls request rate. Set to `0` to disable (tests only). |
+| `PerPageTimeoutMinutes` | `5` | Per-page hard timeout for the Claude CLI agent (`--agent claude`). When exceeded, the child process is killed and a `TimeoutException` is raised — treated as a failed attempt by the orchestrator's 3-attempt retry, then surfaced as a per-page failure (with the file paths on that page) without aborting sibling pages. Values `< 1` are clamped to `1`. Raise this for very large PRs where individual pages routinely exceed 4 minutes; the previous build had a hard-coded 5-minute ceiling that aborted the entire review when one page ran long. Has no effect when `--agent copilot` is selected. |
 | `CopilotCliPath` | _(unset)_ | Absolute path to a standalone Copilot CLI binary (the `@github/copilot` npm package's `copilot.exe` / `copilot`, **not** the `gh copilot` extension). When set, forwarded to `CopilotClientOptions.CliPath` so the SDK spawns this binary instead of searching for the bundled one under its NuGet `runtimes/` folder. Use this when the SDK package is missing its native payload for your OS/architecture and the server logs `Copilot CLI not found at '…\runtimes\<rid>\native\copilot.exe'`. Environment override: `REBUSS_COPILOT_CLI_PATH` (takes precedence when non-blank). |
 
 **How to set them — `mcp.json` (recommended)**
@@ -738,6 +739,59 @@ see the banner:
 
    Classic personal access tokens are **not** valid here — they don't
    carry the `copilot` scope regardless of their permissions.
+
+### `get_pr_content` fails with "The operation was canceled" on a large PR (`--agent claude`)
+
+Symptom: 5/6 (or N-1/N) page reviews complete in the inspection cache but the
+tool call returns `Error retrieving PR content: The operation was canceled.`,
+and the MCP server may then disconnect from the host. Server log shows
+`PR pr:NN Copilot review failed: The operation was canceled.` exactly 5 minutes
+after the review started, with one page never completing.
+
+Two timeouts compound here, in this order:
+
+1. **Per-page Claude CLI timeout** — the Claude agent kills its child process
+   after `CopilotReview:PerPageTimeoutMinutes` (default `5`). On large PRs a
+   single page can legitimately need longer; the previous build mis-classified
+   this as ambient cancellation and aborted every other in-flight page along
+   with the slow one. Newer builds raise `TimeoutException`, retry up to 3
+   times, then surface the page as a manual-follow-up entry without breaking
+   the rest of the review. Bump the limit if pages routinely exceed 4 minutes:
+
+   ```jsonc
+   // mcp.json env (preferred) — restart the IDE after editing
+   "env": {
+     "CopilotReview__PerPageTimeoutMinutes": "10"
+   }
+   ```
+
+2. **MCP host request ceiling** — the host (Claude Code, VS Code, Copilot CLI,
+   etc.) has its own per-tool-call deadline. Claude Code's default is 5
+   minutes, so a long page review can return successfully on the server side
+   yet still appear failed to the user because the host already gave up. Raise
+   it with the `MCP_TIMEOUT` environment variable on the **host process**,
+   *not* in the server's `mcp.json` env block (which only configures the
+   server's child process):
+
+   ```bash
+   # Linux/macOS — set before launching Claude Code / VS Code
+   export MCP_TIMEOUT=600000      # 10 minutes, in milliseconds
+
+   # Windows PowerShell
+   $env:MCP_TIMEOUT = "600000"
+
+   # Windows cmd.exe
+   set MCP_TIMEOUT=600000
+   ```
+
+   The MCP server itself never times out a tool call — only the host does — so
+   tuning `PerPageTimeoutMinutes` without also raising `MCP_TIMEOUT` will let
+   the server finish work the host has already abandoned.
+
+Inspection caches under `%LOCALAPPDATA%\REBUSS.Pure\copilot-inspection\pr-NN\`
+(when `REBUSS_COPILOT_INSPECT=1` is set) reveal which page stalled — count the
+`*-page-N-review-prompt.md` vs `*-page-N-review-response.md` files for the
+affected run.
 
 ### Claude Code review failing with `claude -p exited 1` (no stderr) / "Not logged in"
 

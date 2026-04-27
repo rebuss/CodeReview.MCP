@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Options;
 using REBUSS.Pure.Services.AgentInvocation;
+using REBUSS.Pure.Services.CopilotReview;
 
 namespace REBUSS.Pure.Tests.Services.AgentInvocation;
 
@@ -121,5 +123,89 @@ public class ClaudeCliAgentInvokerTests
         // which 404s. The normalizer must rewrite dots to hyphens and leave
         // already-canonical ids untouched.
         Assert.Equal(expected, ClaudeCliAgentInvoker.NormalizeModelForClaudeCli(input));
+    }
+
+    [Fact]
+    public void ResolvePerPageTimeout_NoOptionsAndNoOverride_ReturnsDefault()
+    {
+        var timeout = ClaudeCliAgentInvoker.ResolvePerPageTimeout(
+            explicitOverride: null, options: null);
+
+        Assert.Equal(ClaudeCliAgentInvoker.DefaultPerPageTimeout, timeout);
+    }
+
+    [Fact]
+    public void ResolvePerPageTimeout_OptionsValueUsed_WhenNoOverride()
+    {
+        var options = Options.Create(new CopilotReviewOptions { PerPageTimeoutMinutes = 8 });
+
+        var timeout = ClaudeCliAgentInvoker.ResolvePerPageTimeout(
+            explicitOverride: null, options: options);
+
+        Assert.Equal(TimeSpan.FromMinutes(8), timeout);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void ResolvePerPageTimeout_OptionsBelowOne_ClampedToOneMinute(int configured)
+    {
+        // Floor guard: a misconfigured 0 / negative value would otherwise produce a
+        // TimeSpan that fires CancelAfter immediately, killing every page on its first
+        // I/O read. Clamp to 1 minute so the per-page retry path stays meaningful.
+        var options = Options.Create(new CopilotReviewOptions { PerPageTimeoutMinutes = configured });
+
+        var timeout = ClaudeCliAgentInvoker.ResolvePerPageTimeout(
+            explicitOverride: null, options: options);
+
+        Assert.Equal(TimeSpan.FromMinutes(1), timeout);
+    }
+
+    [Fact]
+    public void ResolvePerPageTimeout_ExplicitOverride_TakesPrecedenceOverOptions()
+    {
+        // Test-only constructor path: the override skips clamping and the IOptions read
+        // entirely so integration tests can exercise sub-minute timeouts deterministically.
+        var options = Options.Create(new CopilotReviewOptions { PerPageTimeoutMinutes = 99 });
+
+        var timeout = ClaudeCliAgentInvoker.ResolvePerPageTimeout(
+            explicitOverride: TimeSpan.FromMilliseconds(250), options: options);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(250), timeout);
+    }
+
+    [Fact]
+    public void ClassifyCancellation_ExternalTokenSignaled_PropagatesOriginalOce()
+    {
+        // Genuine external cancellation must propagate so host shutdown / orchestrator-
+        // level cancel tears down in-flight work. Reclassifying as TimeoutException here
+        // would mask the cancel and turn a clean shutdown into a phantom timeout.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var oce = new OperationCanceledException(cts.Token);
+
+        var result = ClaudeCliAgentInvoker.ClassifyCancellation(
+            oce, cts.Token, TimeSpan.FromMinutes(5));
+
+        Assert.Same(oce, result);
+    }
+
+    [Fact]
+    public void ClassifyCancellation_ExternalTokenNotSignaled_ConvertsToTimeoutException()
+    {
+        // Regression guard: the linked CTS fired due to the per-page timeout, not the
+        // caller's token. Surfacing OCE here was the bug — AgentPageReviewer re-throws
+        // OCE up to the orchestrator's batch task, aborting every sibling page in
+        // flight. Reclassifying as TimeoutException routes the page through the normal
+        // retry-and-record-failure path instead.
+        var oce = new OperationCanceledException();
+
+        var result = ClaudeCliAgentInvoker.ClassifyCancellation(
+            oce, CancellationToken.None, TimeSpan.FromMinutes(5));
+
+        var timeout = Assert.IsType<TimeoutException>(result);
+        Assert.Contains("per-page timeout", timeout.Message);
+        Assert.Contains("PerPageTimeoutMinutes", timeout.Message);
+        Assert.Contains("5", timeout.Message); // The configured timeout value is in the message.
     }
 }

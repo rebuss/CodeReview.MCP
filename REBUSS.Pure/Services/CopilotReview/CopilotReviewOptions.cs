@@ -136,4 +136,15 @@ public sealed class CopilotReviewOptions
     /// </para>
     /// </summary>
     public int JobRetentionMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Per-page hard timeout for the Claude CLI agent invocation. Bounds how long a single
+    /// page review may run before the child process is killed. Exceeding this limit raises
+    /// a <see cref="TimeoutException"/> from <c>ClaudeCliAgentInvoker</c>, which the orchestrator
+    /// treats as a normal failed attempt — retried up to 3 times, then surfaced as a
+    /// per-page failure (with the file paths on that page) without aborting sibling pages.
+    /// Values &lt; 1 are clamped to <c>1</c>. Default <c>5</c>. Increase for large PRs where
+    /// individual pages routinely exceed 4 minutes.
+    /// </summary>
+    public int PerPageTimeoutMinutes { get; set; } = 5;
 }

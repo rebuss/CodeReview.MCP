@@ -435,6 +435,60 @@ public class LocalReviewProviderTests
         Assert.Equal(1, result.Files[0].Deletions);
     }
 
+    [Fact]
+    public async Task GetFileDiffAsync_RenamedFile_LookupByNewPath_ReturnsDiffWithRenameChangeType()
+    {
+        // Contract pinned by UnifiedPatchParserTests.ParseMultiFile_RenamedFile_SetsChangeTypeAndUsesNewPath:
+        // the parser keys the FileChange on the b-side (new) path. Callers asking by the
+        // new path get the diff back with ChangeType == "rename".
+        const string diff =
+            "diff --git a/src/Old.cs b/src/New.cs\n" +
+            "similarity index 95%\n" +
+            "rename from src/Old.cs\n" +
+            "rename to src/New.cs\n" +
+            "index abc1234..def5678 100644\n" +
+            "--- a/src/Old.cs\n" +
+            "+++ b/src/New.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        var result = await _provider.GetFileDiffAsync("src/New.cs", LocalReviewScope.WorkingTree());
+
+        Assert.Single(result.Files);
+        Assert.Equal("src/New.cs", result.Files[0].Path);
+        Assert.Equal("rename", result.Files[0].ChangeType);
+    }
+
+    [Fact]
+    public async Task GetFileDiffAsync_RenamedFile_LookupByOldPath_ThrowsLocalFileNotFoundException()
+    {
+        // Regression guard: the diff pipeline keys the FileChange on the b-side (new) path,
+        // so a caller that mistakenly asks for the old path of a renamed file must receive
+        // LocalFileNotFoundException — not a silent miss that would surface upstream as
+        // "no diff for this file" with no diagnostic. Replaces the prior
+        // GetFileDiffAsync_SetsSkipReason_ForRenamedFile test that asserted the legacy
+        // "file renamed" SkipReason contract removed in the unified-diff refactor (daf8a71).
+        const string diff =
+            "diff --git a/src/Old.cs b/src/New.cs\n" +
+            "similarity index 95%\n" +
+            "rename from src/Old.cs\n" +
+            "rename to src/New.cs\n" +
+            "index abc1234..def5678 100644\n" +
+            "--- a/src/Old.cs\n" +
+            "+++ b/src/New.cs\n" +
+            "@@ -1 +1 @@\n" +
+            "-old\n" +
+            "+new";
+        _gitClient.GetUnifiedDiffAsync(RepoRoot, Arg.Any<LocalReviewScope>(), Arg.Any<CancellationToken>())
+            .Returns(diff);
+
+        await Assert.ThrowsAsync<LocalFileNotFoundException>(
+            () => _provider.GetFileDiffAsync("src/Old.cs", LocalReviewScope.WorkingTree()));
+    }
+
     // --- GetSkipReason unit tests ---
 
     [Fact]

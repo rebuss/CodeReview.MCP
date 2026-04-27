@@ -274,18 +274,34 @@ public class FindingValidatorTests
         // routed page-2's response to page-3's findings (or vice versa) would not
         // have failed the test. Verdicts are now specific per call so per-finding
         // routing is verified.
-        var pageVerdicts = new[] { "VALID", "FALSE_POSITIVE", "UNCERTAIN" };
-        var pageSizes = new[] { 5, 5, 2 }; // 12 split 5/5/2
-        var callIndex = 0;
+        //
+        // Routing assertion is bound to a stable per-finding marker in the prompt
+        // (each finding's description renders as `**Issue:** issue {index}`, see
+        // MakeFinding) rather than to call-order. If a future refactor of
+        // FindingValidator ever dispatches pages concurrently the slot-to-page
+        // mapping would otherwise become non-deterministic and silently flake;
+        // here, page identity is derived from prompt content, not call sequence.
+        // The discriminators (`issue 0`, `issue 5`, `issue 10`) are chosen so
+        // none is a substring of another — `issue 10` does not contain `issue 0`
+        // or `issue 5` and vice versa — so each marker matches exactly one page.
+        var pageContracts = new (string Marker, string Verdict, int Size)[]
+        {
+            ("**Issue:** issue 0",  "VALID",          5), // page 1: findings 0..4
+            ("**Issue:** issue 5",  "FALSE_POSITIVE", 5), // page 2: findings 5..9
+            ("**Issue:** issue 10", "UNCERTAIN",      2), // page 3: findings 10..11
+        };
+
         var invoker = new FakeAgentInvoker
         {
-            OnInvoke = (_, _, _) =>
+            OnInvoke = (prompt, _, _) =>
             {
-                var idx = Interlocked.Increment(ref callIndex) - 1;
-                var verdict = pageVerdicts[idx];
-                var size = pageSizes[idx];
+                var contract = Array.Find(pageContracts, c => prompt.Contains(c.Marker));
+                if (contract == default)
+                    throw new InvalidOperationException(
+                        "Fake invoker received a prompt with no recognized page marker.");
                 var content = string.Join('\n',
-                    Enumerable.Range(1, size).Select(i => $"**Finding {i}: {verdict}** — page{idx + 1}"));
+                    Enumerable.Range(1, contract.Size).Select(
+                        i => $"**Finding {i}: {contract.Verdict}** — {contract.Marker}"));
                 return Task.FromResult(content);
             }
         };

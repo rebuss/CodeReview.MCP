@@ -7,25 +7,18 @@ using REBUSS.Pure.Services.CopilotReview.Validation;
 namespace REBUSS.Pure.Tests.Services.CopilotReview.Validation;
 
 /// <summary>Unit tests for <see cref="FindingScopeResolver"/>. Feature 021 + Feature 023.</summary>
-public class FindingScopeResolverTests : IDisposable
+public class FindingScopeResolverTests
 {
     private const string TestReviewKey = "pr:test";
 
     private readonly IFindingSourceProvider _sourceProvider = Substitute.For<IFindingSourceProvider>();
     private readonly IFindingSourceProviderSelector _selector = Substitute.For<IFindingSourceProviderSelector>();
     private readonly FindingScopeResolver _resolver;
-    private readonly string _tempDir;
 
     public FindingScopeResolverTests()
     {
         _selector.SelectFor(Arg.Any<string>()).Returns(_sourceProvider);
         _resolver = new FindingScopeResolver(_selector, NullLogger<FindingScopeResolver>.Instance);
-        _tempDir = Path.Combine(Path.GetTempPath(), $"finding-scope-resolver-test-{Guid.NewGuid():N}");
-    }
-
-    public void Dispose()
-    {
-        try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { }
     }
 
     private static ParsedFinding MakeFinding(string filePath, int? line = null) => new()

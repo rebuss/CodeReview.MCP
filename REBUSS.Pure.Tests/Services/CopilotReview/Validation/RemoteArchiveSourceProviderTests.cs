@@ -81,6 +81,13 @@ public class RemoteArchiveSourceProviderTests : IDisposable
     public async Task GetAfterCodeAsync_CallerCancellation_Propagates()
     {
         // Spec FR-010 — cancellation MUST propagate, not be swallowed.
+        // This test reaches the file I/O step with a pre-cancelled token: the orchestrator
+        // mock returns synchronously, and path resolution / FileInfo are sync, so the only
+        // place on the happy path that can observe the token is
+        // File.ReadAllTextAsync(resolvedPath, ct) in RemoteArchiveSourceProvider.
+        // A refactor that drops the token from that call (or switches to sync
+        // File.ReadAllText) would let the file read complete and this assertion would
+        // fail — see the matching invariant comment at the propagation point.
         var inner = Path.Combine(_tempDir, "repo");
         Directory.CreateDirectory(Path.Combine(inner, "src"));
         await File.WriteAllTextAsync(Path.Combine(inner, "src", "Foo.cs"), "class Foo {}");

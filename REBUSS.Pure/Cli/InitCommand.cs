@@ -759,7 +759,7 @@ public class InitCommand : ICliCommand
 
         foreach (var promptFileName in PromptFileNames)
         {
-            var resourceName = FindResourceName(assembly, promptFileName);
+            var resourceName = FindResourceName(assembly, ResourcePrefix, promptFileName);
 
             if (resourceName is null)
             {
@@ -796,13 +796,18 @@ public class InitCommand : ICliCommand
 
         foreach (var skillName in SkillNames)
         {
-            var resourceName = SkillsResourcePrefix + skillName + ".SKILL.md";
-            var resourceStream = assembly.GetManifestResourceStream(resourceName);
-            if (resourceStream is null)
+            // Defensive symmetry with prompts: even though every shipped skill pins an
+            // explicit LogicalName in REBUSS.Pure.csproj, route through FindResourceName
+            // so a future skill added without that pin still resolves via the
+            // hyphen→underscore mangled-name fallback instead of silently warning + skipping.
+            var resourceName = FindResourceName(assembly, SkillsResourcePrefix, skillName + ".SKILL.md");
+            if (resourceName is null)
             {
-                await _output.WriteLineAsync(string.Format(Resources.WarnEmbeddedPromptResourceNotFound, resourceName));
+                await _output.WriteLineAsync(string.Format(Resources.WarnEmbeddedPromptResourceNotFound, SkillsResourcePrefix + skillName + ".SKILL.md"));
                 continue;
             }
+
+            var resourceStream = assembly.GetManifestResourceStream(resourceName)!;
 
             string embeddedContent;
             await using (resourceStream.ConfigureAwait(false))
@@ -870,19 +875,22 @@ public class InitCommand : ICliCommand
     }
 
 /// <summary>
-    /// Locates the embedded resource name for a given prompt file.
-    /// The SDK may mangle hyphens to underscores depending on version,
-    /// so we search by suffix with both variants.
+    /// Locates an embedded resource by `<paramref name="prefix"/> + <paramref name="fileName"/>`.
+    /// The SDK may mangle hyphens to underscores in the resource path depending on version
+    /// (notably when the file lives under a directory whose name contains a hyphen), so the
+    /// lookup tries the exact name first and falls back to the hyphen→underscore variant.
+    /// Used by both the prompt and the skill deploy paths so a future addition under either
+    /// prefix automatically inherits the same defensive resolution.
     /// </summary>
-    internal static string? FindResourceName(Assembly assembly, string promptFileName)
+    internal static string? FindResourceName(Assembly assembly, string prefix, string fileName)
     {
         var resources = assembly.GetManifestResourceNames();
 
-        var exactName = ResourcePrefix + promptFileName;
+        var exactName = prefix + fileName;
         if (Array.Exists(resources, r => r == exactName))
             return exactName;
 
-        var mangledName = ResourcePrefix + promptFileName.Replace('-', '_');
+        var mangledName = prefix + fileName.Replace('-', '_');
         if (Array.Exists(resources, r => r == mangledName))
             return mangledName;
 
