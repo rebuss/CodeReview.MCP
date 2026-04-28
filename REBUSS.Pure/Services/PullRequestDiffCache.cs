@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models;
+using System.Collections.Concurrent;
 
 namespace REBUSS.Pure.Services;
 

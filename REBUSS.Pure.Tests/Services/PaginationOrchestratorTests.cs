@@ -1,10 +1,9 @@
-using System.Text.Json;
 using NSubstitute;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Services.Pagination;
-using REBUSS.Pure.Tools.Models;
+using System.Text.Json;
 
 namespace REBUSS.Pure.Tests.Services.Pagination;
 

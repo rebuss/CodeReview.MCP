@@ -1,6 +1,6 @@
-using System.Text.RegularExpressions;
 using REBUSS.Pure.SmokeTests.Expectations;
 using REBUSS.Pure.SmokeTests.Infrastructure;
+using System.Text.RegularExpressions;
 
 namespace REBUSS.Pure.SmokeTests.Contracts.AzureDevOps;
 

@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.Services.RepositoryDownload;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.Tests.Services.RepositoryDownload;
 

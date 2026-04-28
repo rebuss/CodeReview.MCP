@@ -1,7 +1,7 @@
-using System.Text;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Shared;
+using System.Text;
 
 namespace REBUSS.Pure.RoslynProcessor;
 

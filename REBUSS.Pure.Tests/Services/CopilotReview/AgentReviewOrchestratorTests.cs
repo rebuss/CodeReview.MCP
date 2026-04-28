@@ -548,7 +548,7 @@ public class AgentReviewOrchestratorTests
     }
 
     // ─── Feature 021 — Finding validation integration (T028, T040) ────────────────
-  
+
     [Fact]
     public async Task TriggerReview_NullValidator_ReviewTextUnchanged()
     {

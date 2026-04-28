@@ -1,11 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using REBUSS.Pure.Core;
 using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.GitHub.Parsers;
 using REBUSS.Pure.GitHub.Providers;
-using REBUSS.Pure.Core;
 
 namespace REBUSS.Pure.GitHub;
 

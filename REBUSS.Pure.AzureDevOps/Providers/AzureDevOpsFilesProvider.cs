@@ -1,9 +1,9 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Api;
 using REBUSS.Pure.AzureDevOps.Parsers;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.AzureDevOps.Providers
 {

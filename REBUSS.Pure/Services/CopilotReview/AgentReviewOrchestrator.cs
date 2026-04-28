@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using System.Text;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,7 +7,8 @@ using REBUSS.Pure.Core.Models.CopilotReview;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.CopilotReview.Validation;
-using REBUSS.Pure.Services.PrEnrichment;
+using System.Collections.Concurrent;
+using System.Text;
 
 namespace REBUSS.Pure.Services.CopilotReview;
 
@@ -422,10 +421,10 @@ internal sealed class AgentReviewOrchestrator : IAgentReviewOrchestrator, IAsync
         {
             switch (w.ResolutionFailure)
             {
-                case Validation.ScopeResolutionFailure.NotCSharp:        notCSharp++; break;
+                case Validation.ScopeResolutionFailure.NotCSharp: notCSharp++; break;
                 case Validation.ScopeResolutionFailure.SourceUnavailable: sourceUnavailable++; break;
-                case Validation.ScopeResolutionFailure.ScopeNotFound:     scopeNotFound++; break;
-                case Validation.ScopeResolutionFailure.None:              resolved++; break;
+                case Validation.ScopeResolutionFailure.ScopeNotFound: scopeNotFound++; break;
+                case Validation.ScopeResolutionFailure.None: resolved++; break;
             }
         }
 
@@ -434,9 +433,9 @@ internal sealed class AgentReviewOrchestrator : IAgentReviewOrchestrator, IAsync
         {
             switch (v.Verdict)
             {
-                case Validation.FindingVerdict.Valid:         valid++; break;
+                case Validation.FindingVerdict.Valid: valid++; break;
                 case Validation.FindingVerdict.FalsePositive: falsePositive++; break;
-                case Validation.FindingVerdict.Uncertain:     uncertain++; break;
+                case Validation.FindingVerdict.Uncertain: uncertain++; break;
             }
         }
 

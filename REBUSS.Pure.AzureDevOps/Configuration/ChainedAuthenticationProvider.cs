@@ -1,8 +1,8 @@
-using System.Net.Http.Headers;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.AzureDevOps.Properties;
+using System.Net.Http.Headers;
+using System.Text;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 
@@ -122,4 +122,4 @@ public class ChainedAuthenticationProvider : IAuthenticationProvider
         return new AuthenticationHeaderValue("Bearer", cached.AccessToken);
     }
 
-    }
+}

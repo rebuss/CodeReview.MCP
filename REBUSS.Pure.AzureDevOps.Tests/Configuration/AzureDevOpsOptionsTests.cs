@@ -1,5 +1,4 @@
 using REBUSS.Pure.AzureDevOps.Configuration;
-using Microsoft.Extensions.Options;
 
 namespace REBUSS.Pure.AzureDevOps.Tests.Configuration;
 

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
-using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Services.Pagination;
 

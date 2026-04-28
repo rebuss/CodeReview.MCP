@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.GitHub.Properties;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 

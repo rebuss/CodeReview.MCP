@@ -1,8 +1,8 @@
-using System.Text;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Models.CopilotReview;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Tools.Models;
+using System.Text;
 
 namespace REBUSS.Pure.Tools.Shared;
 

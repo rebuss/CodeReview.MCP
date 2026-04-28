@@ -1,9 +1,8 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using REBUSS.Pure.AzureDevOps;
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.AzureDevOps.Properties;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.AzureDevOps.Api
 {

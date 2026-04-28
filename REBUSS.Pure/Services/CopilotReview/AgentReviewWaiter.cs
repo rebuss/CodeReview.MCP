@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
-using ModelContextProtocol.Protocol;
 using REBUSS.Pure.Core.Models.CopilotReview;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;

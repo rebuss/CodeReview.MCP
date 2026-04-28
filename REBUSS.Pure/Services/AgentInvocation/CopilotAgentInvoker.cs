@@ -1,10 +1,10 @@
-using System.Text;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.Core.Services.AgentInvocation;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Services.CopilotReview;
+using System.Text;
 
 namespace REBUSS.Pure.Services.AgentInvocation;
 

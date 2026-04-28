@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
-using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Services.Pagination;
 

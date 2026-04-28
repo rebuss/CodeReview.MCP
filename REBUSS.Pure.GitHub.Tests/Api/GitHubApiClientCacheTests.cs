@@ -1,9 +1,8 @@
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using NSubstitute;
 using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.GitHub.Configuration;
+using System.Net;
 
 namespace REBUSS.Pure.GitHub.Tests.Api;
 

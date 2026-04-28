@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
 
 namespace REBUSS.Pure.Core.Tests.Shared;

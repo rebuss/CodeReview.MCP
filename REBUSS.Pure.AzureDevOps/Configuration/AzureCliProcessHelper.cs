@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using REBUSS.Pure.AzureDevOps.Properties;
+using System.Runtime.InteropServices;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 

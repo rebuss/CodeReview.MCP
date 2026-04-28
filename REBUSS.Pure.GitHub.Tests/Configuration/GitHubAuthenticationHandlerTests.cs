@@ -1,8 +1,8 @@
-using System.Net;
-using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using REBUSS.Pure.GitHub.Configuration;
+using System.Net;
+using System.Net.Http.Headers;
 
 namespace REBUSS.Pure.GitHub.Tests.Configuration;
 

@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using REBUSS.Pure.Core;
-using REBUSS.Pure.RoslynProcessor;
 using REBUSS.Pure.Services.CopilotReview.Validation;
 using REBUSS.Pure.Services.LocalReview;
 

@@ -1,6 +1,6 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Properties;
+using System.Text.Json;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 

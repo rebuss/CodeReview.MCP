@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.Core;
-using REBUSS.Pure.RoslynProcessor;
 
 namespace REBUSS.Pure.RoslynProcessor.Tests;
 

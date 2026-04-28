@@ -1,8 +1,8 @@
+using Microsoft.Extensions.Logging;
+using REBUSS.Pure.AzureDevOps.Properties;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
-using REBUSS.Pure.AzureDevOps.Properties;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 

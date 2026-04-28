@@ -1,5 +1,3 @@
-using REBUSS.Pure.GitHub;
-
 namespace REBUSS.Pure.GitHub.Configuration;
 
 public class GitHubOptions

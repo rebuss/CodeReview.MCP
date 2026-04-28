@@ -1,8 +1,8 @@
-using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core.Shared;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace REBUSS.Pure.RoslynProcessor;
 

@@ -1,13 +1,12 @@
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using REBUSS.Pure.Core.Exceptions;
+using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.GitHub.Parsers;
 using REBUSS.Pure.GitHub.Providers;
-using REBUSS.Pure.Core.Exceptions;
-using REBUSS.Pure.Core.Models;
-using REBUSS.Pure.Core.Shared;
+using System.Net;
 
 namespace REBUSS.Pure.GitHub.Tests.Providers;
 

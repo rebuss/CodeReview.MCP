@@ -1,7 +1,7 @@
-using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.GitHub.Properties;
+using System.Net.Http.Headers;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 
@@ -104,4 +104,4 @@ public class GitHubChainedAuthenticationProvider : IGitHubAuthenticationProvider
         }
     }
 
-    }
+}

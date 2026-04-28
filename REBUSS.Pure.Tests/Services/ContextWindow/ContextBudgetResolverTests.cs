@@ -504,4 +504,4 @@ public class ContextBudgetResolverTests
         Assert.Equal(BudgetSource.Registry, result.Source);
     }
 
-    }
+}

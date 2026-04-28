@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis.CSharp;
-using REBUSS.Pure.RoslynProcessor;
 
 namespace REBUSS.Pure.RoslynProcessor.Tests;
 

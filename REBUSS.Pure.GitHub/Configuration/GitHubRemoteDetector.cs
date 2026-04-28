@@ -1,7 +1,7 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.GitHub.Properties;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 

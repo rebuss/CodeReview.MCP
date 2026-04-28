@@ -1,6 +1,6 @@
-using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.GitHub.Properties;
+using System.Net.Http.Headers;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 

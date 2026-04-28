@@ -62,11 +62,11 @@ public class LocalReviewProviderTests
         var result = await _provider.GetFilesAsync(LocalReviewScope.WorkingTree());
 
         Assert.Equal(5, result.Files.Count);
-        Assert.Equal("added",    result.Files[0].Status);
+        Assert.Equal("added", result.Files[0].Status);
         Assert.Equal("modified", result.Files[1].Status);
-        Assert.Equal("removed",  result.Files[2].Status);
-        Assert.Equal("renamed",  result.Files[3].Status);
-        Assert.Equal("added",    result.Files[4].Status);  // untracked treated as added
+        Assert.Equal("removed", result.Files[2].Status);
+        Assert.Equal("renamed", result.Files[3].Status);
+        Assert.Equal("added", result.Files[4].Status);  // untracked treated as added
     }
 
     [Fact]

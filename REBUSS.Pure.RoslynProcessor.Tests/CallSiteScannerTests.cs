@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using REBUSS.Pure.RoslynProcessor;
 
 namespace REBUSS.Pure.RoslynProcessor.Tests;
 

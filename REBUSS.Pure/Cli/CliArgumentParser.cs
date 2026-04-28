@@ -185,18 +185,18 @@ public sealed class CliParseResult
         string? provider = null,
         string? owner = null,
         string? agent = null) => new()
-    {
-        IsServerMode = true,
-        CommandName = null,
-        RepoPath = repoPath,
-        Pat = pat,
-        Organization = organization,
-        Project = project,
-        Repository = repository,
-        Provider = provider,
-        Owner = owner,
-        Agent = agent
-    };
+        {
+            IsServerMode = true,
+            CommandName = null,
+            RepoPath = repoPath,
+            Pat = pat,
+            Organization = organization,
+            Project = project,
+            Repository = repository,
+            Provider = provider,
+            Owner = owner,
+            Agent = agent
+        };
 
     /// <summary>
     /// Whether the <c>-g</c> / <c>--global</c> flag was passed to the <c>init</c> command.

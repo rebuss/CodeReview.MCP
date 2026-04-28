@@ -1,13 +1,12 @@
-using System.Diagnostics;
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Configuration;
-using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Properties;
 using REBUSS.Pure.Services.CopilotReview;
+using System.Diagnostics;
+using System.Reflection;
 using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
 using GitHubNames = REBUSS.Pure.GitHub.Names;
 
@@ -557,7 +556,7 @@ public class InitCommand : ICliCommand
     internal static List<McpConfigTarget> ResolveGlobalConfigTargets(string? agent = null)
     {
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
         if (string.Equals(agent, CliArgumentParser.AgentClaude, StringComparison.OrdinalIgnoreCase))
             return
@@ -874,7 +873,7 @@ public class InitCommand : ICliCommand
         }
     }
 
-/// <summary>
+    /// <summary>
     /// Locates an embedded resource by `<paramref name="prefix"/> + <paramref name="fileName"/>`.
     /// The SDK may mangle hyphens to underscores in the resource path depending on version
     /// (notably when the file lives under a directory whose name contains a hyphen), so the

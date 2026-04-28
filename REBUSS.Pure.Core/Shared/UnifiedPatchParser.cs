@@ -1,6 +1,6 @@
+using REBUSS.Pure.Core.Models;
 using System.Globalization;
 using System.Text.RegularExpressions;
-using REBUSS.Pure.Core.Models;
 
 namespace REBUSS.Pure.Core.Shared;
 

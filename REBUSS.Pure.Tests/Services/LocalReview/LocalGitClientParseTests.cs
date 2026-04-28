@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.Services.LocalReview;
 
 namespace REBUSS.Pure.Tests.Services.LocalReview;

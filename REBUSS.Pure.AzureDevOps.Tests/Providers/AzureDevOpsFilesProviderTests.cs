@@ -1,10 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using REBUSS.Pure.AzureDevOps.Api;
-using REBUSS.Pure.Core.Models;
-using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.AzureDevOps.Parsers;
 using REBUSS.Pure.AzureDevOps.Providers;
+using REBUSS.Pure.Core.Shared;
 
 namespace REBUSS.Pure.AzureDevOps.Tests.Providers;
 

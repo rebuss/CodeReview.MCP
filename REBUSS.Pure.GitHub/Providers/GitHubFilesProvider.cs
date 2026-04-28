@@ -1,9 +1,9 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.GitHub.Parsers;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.GitHub.Providers;
 

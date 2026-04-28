@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.GitHub.Parsers;
 using REBUSS.Pure.GitHub.Providers;
-using REBUSS.Pure.Core.Shared;
 
 namespace REBUSS.Pure.GitHub.Tests.Providers;
 

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using REBUSS.Pure.SmokeTests.Infrastructure;
 
 namespace REBUSS.Pure.SmokeTests.Contracts.AzureDevOps;

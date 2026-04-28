@@ -1,10 +1,10 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Shared;
 using REBUSS.Pure.Services.ResponsePacking;
 using REBUSS.Pure.Tools.Shared;
+using System.Collections.Concurrent;
 
 namespace REBUSS.Pure.Services.PrEnrichment;
 

@@ -1,5 +1,5 @@
-using REBUSS.Pure.GitHub.Api;
 using REBUSS.Pure.Core;
+using REBUSS.Pure.GitHub.Api;
 
 namespace REBUSS.Pure.GitHub.Providers;
 

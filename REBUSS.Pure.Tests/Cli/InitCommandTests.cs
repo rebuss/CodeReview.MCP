@@ -561,7 +561,7 @@ public class InitCommandTests
     [Fact]
     public void BuildConfigContent_OmitsPat_WhenNullOrEmpty()
     {
-        var contentNull  = InitCommand.BuildConfigContent("exe", "C:\\\\repo", null);
+        var contentNull = InitCommand.BuildConfigContent("exe", "C:\\\\repo", null);
         var contentEmpty = InitCommand.BuildConfigContent("exe", "C:\\\\repo", "");
         var contentWhite = InitCommand.BuildConfigContent("exe", "C:\\\\repo", "   ");
 
@@ -1679,7 +1679,7 @@ public class InitCommandTests
         Assert.Contains(targets, t => t.IdeName == "Copilot CLI (global)");
 
         var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var appData  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".mcp.json"));
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(appData, "Code", "User", "mcp.json"));
         Assert.Contains(targets, t => t.ConfigPath == Path.Combine(userHome, ".copilot", "mcp-config.json"));

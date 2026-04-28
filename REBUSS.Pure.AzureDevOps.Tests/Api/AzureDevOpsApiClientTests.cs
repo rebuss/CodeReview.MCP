@@ -1,8 +1,8 @@
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.AzureDevOps.Api;
+using REBUSS.Pure.AzureDevOps.Configuration;
+using System.Net;
 
 namespace REBUSS.Pure.AzureDevOps.Tests.Api;
 

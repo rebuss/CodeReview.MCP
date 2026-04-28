@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.IO.Compression;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.AzureDevOps.Api;
@@ -9,6 +7,8 @@ using REBUSS.Pure.AzureDevOps.Properties;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
+using System.Diagnostics;
+using System.IO.Compression;
 
 namespace REBUSS.Pure.AzureDevOps.Providers
 {
@@ -157,9 +157,9 @@ namespace REBUSS.Pure.AzureDevOps.Providers
         private async Task<(PullRequestMetadata metadata, List<FileChange> files, string baseCommit, string targetCommit)>
             FetchPullRequestDataAsync(int prNumber)
         {
-            var metadata  = _metadataParser.Parse(await _apiClient.GetPullRequestDetailsAsync(prNumber));
+            var metadata = _metadataParser.Parse(await _apiClient.GetPullRequestDetailsAsync(prNumber));
             var iteration = _iterationParser.ParseLast(await _apiClient.GetPullRequestIterationsAsync(prNumber));
-            var files     = await FetchFileChangesAsync(prNumber, iteration.Id);
+            var files = await FetchFileChangesAsync(prNumber, iteration.Id);
 
             return (metadata, files, iteration.BaseCommit, iteration.TargetCommit);
         }
@@ -493,13 +493,13 @@ namespace REBUSS.Pure.AzureDevOps.Providers
         {
             return new PullRequestDiff
             {
-                Title         = metadata.Title,
-                Status        = metadata.Status,
-                SourceBranch  = metadata.SourceBranch,
-                TargetBranch  = metadata.TargetBranch,
+                Title = metadata.Title,
+                Status = metadata.Status,
+                SourceBranch = metadata.SourceBranch,
+                TargetBranch = metadata.TargetBranch,
                 SourceRefName = metadata.SourceRefName,
                 TargetRefName = metadata.TargetRefName,
-                Files         = files,
+                Files = files,
                 LastSourceCommitId = sourceCommitId
             };
         }

@@ -1,9 +1,8 @@
-using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
-using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Services.CopilotReview.Inspection;
+using System.Runtime.InteropServices;
 
 namespace REBUSS.Pure.Tests.Services.CopilotReview.Inspection;
 

@@ -1,5 +1,5 @@
-using System.Text.Json;
 using REBUSS.Pure.SmokeTests.Fixtures;
+using System.Text.Json;
 
 namespace REBUSS.Pure.SmokeTests.Installation;
 

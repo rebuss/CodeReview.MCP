@@ -1,6 +1,6 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core.Models;
+using System.Text.Json;
 
 namespace REBUSS.Pure.GitHub.Parsers;
 

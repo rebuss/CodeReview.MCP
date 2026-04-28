@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
+using System.Collections.Concurrent;
 
 namespace REBUSS.Pure.RoslynProcessor;
 

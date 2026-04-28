@@ -1,7 +1,7 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using REBUSS.Pure.Core.Models.Pagination;
 using REBUSS.Pure.Services.Pagination;
+using System.Text.Json;
 
 namespace REBUSS.Pure.Tests.Services.Pagination;
 

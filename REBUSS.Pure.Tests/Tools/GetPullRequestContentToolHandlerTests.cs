@@ -12,9 +12,9 @@ using REBUSS.Pure.Core.Models.ResponsePacking;
 using REBUSS.Pure.Core.Services.AgentInvocation;
 using REBUSS.Pure.Core.Services.CopilotReview;
 using REBUSS.Pure.Core.Shared;
+using REBUSS.Pure.Services.CopilotReview;
 using REBUSS.Pure.Services.PrEnrichment;
 using REBUSS.Pure.Tools;
-using REBUSS.Pure.Services.CopilotReview;
 using CopilotUnavailableException = global::REBUSS.Pure.Services.CopilotReview.CopilotUnavailableException;
 
 namespace REBUSS.Pure.Tests.Tools;

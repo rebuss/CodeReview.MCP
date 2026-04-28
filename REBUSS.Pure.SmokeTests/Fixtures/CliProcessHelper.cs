@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.Text;
 using System.Runtime.Versioning;
+using System.Text;
 
 namespace REBUSS.Pure.SmokeTests.Fixtures;
 

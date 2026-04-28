@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using REBUSS.Pure.GitHub.Properties;
+using System.Runtime.InteropServices;
 
 namespace REBUSS.Pure.GitHub.Configuration;
 

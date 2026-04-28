@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Properties;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.Services.LocalReview
 {

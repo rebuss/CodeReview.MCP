@@ -1,5 +1,3 @@
-using REBUSS.Pure.AzureDevOps;
-
 namespace REBUSS.Pure.AzureDevOps.Configuration
 {
     public class AzureDevOpsOptions

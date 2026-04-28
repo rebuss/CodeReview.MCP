@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.Services.RepositoryDownload;
 

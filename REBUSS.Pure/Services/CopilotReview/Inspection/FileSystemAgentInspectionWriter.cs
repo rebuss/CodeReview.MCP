@@ -1,7 +1,7 @@
+using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
-using Microsoft.Extensions.Logging;
 
 namespace REBUSS.Pure.Services.CopilotReview.Inspection;
 

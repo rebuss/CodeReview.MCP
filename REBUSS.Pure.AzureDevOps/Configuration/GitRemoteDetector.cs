@@ -1,7 +1,7 @@
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Properties;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace REBUSS.Pure.AzureDevOps.Configuration;
 

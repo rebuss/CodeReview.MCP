@@ -1,8 +1,8 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models.Pagination;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace REBUSS.Pure.Services.Pagination;
 

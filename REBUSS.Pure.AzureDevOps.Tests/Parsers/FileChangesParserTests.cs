@@ -100,12 +100,12 @@ public class FileChangesParserTests
     }
 
     [Theory]
-    [InlineData("add",    "add")]
-    [InlineData("edit",   "edit")]
+    [InlineData("add", "add")]
+    [InlineData("edit", "edit")]
     [InlineData("delete", "delete")]
     [InlineData("rename", "rename")]
-    [InlineData("ADD",    "add")]
-    [InlineData("EDIT",   "edit")]
+    [InlineData("ADD", "add")]
+    [InlineData("EDIT", "edit")]
     [InlineData("unknown", "unknown")]
     public void Parse_ChangeType_IsMappedCorrectly(string input, string expected)
     {

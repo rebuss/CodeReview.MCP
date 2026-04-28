@@ -1,5 +1,3 @@
-using REBUSS.Pure.RoslynProcessor;
-
 namespace REBUSS.Pure.RoslynProcessor.Tests;
 
 public class UsingsChangeDetectorTests

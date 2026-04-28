@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
-using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Services.ContextWindow;
 
 namespace REBUSS.Pure.Tests.Services.ContextWindow;

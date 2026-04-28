@@ -1,5 +1,5 @@
-using System.Text.Json.Serialization;
 using REBUSS.Pure.Core.Models.ResponsePacking;
+using System.Text.Json.Serialization;
 
 namespace REBUSS.Pure.Tools.Models;
 

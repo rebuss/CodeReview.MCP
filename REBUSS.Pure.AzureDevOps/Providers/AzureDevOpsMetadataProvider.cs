@@ -1,11 +1,11 @@
-using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.AzureDevOps.Api;
 using REBUSS.Pure.AzureDevOps.Parsers;
 using REBUSS.Pure.AzureDevOps.Properties;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace REBUSS.Pure.AzureDevOps.Providers
 {

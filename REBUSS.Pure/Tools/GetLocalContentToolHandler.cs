@@ -1,5 +1,3 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
@@ -14,6 +12,8 @@ using REBUSS.Pure.Services.CopilotReview;
 using REBUSS.Pure.Services.LocalReview;
 using REBUSS.Pure.Services.PrEnrichment;
 using REBUSS.Pure.Tools.Shared;
+using System.ComponentModel;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.Tools
 {

@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Properties;
+using System.Diagnostics;
 
 namespace REBUSS.Pure.Core.Shared;
 

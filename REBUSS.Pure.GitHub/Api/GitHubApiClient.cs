@@ -1,11 +1,11 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Net.Http.Headers;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.GitHub.Properties;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace REBUSS.Pure.GitHub.Api;
 

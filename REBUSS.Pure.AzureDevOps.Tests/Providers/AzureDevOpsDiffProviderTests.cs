@@ -1,15 +1,15 @@
-using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using REBUSS.Pure.AzureDevOps.Api;
 using REBUSS.Pure.AzureDevOps.Configuration;
+using REBUSS.Pure.AzureDevOps.Parsers;
+using REBUSS.Pure.AzureDevOps.Providers;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
-using REBUSS.Pure.AzureDevOps.Parsers;
-using REBUSS.Pure.AzureDevOps.Providers;
+using System.Net;
 
 namespace REBUSS.Pure.AzureDevOps.Tests.Providers;
 

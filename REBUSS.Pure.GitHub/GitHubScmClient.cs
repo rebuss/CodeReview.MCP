@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Options;
-using REBUSS.Pure.GitHub.Configuration;
-using REBUSS.Pure.GitHub.Providers;
 using REBUSS.Pure.Core;
 using REBUSS.Pure.Core.Models;
+using REBUSS.Pure.GitHub.Configuration;
+using REBUSS.Pure.GitHub.Providers;
 
 namespace REBUSS.Pure.GitHub;
 
