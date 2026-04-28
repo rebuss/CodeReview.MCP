@@ -127,6 +127,9 @@ namespace REBUSS.Pure.DependencyInjection
 
             services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
             services.AddSingleton<IAgentPageReviewer, AgentPageReviewer>();
+            services.AddSingleton<AgentReviewJobRegistry>();
+            services.AddSingleton<PageReviewExecutor>();
+            services.AddSingleton<FindingValidationPipeline>();
             services.AddSingleton<IAgentReviewOrchestrator, AgentReviewOrchestrator>();
             services.AddSingleton<AgentReviewWaiter>();
             return services;

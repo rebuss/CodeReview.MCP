@@ -207,32 +207,39 @@ trusts GitHub's diff).
 #### Azure DevOps — heuristic per-file vs ZIP fallback
 
 Azure DevOps' REST API has **no unified-patch endpoint**. The diff must be rebuilt locally
-from base + target file contents. Two paths are chosen at runtime based on the changed-file
-count and the configured `AzureDevOpsDiffOptions.ZipFallbackThreshold` (default 30):
+from base + target file contents. The strategy is selected by `DiffSourcePairFactory` at
+runtime based on the changed-file count and the configured
+`AzureDevOpsDiffOptions.ZipFallbackThreshold` (default 30) and exposed to the orchestrator
+through the `IDiffSourcePair` seam — **a single unified `Parallel.ForEachAsync` (max 15)
+loop in `AzureDevOpsDiffProvider` covers both paths**; only `IDiffSourcePair.ReadAsync`
+differs:
 
-- **Per-file path** (count ≤ threshold): `Parallel.ForEachAsync` (max 15) per file, with
-  `Task.WhenAll(baseTask, targetTask)` of `IAzureDevOpsApiClient.GetFileContentAtCommitAsync`.
-  Cost: **2N items API requests**. Cheap for small PRs, fast over the wire.
+- **Per-file path** (`ApiDiffSourcePair`, count ≤ threshold): per call, `Task.WhenAll(baseTask, targetTask)`
+  of `IAzureDevOpsApiClient.GetFileContentAtCommitAsync`. Cost: **2N items API requests**.
+  Cheap for small PRs, fast over the wire.
 
-- **ZIP fallback path** (count > threshold): downloads base + target repository archives in
-  parallel via `AzureDevOpsRepositoryArchiveProvider.DownloadRepositoryZipAsync`, extracts
-  both into a temp directory under `rebuss-repo-{pid}/diff-{guid}/`, then reads file contents
-  from disk via `Parallel.ForEach`. Cost: **2 ZIP requests + bandwidth for full repo
-  contents twice**. Bounded request count protects against Azure DevOps' TSTU rate limits
-  on large refactor PRs.
+- **ZIP fallback path** (`ZipDiffSourcePair`, count > threshold): the factory synchronously
+  downloads base + target repository archives in parallel and extracts them into a temp
+  directory via `ExtractedArchiveWorkspace.CreateAsync` (under `rebuss-repo-{pid}/diff-{guid}/`)
+  before returning. Each `ReadAsync` then resolves the file path via
+  `ExtractedArchiveWorkspace.TryResolveFilePath` (handles flat archives + single-wrapper-directory
+  layouts) and does a synchronous file read. Cost: **2 ZIP requests + bandwidth for full
+  repo contents twice**. Bounded request count protects against Azure DevOps' TSTU rate
+  limits on large refactor PRs.
 
 The threshold default of 30 is calibrated against ADO's documented 200 TSTU / 5 min throttle
 limit (each `items` call is ~1–2 TSTU; 30 files × 2 = 60 calls leaves headroom for
 the other PR-data requests in the same window). Setting `ZipFallbackThreshold = 0` disables
 the ZIP path entirely (always per-file).
 
-**DI cycle avoidance:** `AzureDevOpsDiffProvider` injects `AzureDevOpsRepositoryArchiveProvider`
+**DI cycle avoidance:** `DiffSourcePairFactory` injects `AzureDevOpsRepositoryArchiveProvider`
 as the **concrete type**, not `IRepositoryArchiveProvider`. The interface alias resolves to
 `AzureDevOpsScmClient`, which already depends on the diff provider — taking the interface
-would create a cycle.
+would create a cycle. The same constraint applies to `ExtractedArchiveWorkspace.CreateAsync`.
 
-**Temp directory cleanup:** the ZIP path uses `try/finally` to delete its instance
-directory on completion (success or failure). The parent `rebuss-repo-{pid}/` is also
+**Temp directory cleanup:** `ExtractedArchiveWorkspace : IAsyncDisposable` removes the
+instance directory in `DisposeAsync`; the orchestrator wraps the source-pair handle in
+`await using` so cleanup runs on success or failure. The parent `rebuss-repo-{pid}/` is also
 cleaned up by `RepositoryDownloadOrchestrator.OnShutdown` and by `RepositoryCleanupService`
 on next startup if the process crashes — both already key off the same PID prefix.
 
@@ -568,18 +575,38 @@ restart.
 
 ## 6b. Copilot Review Pipeline (AgentReviewOrchestrator)
 
+### Collaborator decomposition
+
+`AgentReviewOrchestrator` is a thin orchestrator (~200 LOC) composing three
+focused collaborators — each is a DI-registered singleton living next to the
+orchestrator under `REBUSS.Pure\Services\CopilotReview\`:
+
+| Collaborator | Responsibility |
+|---|---|
+| `AgentReviewJobRegistry` | Owns the `ConcurrentDictionary<string, AgentReviewJob>` and the lock guarding terminal-state writes. Idempotent `TryRegister(reviewKey)` (with opportunistic TTL sweep), `TryGet`/`All`, narrow mutation helpers `CompleteUnderLock` / `SetTotalPagesUnderLock`, and the snapshot projection `Snapshot(reviewKey)` that reads `Status`/`Result`/`ErrorMessage`/`TotalPages` under the lock alongside the `Volatile.Read` of `CompletedPages` |
+| `PageReviewExecutor` | Owns the per-page work: `BuildPageInput` (concatenate enriched content for the page's items), batched parallel dispatch (`MaxConcurrentPages`), the 3-attempt retry loop (`MaxAttemptsPerPage = 3`, immediate retries, fills `FailedFilePaths` on exhaustion), and the atomic `Interlocked.Increment` of `CompletedPages` per page completion |
+| `FindingValidationPipeline` | Owns the Feature 021 post-page validation (4-phase: parse → resolve scopes → validate → map back), the over-threshold short-circuit (`MaxValidatableFindings`), and `LogValidationSummary`. Opt-in via `IsEnabled` (flag + both deps non-null) — the orchestrator wraps the call in a try/catch that converts non-OCE failures into a Warning log + unfiltered passthrough (FR-012 graceful degradation) |
+
+The orchestrator itself owns the `IHostApplicationLifetime` token, the
+fire-and-forget background-task lifetime (including the dispose-time drain that
+awaits all jobs via `Task.WhenAll(...).WaitAsync(5s)`), and the terminal-state
+transitions written through `_registry.CompleteUnderLock`. `AgentReviewJob` is
+an `internal sealed` POCO in its own file, mutable but with the locking
+discipline above.
+
 ### Why batched parallel dispatch
 
-`AgentReviewOrchestrator` coordinates server-side Copilot review of every page
-of enriched content. Pages are dispatched **in batches** (`CopilotReviewOptions.MaxConcurrentPages`,
-default 6): for each batch the orchestrator launches one `Task.Run` per page,
-awaits `Task.WhenAll` on the batch, then starts the next batch. Within a batch
-the `CopilotRequestThrottle` (a DI singleton `SemaphoreSlim(1,1)` with minimum
-spacing controlled by `CopilotReviewOptions.MinRequestIntervalSeconds`, default
-3 s) still serializes the actual SDK calls so model response wait times overlap
-across the 6 pages. The interval is read from `IOptions<CopilotReviewOptions>`
-on each call, so `appsettings.json` hot-reload takes effect without a restart
-(Principle V); setting it to `0` disables the throttle (tests only).
+The orchestrator coordinates server-side Copilot review of every page of
+enriched content. Pages are dispatched **in batches** by `PageReviewExecutor`
+(`CopilotReviewOptions.MaxConcurrentPages`, default 6): for each batch the
+executor launches one `Task.Run` per page, awaits `Task.WhenAll` on the batch,
+then starts the next batch. Within a batch the `CopilotRequestThrottle` (a DI
+singleton `SemaphoreSlim(1,1)` with minimum spacing controlled by
+`CopilotReviewOptions.MinRequestIntervalSeconds`, default 3 s) still serializes
+the actual SDK calls so model response wait times overlap across the 6 pages.
+The interval is read from `IOptions<CopilotReviewOptions>` on each call, so
+`appsettings.json` hot-reload takes effect without a restart (Principle V);
+setting it to `0` disables the throttle (tests only).
 
 The batch gate exists because the GitHub Copilot backend rate-limits larger
 fan-outs and silently re-queues the overflow — without the cap a 12-page review
@@ -593,11 +620,11 @@ where `B = min(MaxConcurrentPages, remaining pages)` and `S = MinRequestInterval
 
 | Concern | Mechanism |
 |---|---|
-| `pageResults[idx]` array | Each task writes to a unique index — no contention |
-| `CompletedPages` counter | `Interlocked.Increment` — lock-free atomic |
+| `pageResults[idx]` array | Each `PageReviewExecutor` task writes to a unique index — no contention |
+| `CompletedPages` counter | `Interlocked.Increment` (in `PageReviewExecutor.ReviewPageAndTrackAsync`) — lock-free atomic |
 | `CurrentActivity` | `volatile string?` — last writer wins (cosmetic) |
-| `Status`, `Result`, `ErrorMessage` | Guarded by `_lock` |
-| Job dictionary | `ConcurrentDictionary<string, AgentReviewJob>` |
+| `Status`, `Result`, `ErrorMessage`, `TotalPages` | Guarded by the registry's lock via `AgentReviewJobRegistry.CompleteUnderLock` / `SetTotalPagesUnderLock` |
+| Job dictionary | `ConcurrentDictionary<string, AgentReviewJob>` (encapsulated inside `AgentReviewJobRegistry`) |
 
 ### Progress observation
 
@@ -623,16 +650,19 @@ message can never be re-emitted after a counter tick.
 ### Retry loop
 
 Each page gets up to 3 attempts (`MaxAttemptsPerPage = 3`) inside
-`ReviewPageWithRetryAsync`. No backoff — retries fire immediately. On exhaustion,
-the orchestrator fills in `FailedFilePaths` (only it knows which files were on
-the page) and returns a `AgentPageReviewResult.Failure`.
+`PageReviewExecutor.ReviewPageWithRetryAsync`. No backoff — retries fire
+immediately. On exhaustion, the executor fills in `FailedFilePaths` (only the
+executor knows which files were on the page — it computed `BuildPageInput`)
+and returns a `AgentPageReviewResult.Failure`.
 
 ### Finding validation pipeline (Feature 021)
 
-After all page reviews complete (and provided `CopilotReviewOptions.ValidateFindings`
-is `true` and both `FindingValidator` + `FindingScopeResolver` resolved through DI),
-`ValidateAllFindingsAsync` runs as a fifth phase before the orchestrator surfaces
-the result. Its job is to filter false positives produced by the page-review pass:
+After all page reviews complete the orchestrator checks
+`FindingValidationPipeline.IsEnabled` (true when `CopilotReviewOptions.ValidateFindings`
+is `true` AND both `FindingValidator` + `FindingScopeResolver` resolved through DI)
+and, if enabled, calls `FindingValidationPipeline.RunAsync(job, pageResults, ct)`
+as a fifth phase before surfacing the result. Its job is to filter false positives
+produced by the page-review pass:
 
 ```
 parse → resolve scopes → severity-order → token-budget pages → SDK call(s) → map back → filter

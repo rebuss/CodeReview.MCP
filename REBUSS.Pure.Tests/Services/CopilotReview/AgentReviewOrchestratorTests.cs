@@ -26,15 +26,18 @@ public class AgentReviewOrchestratorTests
     {
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
+        var options = Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = budget });
         return new AgentReviewOrchestrator(
-            pageReviewer,
+            new AgentReviewJobRegistry(options),
+            new PageReviewExecutor(pageReviewer, options, NullLogger<PageReviewExecutor>.Instance),
+            // FindingValidator and FindingScopeResolver omitted → IsEnabled == false →
+            // tests operate in opt-out mode (feature 021 US4). The orchestrator must
+            // produce unchanged review text when validation is disabled.
+            new FindingValidationPipeline(options, NullLogger<FindingValidationPipeline>.Instance),
             pageAllocator ?? BuildAllocator(),
-            Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = budget }),
+            options,
             lifetime,
             NullLogger<AgentReviewOrchestrator>.Instance);
-        // Note: FindingValidator and FindingScopeResolver are left at null — tests
-        // operate in opt-out mode (feature 021 US4). The orchestrator must produce
-        // unchanged review text when either dependency is null.
     }
 
     /// <summary>Default allocator: echoes its input into a single page.</summary>
@@ -172,29 +175,32 @@ public class AgentReviewOrchestratorTests
 
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
+        var sweepOptions = Options.Create(new CopilotReviewOptions
+        {
+            ReviewBudgetTokens = 128_000,
+            JobRetentionMinutes = 1,
+        });
         var orchestrator = new AgentReviewOrchestrator(
-            reviewer,
+            new AgentReviewJobRegistry(sweepOptions),
+            new PageReviewExecutor(reviewer, sweepOptions, NullLogger<PageReviewExecutor>.Instance),
+            new FindingValidationPipeline(sweepOptions, NullLogger<FindingValidationPipeline>.Instance),
             BuildAllocator(),
             // Very short retention — test triggers, waits, then re-triggers and expects the
             // old job to be swept (new SDK calls on the second trigger).
-            Options.Create(new CopilotReviewOptions
-            {
-                ReviewBudgetTokens = 128_000,
-                JobRetentionMinutes = 1,
-            }),
+            sweepOptions,
             lifetime,
             NullLogger<AgentReviewOrchestrator>.Instance);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment());
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
 
-        // Rewind CompletedAt to force the sweep to consider the job stale.
-        var jobsField = typeof(AgentReviewOrchestrator)
-            .GetField("_jobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var jobs = (System.Collections.IDictionary)jobsField.GetValue(orchestrator)!;
-        var job = jobs["pr:42"]!;
-        var completedAtProp = job.GetType().GetProperty("CompletedAt")!;
-        completedAtProp.SetValue(job, DateTimeOffset.UtcNow.AddMinutes(-10));
+        // Rewind CompletedAt to force the sweep to consider the job stale. Reach the
+        // job through the orchestrator's registry collaborator (post-Step-2 refactor).
+        var registryField = typeof(AgentReviewOrchestrator)
+            .GetField("_registry", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var registry = (AgentReviewJobRegistry)registryField.GetValue(orchestrator)!;
+        Assert.True(registry.TryGet("pr:42", out var staleJob));
+        staleJob.CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment()); // should trigger sweep + new job
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
@@ -216,14 +222,17 @@ public class AgentReviewOrchestratorTests
 
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Returns(CancellationToken.None);
+        var disabledSweepOptions = Options.Create(new CopilotReviewOptions
+        {
+            ReviewBudgetTokens = 128_000,
+            JobRetentionMinutes = 0, // disabled
+        });
         var orchestrator = new AgentReviewOrchestrator(
-            reviewer,
+            new AgentReviewJobRegistry(disabledSweepOptions),
+            new PageReviewExecutor(reviewer, disabledSweepOptions, NullLogger<PageReviewExecutor>.Instance),
+            new FindingValidationPipeline(disabledSweepOptions, NullLogger<FindingValidationPipeline>.Instance),
             BuildAllocator(),
-            Options.Create(new CopilotReviewOptions
-            {
-                ReviewBudgetTokens = 128_000,
-                JobRetentionMinutes = 0, // disabled
-            }),
+            disabledSweepOptions,
             lifetime,
             NullLogger<AgentReviewOrchestrator>.Instance);
 
@@ -231,12 +240,12 @@ public class AgentReviewOrchestratorTests
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
 
         // Rewind CompletedAt — should still NOT evict because retention is disabled.
-        var jobsField = typeof(AgentReviewOrchestrator)
-            .GetField("_jobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var jobs = (System.Collections.IDictionary)jobsField.GetValue(orchestrator)!;
-        var job = jobs["pr:42"]!;
-        var completedAtProp = job.GetType().GetProperty("CompletedAt")!;
-        completedAtProp.SetValue(job, DateTimeOffset.UtcNow.AddDays(-30));
+        // Reach the job through the orchestrator's registry collaborator.
+        var registryField = typeof(AgentReviewOrchestrator)
+            .GetField("_registry", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var registry = (AgentReviewJobRegistry)registryField.GetValue(orchestrator)!;
+        Assert.True(registry.TryGet("pr:42", out var staleJob));
+        staleJob.CompletedAt = DateTimeOffset.UtcNow.AddDays(-30);
 
         orchestrator.TriggerReview("pr:42", BuildEnrichment()); // idempotent — nothing happens
         _ = await orchestrator.WaitForReviewAsync("pr:42", CancellationToken.None);
@@ -302,10 +311,13 @@ public class AgentReviewOrchestratorTests
                 });
             });
 
+        var shutdownTestOptions = Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = 128_000 });
         var orchestrator = new AgentReviewOrchestrator(
-            reviewer,
+            new AgentReviewJobRegistry(shutdownTestOptions),
+            new PageReviewExecutor(reviewer, shutdownTestOptions, NullLogger<PageReviewExecutor>.Instance),
+            new FindingValidationPipeline(shutdownTestOptions, NullLogger<FindingValidationPipeline>.Instance),
             BuildAllocator(),
-            Options.Create(new CopilotReviewOptions { ReviewBudgetTokens = 128_000 }),
+            shutdownTestOptions,
             lifetime,
             NullLogger<AgentReviewOrchestrator>.Instance);
 

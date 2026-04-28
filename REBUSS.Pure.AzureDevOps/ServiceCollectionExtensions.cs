@@ -46,6 +46,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileChangesParser, FileChangesParser>();
 
         // Azure DevOps fine-grained providers (internal implementation details)
+        services.AddSingleton<Providers.Diff.DiffSkipPolicy>();
+        services.AddSingleton<Providers.Diff.DiffSourcePairFactory>();
+        services.AddSingleton<Providers.Diff.PrDataFetcher>();
         services.AddSingleton<AzureDevOpsDiffProvider>();
         services.AddSingleton<AzureDevOpsMetadataProvider>();
         services.AddSingleton<AzureDevOpsFilesProvider>();

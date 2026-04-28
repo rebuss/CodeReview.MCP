@@ -6,6 +6,7 @@ using REBUSS.Pure.AzureDevOps.Api;
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.AzureDevOps.Parsers;
 using REBUSS.Pure.AzureDevOps.Providers;
+using REBUSS.Pure.AzureDevOps.Providers.Diff;
 using REBUSS.Pure.Core.Exceptions;
 using REBUSS.Pure.Core.Models;
 using REBUSS.Pure.Core.Shared;
@@ -55,14 +56,18 @@ public class AzureDevOpsDiffProviderTests
     public AzureDevOpsDiffProviderTests()
     {
         _provider = new AzureDevOpsDiffProvider(
-            _apiClient,
-            new PullRequestMetadataParser(NullLogger<PullRequestMetadataParser>.Instance),
-            new IterationInfoParser(NullLogger<IterationInfoParser>.Instance),
-            new FileChangesParser(NullLogger<FileChangesParser>.Instance),
+            new PrDataFetcher(
+                _apiClient,
+                new PullRequestMetadataParser(NullLogger<PullRequestMetadataParser>.Instance),
+                new IterationInfoParser(NullLogger<IterationInfoParser>.Instance),
+                new FileChangesParser(NullLogger<FileChangesParser>.Instance)),
             new StructuredDiffBuilder(new DiffPlexDiffAlgorithm(), NullLogger<StructuredDiffBuilder>.Instance),
-            new FileClassifier(),
-            new AzureDevOpsRepositoryArchiveProvider(_apiClient),
-            Options.Create(_diffOptions),
+            new DiffSkipPolicy(new FileClassifier()),
+            new DiffSourcePairFactory(
+                _apiClient,
+                new AzureDevOpsRepositoryArchiveProvider(_apiClient),
+                Options.Create(_diffOptions),
+                NullLogger<DiffSourcePairFactory>.Instance),
             NullLogger<AzureDevOpsDiffProvider>.Instance);
     }
 
@@ -433,135 +438,11 @@ public class AzureDevOpsDiffProviderTests
         Assert.Equal("binary file", result.Files[2].SkipReason);   // binary — skipped
     }
 
-    // --- IsFullFileRewrite unit tests ---
+    // IsFullFileRewrite_* cases relocated to Providers/Diff/FullFileRewriteDetectorTests.cs
+    // after the predicate was extracted from the orchestrator (Step 1 refactor).
 
-    [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenBaseContentIsNull()
-    {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(null, "content", new List<DiffHunk>()));
-    }
-
-    [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenTargetContentIsNull()
-    {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("content", null, new List<DiffHunk>()));
-    }
-
-    [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenHunksAreEmpty()
-    {
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("old", "new", new List<DiffHunk>()));
-    }
-
-    [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenFilesAreTooSmall()
-    {
-        var hunks = new List<DiffHunk>
-        {
-            new()
-            {
-                OldStart = 1, OldCount = 3, NewStart = 1, NewCount = 3,
-                Lines = new List<DiffLine>
-                {
-                    new() { Op = '-', Text = "a" },
-                    new() { Op = '-', Text = "b" },
-                    new() { Op = '-', Text = "c" },
-                    new() { Op = '+', Text = "x" },
-                    new() { Op = '+', Text = "y" },
-                    new() { Op = '+', Text = "z" }
-                }
-            }
-        };
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite("a\nb\nc", "x\ny\nz", hunks));
-    }
-
-    [Fact]
-    public void IsFullFileRewrite_ReturnsTrue_WhenNoContextLines()
-    {
-        var oldLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"old{i}"));
-        var newLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"new{i}"));
-        var hunks = new List<DiffHunk>
-        {
-            new()
-            {
-                OldStart = 1, OldCount = 12, NewStart = 1, NewCount = 12,
-                Lines = Enumerable.Range(1, 12).Select(i => new DiffLine { Op = '-', Text = $"old{i}" })
-                    .Concat(Enumerable.Range(1, 12).Select(i => new DiffLine { Op = '+', Text = $"new{i}" }))
-                    .ToList()
-            }
-        };
-
-        Assert.True(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, hunks));
-    }
-
-    [Fact]
-    public void IsFullFileRewrite_ReturnsFalse_WhenContextLinesExist()
-    {
-        var oldLines = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"line{i}"));
-        var newLines = "line1\nline2\nCHANGED\n" +
-                       string.Join("\n", Enumerable.Range(4, 9).Select(i => $"line{i}"));
-        var hunks = new List<DiffHunk>
-        {
-            new()
-            {
-                OldStart = 1, OldCount = 4, NewStart = 1, NewCount = 4,
-                Lines = new List<DiffLine>
-                {
-                    new() { Op = ' ', Text = "line1" },
-                    new() { Op = ' ', Text = "line2" },
-                    new() { Op = '-', Text = "line3" },
-                    new() { Op = '+', Text = "CHANGED" },
-                    new() { Op = ' ', Text = "line4" }
-                }
-            }
-        };
-
-        Assert.False(AzureDevOpsDiffProvider.IsFullFileRewrite(oldLines, newLines, hunks));
-    }
-
-    // --- GetSkipReason unit tests ---
-
-    [Fact]
-    public void GetSkipReason_ReturnsFileDeleted_ForDeleteChangeType()
-    {
-        var file = new FileChange { Path = "/src/File.cs", ChangeType = "delete" };
-        Assert.Equal("file deleted", _provider.GetSkipReason(file));
-    }
-
-    [Fact]
-    public void GetSkipReason_ReturnsFileRenamed_ForRenameChangeType()
-    {
-        var file = new FileChange { Path = "/src/File.cs", ChangeType = "rename" };
-        Assert.Equal("file renamed", _provider.GetSkipReason(file));
-    }
-
-    [Fact]
-    public void GetSkipReason_ReturnsBinaryFile_ForBinaryExtension()
-    {
-        var file = new FileChange { Path = "/assets/logo.png", ChangeType = "edit" };
-        Assert.Equal("binary file", _provider.GetSkipReason(file));
-    }
-
-    [Fact]
-    public void GetSkipReason_ReturnsGeneratedFile_ForGeneratedPath()
-    {
-        var file = new FileChange { Path = "/obj/Debug/net8.0/AssemblyInfo.cs", ChangeType = "edit" };
-        Assert.Equal("generated file", _provider.GetSkipReason(file));
-    }
-
-    [Fact]
-    public void GetSkipReason_ReturnsNull_ForNormalSourceFile()
-    {
-        var file = new FileChange { Path = "/src/Service.cs", ChangeType = "edit" };
-        Assert.Null(_provider.GetSkipReason(file));
-    }
-
-    [Fact]
-    public void GetSkipReason_ReturnsNull_ForNewFile()
-    {
-        var file = new FileChange { Path = "/src/NewService.cs", ChangeType = "add" };
-        Assert.Null(_provider.GetSkipReason(file));
-    }
+    // GetSkipReason_* cases relocated to Providers/Diff/DiffSkipPolicyTests.cs after
+    // the policy was extracted from the orchestrator (Step 2 refactor).
 
     // --- ZIP-fallback heuristic ---
 
@@ -776,100 +657,7 @@ public class AzureDevOpsDiffProviderTests
         }
     }
 
-    // ─── TryResolveFilePath: path-traversal defence ─────────────────────────────
-
-    public class TryResolveFilePathTests : IDisposable
-    {
-        private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"adotr-{Guid.NewGuid():N}");
-
-        public void Dispose()
-        {
-            try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); } catch { }
-        }
-
-        [Fact]
-        public void NormalPath_ReturnsResolvedFile()
-        {
-            var rootDir = Path.Combine(_tempDir, "archive");
-            var srcDir = Path.Combine(rootDir, "src");
-            Directory.CreateDirectory(srcDir);
-            File.WriteAllText(Path.Combine(srcDir, "File.cs"), "class C { }");
-
-            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "src/File.cs");
-
-            Assert.NotNull(resolved);
-            Assert.Equal(Path.Combine(rootDir, "src", "File.cs"), resolved);
-        }
-
-        [Fact]
-        public void ParentTraversalEscape_ReturnsNull()
-        {
-            // Attacker-supplied diff path escaping the archive root via `..`.
-            var rootDir = Path.Combine(_tempDir, "archive");
-            Directory.CreateDirectory(rootDir);
-
-            // Plant a file OUTSIDE the root that would be reached by the traversal.
-            var outsideDir = Path.Combine(_tempDir, "outside");
-            Directory.CreateDirectory(outsideDir);
-            File.WriteAllText(Path.Combine(outsideDir, "secret.cs"), "secret");
-
-            // ../outside/secret.cs  ← resolves outside rootDir
-            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../outside/secret.cs");
-
-            Assert.Null(resolved);
-        }
-
-        [Fact]
-        public void ParentTraversalViaWrapper_ReturnsNull()
-        {
-            // Wrapper layout: archive/commit-abc/src/File.cs. A `..` traversal from inside
-            // the wrapper must not reach siblings or the temp root.
-            var rootDir = Path.Combine(_tempDir, "archive");
-            var wrapper = Path.Combine(rootDir, "commit-abc");
-            Directory.CreateDirectory(wrapper);
-
-            // Create a sibling directory next to rootDir and a file inside it.
-            var outsideDir = Path.Combine(_tempDir, "outside");
-            Directory.CreateDirectory(outsideDir);
-            File.WriteAllText(Path.Combine(outsideDir, "secret.cs"), "secret");
-
-            // Without the guard, wrapper fallback + `..` segments could escape.
-            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../../outside/secret.cs");
-
-            Assert.Null(resolved);
-        }
-
-        [Fact]
-        public void LookalikeSiblingPrefix_ReturnsNull()
-        {
-            // rootDir = archive, a sibling named archive-evil whose full path starts with "archive"
-            // would pass a naive StartsWith check that forgot the trailing separator.
-            var rootDir = Path.Combine(_tempDir, "archive");
-            var evilDir = Path.Combine(_tempDir, "archive-evil");
-            Directory.CreateDirectory(rootDir);
-            Directory.CreateDirectory(evilDir);
-            File.WriteAllText(Path.Combine(evilDir, "payload.cs"), "x");
-
-            // The normalized candidate becomes .../archive-evil/payload.cs — outside rootDir.
-            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "../archive-evil/payload.cs");
-
-            Assert.Null(resolved);
-        }
-
-        [Fact]
-        public void WrapperFallback_StillResolvesLegitimatePaths()
-        {
-            // Azure DevOps occasionally nests the archive under a single commit-named directory.
-            var rootDir = Path.Combine(_tempDir, "archive");
-            var wrapper = Path.Combine(rootDir, "repo-abc123");
-            var srcDir = Path.Combine(wrapper, "src");
-            Directory.CreateDirectory(srcDir);
-            File.WriteAllText(Path.Combine(srcDir, "File.cs"), "class C { }");
-
-            var resolved = AzureDevOpsDiffProvider.TryResolveFilePath(rootDir, "src/File.cs");
-
-            Assert.NotNull(resolved);
-            Assert.Equal(Path.Combine(wrapper, "src", "File.cs"), resolved);
-        }
-    }
+    // TryResolveFilePath path-traversal defence cases relocated to
+    // Providers/Diff/ExtractedArchiveWorkspaceTests.cs after the resolver was
+    // extracted from the orchestrator (Step 3 refactor).
 }
