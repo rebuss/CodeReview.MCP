@@ -1,6 +1,7 @@
 using REBUSS.Pure.AzureDevOps.Configuration;
 using REBUSS.Pure.GitHub.Configuration;
 using REBUSS.Pure.Properties;
+using REBUSS.Pure.Services.CopilotReview;
 using AzureDevOpsNames = REBUSS.Pure.AzureDevOps.Names;
 using GitHubNames = REBUSS.Pure.GitHub.Names;
 
@@ -48,6 +49,10 @@ namespace REBUSS.Pure.Cli
             // GitHub CLI overrides
             if (!string.IsNullOrWhiteSpace(parseResult.Owner))
                 overrides[$"{GitHubOptions.SectionName}:{nameof(GitHubOptions.Owner)}"] = parseResult.Owner;
+
+            // Review model: --model overrides CopilotReview:Model from config files
+            if (!string.IsNullOrWhiteSpace(parseResult.Model))
+                overrides[$"{CopilotReviewOptions.SectionName}:{nameof(CopilotReviewOptions.Model)}"] = parseResult.Model;
 
             return overrides;
         }

@@ -25,12 +25,33 @@ public sealed class CopilotReviewOptions
     /// </summary>
     public int ReviewBudgetTokens { get; set; } = 128_000;
 
+    /// <summary>Built-in review model for <c>--agent copilot</c> (or no <c>--agent</c>).</summary>
+    public const string DefaultCopilotModel = "gpt-5.4";
+
     /// <summary>
-    /// Copilot model identifier passed to <c>SessionConfig.Model</c>. Default is
-    /// <c>"claude-sonnet-4.6"</c>. If the installed SDK rejects this string, verify
-    /// the canonical form via <c>client.ListModelsAsync()</c> and update this value.
+    /// Built-in review model for <c>--agent claude</c>. Copilot-style dotted form;
+    /// <c>ClaudeCliAgentInvoker</c> normalizes it to the hyphenated Claude CLI id.
     /// </summary>
-    public string Model { get; set; } = "claude-sonnet-4.6";
+    public const string DefaultClaudeModel = "claude-sonnet-4.6";
+
+    /// <summary>
+    /// Review model identifier passed to the selected agent (Copilot <c>SessionConfig.Model</c>
+    /// or Claude CLI <c>--model</c>). Recommended channel is the <c>--model</c> server flag in
+    /// <c>mcp.json</c>, which overrides any <c>CopilotReview:Model</c> from configuration files.
+    /// When blank, <see cref="CopilotReviewModelDefaults"/> fills in the agent-specific default
+    /// via <see cref="DefaultModelFor"/>. If the Copilot SDK rejects the string, verify the
+    /// canonical form via <c>client.ListModelsAsync()</c>.
+    /// </summary>
+    public string Model { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Returns the built-in model for <paramref name="agent"/>: <see cref="DefaultClaudeModel"/>
+    /// for <c>claude</c>, otherwise <see cref="DefaultCopilotModel"/>.
+    /// </summary>
+    public static string DefaultModelFor(string? agent) =>
+        string.Equals(agent, Cli.CliArgumentParser.AgentClaude, StringComparison.OrdinalIgnoreCase)
+            ? DefaultClaudeModel
+            : DefaultCopilotModel;
 
     /// <summary>
     /// Optional pre-minted, Copilot-entitled GitHub token override. Lower priority

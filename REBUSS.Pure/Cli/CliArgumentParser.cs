@@ -64,6 +64,7 @@ public class CliArgumentParser
         string? provider = null;
         string? owner = null;
         string? agent = null;
+        string? model = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -107,9 +108,14 @@ public class CliArgumentParser
                 agent = NormalizeAgent(args[i + 1]);
                 i++;
             }
+            else if (string.Equals(args[i], "--model", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                model = args[i + 1];
+                i++;
+            }
         }
 
-        return CliParseResult.ServerMode(repoPath, pat, organization, project, repository, provider, owner, agent);
+        return CliParseResult.ServerMode(repoPath, pat, organization, project, repository, provider, owner, agent, model);
     }
 
     private static string NormalizeAgent(string raw)
@@ -184,7 +190,8 @@ public sealed class CliParseResult
         string? repository = null,
         string? provider = null,
         string? owner = null,
-        string? agent = null) => new()
+        string? agent = null,
+        string? model = null) => new()
         {
             IsServerMode = true,
             CommandName = null,
@@ -195,7 +202,8 @@ public sealed class CliParseResult
             Repository = repository,
             Provider = provider,
             Owner = owner,
-            Agent = agent
+            Agent = agent,
+            Model = model
         };
 
     /// <summary>
@@ -215,6 +223,14 @@ public sealed class CliParseResult
     /// in server mode the default is GitHub Copilot.
     /// </summary>
     public string? Agent { get; private init; }
+
+    /// <summary>
+    /// The Copilot review model identifier provided via <c>--model</c>. When set,
+    /// overrides <c>CopilotReview:Model</c> from configuration files. This is the
+    /// recommended channel for setting the review model (in <c>mcp.json</c> alongside
+    /// <c>--pat</c>). <c>null</c> when not specified — the agent-specific default applies.
+    /// </summary>
+    public string? Model { get; private init; }
 
     public static CliParseResult CliMode(string commandName, string? pat = null, bool isGlobal = false, string? ide = null, string? agent = null) => new()
     {

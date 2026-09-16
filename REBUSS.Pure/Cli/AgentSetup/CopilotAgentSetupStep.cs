@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using REBUSS.Pure.Services.CopilotReview;
 
 namespace REBUSS.Pure.Cli.AgentSetup;
@@ -82,6 +83,8 @@ internal sealed class CopilotAgentSetupStep : IAgentSetupStep
         services.AddLogging(b => b.SetMinimumLevel(LogLevel.Warning));
         services.Configure<CopilotReviewOptions>(
             configuration.GetSection(CopilotReviewOptions.SectionName));
+        services.AddSingleton<IPostConfigureOptions<CopilotReviewOptions>>(
+            new CopilotReviewModelDefaults(CliArgumentParser.AgentCopilot));
         services.AddSingleton<ICopilotTokenResolver, CopilotTokenResolver>();
         services.AddSingleton<CopilotVerificationRunner>();
         services.AddSingleton<ICopilotVerificationProbe>(
