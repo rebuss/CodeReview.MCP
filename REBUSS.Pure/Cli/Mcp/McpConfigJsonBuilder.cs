@@ -29,7 +29,8 @@ internal static class McpConfigJsonBuilder
         string normalizedRepoPath,
         string? pat = null,
         bool useMcpServersKey = false,
-        string? agent = null)
+        string? agent = null,
+        string? model = null)
     {
         var patArgs = string.IsNullOrWhiteSpace(pat)
             ? string.Empty
@@ -42,6 +43,10 @@ internal static class McpConfigJsonBuilder
             ? string.Empty
             : $", \"--agent\", {JsonSerializer.Serialize(agent)}";
 
+        var modelArgs = string.IsNullOrWhiteSpace(model)
+            ? string.Empty
+            : $", \"--model\", {JsonSerializer.Serialize(model)}";
+
         var serversKey = useMcpServersKey ? "mcpServers" : "servers";
 
         return $$"""
@@ -50,7 +55,7 @@ internal static class McpConfigJsonBuilder
                 "REBUSS.Pure": {
                   "type": "stdio",
                   "command": "{{normalizedExePath}}",
-                  "args": ["--repo", "{{normalizedRepoPath}}"{{patArgs}}{{agentArgs}}]
+                  "args": ["--repo", "{{normalizedRepoPath}}"{{patArgs}}{{agentArgs}}{{modelArgs}}]
                 }
               }
             }
@@ -73,7 +78,8 @@ internal static class McpConfigJsonBuilder
         string rawRepoPath,
         string? pat = null,
         bool useMcpServersKey = false,
-        string? agent = null)
+        string? agent = null,
+        string? model = null)
     {
         var serversKey = useMcpServersKey ? "mcpServers" : "servers";
 
@@ -124,7 +130,14 @@ internal static class McpConfigJsonBuilder
                 // If no PAT was supplied, carry over any existing PAT from the current config.
                 var effectivePat = pat;
                 if (string.IsNullOrWhiteSpace(effectivePat))
-                    effectivePat = ExtractExistingPat(root, serversKey);
+                    effectivePat = ExtractExistingArg(root, serversKey, "--pat");
+
+                // Same carry-over semantics for --model: users hand-add this to their
+                // mcp.json to override CopilotReviewOptions.Model (see CliArgumentParser).
+                // Without preservation, a re-run of `init` would silently drop the flag.
+                var effectiveModel = model;
+                if (string.IsNullOrWhiteSpace(effectiveModel))
+                    effectiveModel = ExtractExistingArg(root, serversKey, "--model");
 
                 writer.WritePropertyName("REBUSS.Pure");
                 writer.WriteStartObject();
@@ -143,6 +156,11 @@ internal static class McpConfigJsonBuilder
                 {
                     writer.WriteStringValue("--agent");
                     writer.WriteStringValue(agent);
+                }
+                if (!string.IsNullOrWhiteSpace(effectiveModel))
+                {
+                    writer.WriteStringValue("--model");
+                    writer.WriteStringValue(effectiveModel);
                 }
                 writer.WriteEndArray();
                 writer.WriteEndObject();
@@ -163,15 +181,17 @@ internal static class McpConfigJsonBuilder
         {
             var normalizedExePath = rawExePath.Replace("\\", "\\\\");
             var normalizedRepoPath = rawRepoPath.Replace("\\", "\\\\");
-            return Build(normalizedExePath, normalizedRepoPath, pat, useMcpServersKey, agent);
+            return Build(normalizedExePath, normalizedRepoPath, pat, useMcpServersKey, agent, model);
         }
     }
 
     /// <summary>
-    /// Extracts the <c>--pat</c> argument value from an existing <c>REBUSS.Pure</c>
-    /// server entry, or returns <c>null</c> when no PAT is present.
+    /// Extracts the value that follows <paramref name="argName"/> in the existing
+    /// <c>REBUSS.Pure</c> server's <c>args</c> array, or returns <c>null</c> when the
+    /// arg is absent or malformed. Used to carry over user-set values (<c>--pat</c>,
+    /// <c>--model</c>) across a re-run of <c>init</c>.
     /// </summary>
-    private static string? ExtractExistingPat(JsonElement root, string serversKey)
+    private static string? ExtractExistingArg(JsonElement root, string serversKey, string argName)
     {
         // Each TryGetProperty / EnumerateArray below requires the receiving element to
         // be the right kind (object or array) — guard explicitly so a hand-edited
@@ -190,9 +210,10 @@ internal static class McpConfigJsonBuilder
             return null;
 
         var argList = args.EnumerateArray().Select(a => a.GetString()).ToList();
-        var patIndex = argList.IndexOf("--pat");
-        if (patIndex >= 0 && patIndex + 1 < argList.Count)
-            return argList[patIndex + 1];
+        // Case-insensitive to match CliArgumentParser, which accepts e.g. "--Model".
+        var idx = argList.FindIndex(a => string.Equals(a, argName, StringComparison.OrdinalIgnoreCase));
+        if (idx >= 0 && idx + 1 < argList.Count)
+            return argList[idx + 1];
 
         return null;
     }

@@ -21,7 +21,7 @@
     <RepositoryUrl>https://github.com/rebuss/CodeReview.MCP</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>mcp;azure-devops;github;pull-request;code-review;copilot;dotnet-tool;ai</PackageTags>
+    <PackageTags>mcp;azure-devops;github;pull-request;code-review;copilot;dotnet-tool;ai;claude</PackageTags>
     <RollForward>Major</RollForward>
   </PropertyGroup>
 

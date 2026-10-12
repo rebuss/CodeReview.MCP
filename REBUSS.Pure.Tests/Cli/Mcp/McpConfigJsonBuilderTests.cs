@@ -84,6 +84,60 @@ public class McpConfigJsonBuilderTests
     }
 
     [Fact]
+    public void Merge_WhenExistingHasModel_AndCallerPassesNullModel_CarriesExistingModelOver()
+    {
+        // Regression guard: users hand-add "--model" to their mcp.json to override
+        // CopilotReviewOptions.Model (the flag replaces the removed appsettings entry).
+        // A re-run of `init` must not silently drop that value.
+        var existing = """
+            {
+              "servers": {
+                "REBUSS.Pure": {
+                  "type": "stdio",
+                  "command": "old.exe",
+                  "args": ["--repo", "old", "--model", "claude-sonnet-4.6"]
+                }
+              }
+            }
+            """;
+
+        var result = McpConfigJsonBuilder.Merge(existing, "new.exe", @"C:\newrepo", pat: null, model: null);
+
+        Assert.Contains("\"--model\"", result);
+        Assert.Contains("\"claude-sonnet-4.6\"", result);
+    }
+
+    [Fact]
+    public void Merge_WhenExistingHasDifferentlyCasedModelFlag_CarriesValueOver()
+    {
+        var existing = """
+            {
+              "servers": {
+                "REBUSS.Pure": {
+                  "type": "stdio",
+                  "command": "old.exe",
+                  "args": ["--repo", "old", "--Model", "gpt-5.4"]
+                }
+              }
+            }
+            """;
+
+        var result = McpConfigJsonBuilder.Merge(existing, "new.exe", @"C:\newrepo", pat: null, model: null);
+
+        Assert.Contains("\"--model\"", result);
+        Assert.Contains("\"gpt-5.4\"", result);
+    }
+
+    [Fact]
+    public void Build_WithModel_EmitsModelArg()
+    {
+        var result = McpConfigJsonBuilder.Build("exe", "repo", pat: null, model: "claude-opus-4.5");
+
+        Assert.Contains("\"--model\"", result);
+        Assert.Contains("\"claude-opus-4.5\"", result);
+    }
+
+    [Fact]
     public void Merge_WhenCallerPassesNewPat_NewPatWins_OverExistingPat()
     {
         var existing = """

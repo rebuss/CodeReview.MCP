@@ -198,7 +198,7 @@ The order is **deliberately the opposite** of `GitHubChainedAuthenticationProvid
   "CopilotReview": {
     "Enabled": true,                // FR-016 short-circuit when false
     "ReviewBudgetTokens": 128000,
-    "Model": "claude-sonnet-4.6",   // must be in ListModelsAsync result
+    "Model": "",                    // blank → per-agent default (CopilotReviewModelDefaults); --model overrides
     "GitHubToken": null,            // feature 018 — optional override (NOT a PAT)
     "StrictMode": false             // feature 018 — lazy throw on first review when true
   }

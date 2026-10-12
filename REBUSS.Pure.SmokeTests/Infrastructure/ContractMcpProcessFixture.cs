@@ -13,6 +13,12 @@ public sealed class ContractMcpProcessFixture : IAsyncLifetime
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
+
     private readonly string _cliArgs;
     private Process? _process;
     private StringBuilder? _stderrBuffer;
@@ -59,7 +65,7 @@ public sealed class ContractMcpProcessFixture : IAsyncLifetime
         var projectDir = ResolveProjectDirectory();
         var repoPath = ResolveSolutionRoot();
 
-        var arguments = $"run --project \"{projectDir}\" --no-launch-profile --verbosity quiet -- --repo \"{repoPath}\"";
+        var arguments = $"run --project \"{projectDir}\" -c {BuildConfiguration} --no-build --no-launch-profile --verbosity quiet -- --repo \"{repoPath}\"";
         if (!string.IsNullOrEmpty(_cliArgs))
             arguments += " " + _cliArgs;
 

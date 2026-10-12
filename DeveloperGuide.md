@@ -74,7 +74,7 @@ earlier findings" problem on large PRs.
 |---|---|---|
 | `Enabled` | `true` | Master switch. `false` forces content-only mode regardless of Copilot availability. |
 | `ReviewBudgetTokens` | `128000` | Per-call Copilot context budget. Used to re-paginate the enrichment result into Copilot-sized pages. |
-| `Model` | `"claude-sonnet-4.6"` | Copilot model passed to `SessionConfig.Model`. If the SDK rejects this string, check `client.ListModelsAsync()` output. |
+| `Model` | `"gpt-5.4"` (Copilot) / `"claude-sonnet-4.6"` (`--agent claude`) | Review model passed to the selected agent. Prefer the `--model` server flag, which overrides this key. If the Copilot SDK rejects the string, check `client.ListModelsAsync()` output. |
 | `MaxConcurrentPages` | `6` | Upper bound on how many pages the orchestrator dispatches to Copilot in parallel per batch. Values `< 1` are clamped to `1`. Raise cautiously — the Copilot backend silently re-queues fan-outs above its per-client limit, which can double wall-clock time. |
 | `MinRequestIntervalSeconds` | `3` | Minimum spacing between successive outbound Copilot SDK calls (`CreateSessionAsync` / `SendAsync`), enforced by a process-wide gate. Combines with `MaxConcurrentPages` to shape throughput: the batch size controls fan-out width, this interval controls request rate. Set to `0` to disable (tests only). |
 | `PerPageTimeoutMinutes` | `5` | Per-page hard timeout for the Claude CLI agent (`--agent claude`). When exceeded, the child process is killed and a `TimeoutException` is raised — treated as a failed attempt by the orchestrator's 3-attempt retry, then surfaced as a per-page failure (with the file paths on that page) without aborting sibling pages. Values `< 1` are clamped to `1`. Raise this for very large PRs where individual pages routinely exceed 4 minutes; the previous build had a hard-coded 5-minute ceiling that aborted the entire review when one page ran long. Has no effect when `--agent copilot` is selected. |
@@ -122,11 +122,16 @@ This path is **version-scoped** — every `dotnet tool update -g CodeReview.MCP`
 "CopilotReview": {
   "Enabled": true,
   "ReviewBudgetTokens": 128000,
-  "Model": "claude-sonnet-4.6",
   "MaxConcurrentPages": 6,
   "MinRequestIntervalSeconds": 3
 }
 ```
+
+**Note**: the recommended way to set the review model is the MCP server config
+(`mcp.json`), as a CLI arg alongside `--pat` — e.g.
+`"args": ["--repo", "...", "--pat", "...", "--model", "gpt-5.4"]`. The flag overrides
+any `CopilotReview:Model` value in config files. Omit it to use the agent-specific
+default: `gpt-5.4` for Copilot, `claude-sonnet-4.6` for `--agent claude`.
 
 **Tuning throughput**: `MaxConcurrentPages` and `MinRequestIntervalSeconds` are the two knobs
 that shape how fast the orchestrator drains a multi-page review against the Copilot rate
@@ -837,6 +842,17 @@ For **other RIDs (win-arm64, linux-arm64, osx-x64)** the CLI is not bundled beca
 
    to that absolute path.
 4. Restart the MCP server (reload the IDE).
+
+> This error only applies to `--agent copilot`. With `--agent claude` the review layer is gated on the Claude CLI instead. If you see this Copilot message while `mcp.json` passes `--agent claude`, the installed tool predates agent-aware availability detection; update it with `dotnet tool update -g CodeReview.MCP`.
+
+### Claude review pages fail with "An error occurred trying to start process 'claude'" (`--agent claude`)
+
+With `--agent claude` the server does not check the Claude CLI up front; each page review shells out to `claude -p`. If `claude` is missing from the `PATH` visible to the MCP server process (IDEs often start with a different `PATH` than your terminal) or is not authenticated, the pages come back as `=== Page N Review (FAILED) ===` with the underlying error.
+
+1. Install Claude Code and confirm `claude --version` works in a terminal.
+2. Authenticate Claude Code (interactive login, or set `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`).
+3. If `claude` is installed but not found, add its directory to the system `PATH` and restart the IDE.
+4. Restart the MCP server.
 
 The error message includes this remediation inline; check server logs for the actual failure reason before assuming it is an auth problem.
 

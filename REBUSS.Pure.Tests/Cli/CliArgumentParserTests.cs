@@ -395,4 +395,33 @@ public class CliArgumentParserTests
         Assert.True(result.IsServerMode);
         Assert.Null(result.Agent);
     }
+
+    // --- Model argument ---
+
+    [Theory]
+    [InlineData("--model")]
+    [InlineData("--MODEL")]
+    public void Parse_ServerModeWithModel_ReturnsModel(string flag)
+    {
+        var result = CliArgumentParser.Parse(["--repo", "C:\\repo", flag, "gpt-5.4"]);
+
+        Assert.True(result.IsServerMode);
+        Assert.Equal("gpt-5.4", result.Model);
+    }
+
+    [Fact]
+    public void Parse_ServerModeWithoutModel_ReturnsNullModel()
+    {
+        var result = CliArgumentParser.Parse(["--repo", "C:\\repo"]);
+
+        Assert.Null(result.Model);
+    }
+
+    [Fact]
+    public void Parse_ServerModeWithTrailingModelFlag_ReturnsNullModel()
+    {
+        var result = CliArgumentParser.Parse(["--repo", "C:\\repo", "--model"]);
+
+        Assert.Null(result.Model);
+    }
 }

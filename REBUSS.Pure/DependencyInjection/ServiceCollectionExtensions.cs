@@ -95,6 +95,9 @@ namespace REBUSS.Pure.DependencyInjection
             // alias so consumers can depend on ICopilotClientProvider, (3) IHostedService so
             // the generic host calls StopAsync on shutdown. All three resolve to the same instance.
             services.Configure<CopilotReviewOptions>(configuration.GetSection(CopilotReviewOptions.SectionName));
+            // Per-agent model default, applied only when neither --model nor config set one.
+            services.AddSingleton<Microsoft.Extensions.Options.IPostConfigureOptions<CopilotReviewOptions>>(
+                new CopilotReviewModelDefaults(agent));
             services.AddSingleton<ICopilotTokenResolver, CopilotTokenResolver>();
             services.AddSingleton<CopilotVerificationRunner>();
             services.AddSingleton<ICopilotVerificationProbe>(sp => sp.GetRequiredService<CopilotVerificationRunner>());
@@ -118,14 +121,17 @@ namespace REBUSS.Pure.DependencyInjection
             {
                 services.AddSingleton<Core.Services.AgentInvocation.IAgentInvoker,
                     Services.AgentInvocation.ClaudeCliAgentInvoker>();
+                // Never start the Copilot SDK for Claude — a missing copilot.exe would otherwise
+                // block Claude-backed reviews with a Copilot StartFailure.
+                services.AddSingleton<ICopilotAvailabilityDetector, ClaudeCliAvailabilityDetector>();
             }
             else
             {
                 services.AddSingleton<Core.Services.AgentInvocation.IAgentInvoker,
                     Services.AgentInvocation.CopilotAgentInvoker>();
+                services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
             }
 
-            services.AddSingleton<ICopilotAvailabilityDetector, CopilotAvailabilityDetector>();
             services.AddSingleton<IAgentPageReviewer, AgentPageReviewer>();
             services.AddSingleton<AgentReviewJobRegistry>();
             services.AddSingleton<PageReviewExecutor>();
